@@ -156,6 +156,26 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     load = Some((host.clone(), path.clone()));
                 }
             }
+
+            // The paths the responses point at are shown too, in a quieter colour, because a
+            // link is a path the target has even when nothing asked for it.
+            if let Some(found) = app.discovered.get(host) {
+                for path in found {
+                    if paths.contains_key(path) || !app.panels.target_panel.matches(path) {
+                        continue;
+                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space(26.0);
+                        ui.selectable_label(
+                            app.panels.target_panel.path.as_deref() == Some(path.as_str()),
+                            eframe::egui::RichText::new(path)
+                                .monospace()
+                                .color(theme.color("ui.icon.disabled")),
+                        )
+                        .on_hover_text("found in a response, not visited");
+                    });
+                }
+            }
             ui.add_space(4.0);
         }
     });
@@ -166,7 +186,14 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
             .log
             .iter()
             .rev()
-            .find(|tx| tx.host == host && tx.target.ends_with(&path))
+            .find(|tx| {
+                let key = if tx.secure {
+                    format!("https://{}", tx.host)
+                } else {
+                    format!("http://{}", tx.host)
+                };
+                key == host && tx.target.ends_with(&path)
+            })
             .map(|tx| (tx.request.clone(), tx.target.clone()));
         match found {
             Some((request, target)) => {
@@ -224,5 +251,40 @@ mod tests {
             );
         }
         assert_eq!(version, 5, "each retained transaction must bump the version");
+    }
+}
+
+#[cfg(test)]
+mod discovered_tests {
+    use super::*;
+    use crate::ui::app::App;
+
+    /// A response that points at another path puts that path in the site map, even though
+    /// nothing asked for it.
+    #[test]
+    fn links_in_a_response_are_noted() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.remember_links(
+            "http://example.test/index.html",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<a href=\"/other\">o</a>",
+        );
+        let paths = app
+            .discovered
+            .get("http://example.test")
+            .expect("the host should be known");
+        assert!(paths.contains("/other"), "the link should be noted: {paths:?}");
+    }
+
+    /// A response that is not markup has no links to note.
+    #[test]
+    fn a_plain_response_notes_nothing() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.remember_links(
+            "http://example.test/x",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"a\":\"/other\"}",
+        );
+        assert!(app.discovered.is_empty(), "nothing should be noted");
     }
 }

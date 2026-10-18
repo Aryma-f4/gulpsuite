@@ -1,7 +1,7 @@
 //! The application shell: menu bar, tool sidebar, tool panels and status bar.
 
 use std::sync::Arc;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use eframe::egui::{
@@ -223,6 +223,9 @@ pub struct App {
     next_request: u64,
     /// Everything the proxy has reported, newest last.
     pub log: VecDeque<Transaction>,
+    /// The links the responses point at, per host. Burp's site map shows them even when they were
+    /// never visited, because a link is a path the target has.
+    pub discovered: BTreeMap<String, BTreeSet<String>>,
     /// Saved request/response collections.
     pub organizer: Vec<panels::organizer::OrganizerItem>,
     /// Height taken by the tab rows alone. The panel paints into a rect without moving the cursor,
@@ -332,6 +335,7 @@ impl App {
             responses: HashMap::new(),
             next_request: 1,
             log: VecDeque::new(),
+            discovered: BTreeMap::new(),
             tab_rows_height: 0.0,
             websockets: Vec::new(),
             dns_log: Vec::new(),
@@ -610,6 +614,7 @@ impl App {
         match event {
             Event::Tx { method, target, status, bytes, request, response, secure } => {
                 let host = host_of(&target);
+                self.remember_links(&target, &response);
                 retain(&mut self.log, Transaction {
                     method,
                     target,
@@ -736,6 +741,12 @@ impl App {
         self.tool = tool;
         self.status = TOOLS[tool].to_string();
     }
+}
+
+/// The host of a target with its scheme, the way the site map names it.
+fn host_key(target: &str, secure: bool) -> String {
+    let scheme = if secure { "https" } else { "http" };
+    format!("{scheme}://{}", host_of(target))
 }
 
 fn host_of(target: &str) -> String {
@@ -1818,6 +1829,29 @@ impl App {
             self.console.remove(0);
         }
         self.console.push_back(line.to_string());
+    }
+
+    /// Notes the links a response points at, so the site map can show paths that were never
+    /// visited.
+    pub fn remember_links(&mut self, target: &str, response: &str) {
+        let (head, body) = crate::analysis::split_message(response);
+        if body.is_empty() {
+            return;
+        }
+        let content_type = head
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("content-type:"))
+            .map(|line| line[13..].trim().to_string())
+            .unwrap_or_default();
+        if !crate::analysis::is_markup(&content_type, body) {
+            return;
+        }
+        for link in crate::scanner::crawler::links(body, target).into_iter().take(200) {
+            let secure = link.starts_with("https://");
+            let host = host_key(&link, secure);
+            let path = crate::scanner::http::path_of(&link);
+            self.discovered.entry(host).or_default().insert(path);
+        }
     }
 
     /// The memory readout for the status bar, refreshed a couple of times a second at most.
