@@ -1,0 +1,1308 @@
+//! The proxy and request machinery, as a library the GUI drives in-process.
+//!
+//! Everything here used to live inside the newline-delimited JSON binary. That binary is now a thin
+//! adapter over this module, and the GUI talks to it directly instead of across a pipe.
+
+use std::collections::HashMap;
+use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Mutex, broadcast, oneshot};
+
+type Io = BufReader<tokio::net::tcp::OwnedReadHalf>;
+type Out = tokio::net::tcp::OwnedWriteHalf;
+
+/// How much of a body the proxy keeps for display. Beyond this the operator still sees the correct
+/// byte count, but the text is truncated, so memory stays bounded on a large transfer.
+pub const BODY_CAPTURE_LIMIT: usize = 512 * 1024;
+
+/// Everything the proxy tells its owner about.
+#[derive(Clone, Debug)]
+pub enum Event {
+    /// The listener bound, or failed to. The UI learns the outcome this way rather than by polling.
+    Listening { port: u16 },
+    ListenerStopped,
+    Tx {
+        method: String,
+        target: String,
+        status: u16,
+        bytes: u64,
+        /// The request as sent, for Repeater and the history detail view.
+        request: String,
+        /// The response head and captured body.
+        response: String,
+    },
+    Held { id: u64, method: String, target: String, raw: String },
+    Released { id: u64, forwarded: bool },
+    Dropped { id: u64 },
+    /// A connection completed a WebSocket handshake and its frames are now being recorded.
+    WsOpen {
+        id: u64,
+        host: String,
+        request: String,
+        response: String,
+    },
+    /// One decoded WebSocket frame. `to_server` is false for frames travelling toward the client.
+    WsFrame { id: u64, to_server: bool, opcode: u8, text: String, bytes: usize },
+    WsClosed { id: u64 },
+    /// The DNS or SMTP capture listener bound.
+    DnsListening { port: u16 },
+    SmtpListening { port: u16 },
+    /// One DNS exchange seen by the Logger's DNS view.
+    Dns { question: String, kind: u16, answers: Vec<String>, server: String },
+    /// One SMTP message seen by the Logger's Email view.
+    Smtp { direction: String, from: String, to: Vec<String>, subject: String, body: String },
+    AttackResult { index: usize, status: u16, length: usize, matched: bool, error: Option<String> },
+    AttackDone { total: usize, matches: usize },
+    Error(String),
+}
+
+/// A request parked until the operator forwards or drops it.
+struct Held {
+    method: String,
+    target: String,
+    raw: String,
+    decision: oneshot::Sender<Option<()>>,
+}
+
+/// A parked request as the UI sees it.
+#[derive(Clone, Debug)]
+pub struct HeldInfo {
+    pub id: u64,
+    pub method: String,
+    pub target: String,
+    pub raw: String,
+}
+
+/// Match rules for an Intruder run.
+#[derive(Default, Clone)]
+pub struct MatchRules {
+    pub status: Vec<u16>,
+    pub negative_status: Vec<u16>,
+    pub negative_regex: Option<regex::Regex>,
+    pub length: bool,
+}
+
+impl MatchRules {
+    pub fn new(
+        status: Vec<u16>,
+        negative_status: Vec<u16>,
+        negative_regex: Option<String>,
+        length: bool,
+    ) -> Self {
+        Self {
+            status,
+            negative_status,
+            negative_regex: negative_regex
+                .filter(|s| !s.is_empty())
+                .and_then(|s| regex::Regex::new(&s).ok()),
+            length,
+        }
+    }
+}
+
+struct Inner {
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The DNS capture listener, kept so the Logger panel's Stop actually ends it.
+    dns_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The SMTP capture listener, same purpose.
+    smtp_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The port the live listener is bound to, so a restart can report the same one.
+    bound: tokio::sync::Mutex<Option<u16>>,
+    held: Mutex<HashMap<u64, Held>>,
+    intercept: AtomicBool,
+    next_held: AtomicU64,
+    next_ws: AtomicU64,
+    matches: AtomicUsize,
+    events: broadcast::Sender<Event>,
+    /// Session handling: cookies learned from `Set-Cookie` and replayed on later requests.
+    cookies: crate::cookies::CookieJar,
+    /// The match-and-replace script, applied to requests on their way out. Burp calls this feature
+    /// "Match and replace"; the script language here is the same Bambda one.
+    rules: std::sync::RwLock<Option<Vec<crate::bambda::Statement>>>,
+}
+
+impl Inner {
+    fn next_ws_id(&self) -> u64 {
+        self.next_ws.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Emits a decoded DNS exchange.
+    fn record_dns(&self, question: String, kind: u16, answers: Vec<String>, server: String) {
+        let _ = self.events.send(Event::Dns { question, kind, answers, server });
+    }
+
+    /// Emits a captured SMTP message.
+    fn record_smtp(&self, direction: String, from: String, to: Vec<String>, subject: String, body: String) {
+        let _ = self.events.send(Event::Smtp { direction, from, to, subject, body });
+    }
+
+    /// Emits one decoded WebSocket frame for the UI to record.
+    fn record_frame(&self, id: u64, to_server: bool, frame: &crate::ws::Frame) {
+        // Binary frames are shown as a summary rather than dumped, since a payload can be megabytes.
+        const TEXT_LIMIT: usize = 8 * 1024;
+        let text = if frame.payload.len() > TEXT_LIMIT {
+            format!("<{} bytes>", frame.payload.len())
+        } else {
+            match frame.as_text() {
+                Some(t) => t.to_string(),
+                None => format!("<{} bytes>", frame.payload.len()),
+            }
+        };
+        let _ = self.events.send(Event::WsFrame {
+            id,
+            to_server,
+            opcode: frame.opcode,
+            text,
+            bytes: frame.payload.len(),
+        });
+    }
+}
+
+/// The running proxy. Cheap to clone; every clone drives the same listener.
+#[derive(Clone)]
+pub struct Proxy {
+    inner: Arc<Inner>,
+}
+
+impl Proxy {
+    pub fn new() -> (Self, broadcast::Receiver<Event>) {
+        let (events, rx) = broadcast::channel(1024);
+        (
+            Proxy {
+                inner: Arc::new(Inner {
+                    task: Mutex::new(None),
+                    dns_task: Mutex::new(None),
+                    smtp_task: Mutex::new(None),
+                    bound: tokio::sync::Mutex::new(None),
+                    held: Mutex::new(HashMap::new()),
+                    intercept: AtomicBool::new(false),
+                    next_held: AtomicU64::new(1),
+                    next_ws: AtomicU64::new(1),
+                    matches: AtomicUsize::new(0),
+                    events,
+                    cookies: crate::cookies::CookieJar::new(),
+                    rules: std::sync::RwLock::new(None),
+                }),
+            },
+            rx,
+        )
+    }
+
+    fn emit(&self, event: Event) {
+        // A send error only means nobody is listening yet, which is not a failure.
+        let _ = self.inner.events.send(event);
+    }
+
+    /// Starts the DNS capture listener on its own port.
+    ///
+    /// DNS is a separate protocol on a separate socket, so it gets a listener of its own rather
+    /// than a mode on the HTTP one. `port` 0 asks the OS for an ephemeral port.
+    pub async fn start_dns(&self, port: u16) -> io::Result<u16> {
+        let bind = tokio::net::UdpSocket::bind(("127.0.0.1", port)).await?;
+        let actual = bind.local_addr()?.port();
+        self.emit(Event::DnsListening { port: actual });
+        let inner = self.inner.clone();
+        let handle = tokio::spawn(async move {
+            let mut buf = vec![0u8; 4096];
+            loop {
+                let Ok((n, peer)) = bind.recv_from(&mut buf).await else { continue };
+                let Ok(request) = crate::dns::decode(&buf[..n]) else { continue };
+                let Some(question) = request.questions.first() else { continue };
+                let mut answer = crate::dns::query(question_id(&buf[..n]), &question.name, question.kind, question.class);
+                // Mark it as a response so a resolver accepts it.
+                if answer.len() >= 4 {
+                    answer[2] |= 0x80;
+                }
+                let _ = bind.send_to(&answer, peer).await;
+                let answers = request
+                    .answers
+                    .iter()
+                    .map(|a| format!("{} {} ttl {}", a.name, crate::dns::kind_name(a.kind), a.ttl))
+                    .collect();
+                inner.record_dns(question.name.clone(), question.kind, answers, peer.to_string());
+            }
+        });
+        *self.inner.dns_task.lock().await = Some(handle);
+        Ok(actual)
+    }
+
+    /// Stops the DNS capture listener.
+    pub async fn stop_dns(&self) {
+        if let Some(handle) = self.inner.dns_task.lock().await.take() {
+            handle.abort();
+        }
+    }
+
+    /// True while the DNS capture listener is bound.
+    pub async fn dns_running(&self) -> bool {
+        self.inner.dns_task.lock().await.is_some()
+    }
+
+    /// Starts the SMTP capture listener.
+    ///
+    /// This is a passive observer: it speaks just enough SMTP to keep the conversation moving and
+    /// records the headers and body of each message. It does not queue or relay.
+    pub async fn start_smtp(&self, port: u16) -> io::Result<u16> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+        let actual = listener.local_addr()?.port();
+        self.emit(Event::SmtpListening { port: actual });
+        let inner = self.inner.clone();
+        let handle = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let inner = inner.clone();
+                tokio::spawn(async move { observe_smtp(stream, inner).await });
+            }
+        });
+        *self.inner.smtp_task.lock().await = Some(handle);
+        Ok(actual)
+    }
+
+    /// Stops the SMTP capture listener.
+    pub async fn stop_smtp(&self) {
+        if let Some(handle) = self.inner.smtp_task.lock().await.take() {
+            handle.abort();
+        }
+    }
+
+    /// True while the SMTP capture listener is bound.
+    pub async fn smtp_running(&self) -> bool {
+        self.inner.smtp_task.lock().await.is_some()
+    }
+
+    /// Binds and starts accepting. Port 0 asks the OS for an ephemeral one.
+    pub async fn start(&self, port: u16) -> io::Result<u16> {
+        // Bound to a local so the guard is released before bound_port() locks it again.
+        let already_running = self.inner.task.lock().await.is_some();
+        if already_running {
+            let existing = self.bound_port().await.unwrap_or(port);
+            self.emit(Event::Listening { port: existing });
+            return Err(io::Error::other("already listening"));
+        }
+        let listener = match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                self.emit(Event::Error(format!("Cannot listen on port {port}: {error}")));
+                return Err(error);
+            }
+        };
+        let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+        *self.inner.bound.lock().await = Some(bound);
+        let inner = self.inner.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                let accept = listener.accept().await;
+                if inner.task.lock().await.is_none() {
+                    return;
+                }
+                match accept {
+                    Ok((stream, _)) => {
+                        let proxy = Proxy { inner: inner.clone() };
+                        tokio::spawn(async move { proxy.handle(stream).await });
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        *self.inner.task.lock().await = Some(handle);
+        self.emit(Event::Listening { port: bound });
+        Ok(bound)
+    }
+
+    /// The port currently bound, if the listener is running.
+    pub async fn bound_port(&self) -> Option<u16> {
+        let running = self.inner.task.lock().await.is_some();
+        if running {
+            *self.inner.bound.lock().await
+        } else {
+            None
+        }
+    }
+
+    /// Sets the match-and-replace script. A script that does not parse is refused, so a typo never
+    /// silently disables the rules.
+    pub fn set_rules(&self, source: &str) -> Result<(), String> {
+        let script = crate::bambda::parse(source).map_err(|e| e.to_string())?;
+        *self.inner.rules.write().unwrap_or_else(|e| e.into_inner()) = Some(script);
+        Ok(())
+    }
+
+    /// Removes the match-and-replace script.
+    pub fn clear_rules(&self) {
+        *self.inner.rules.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// True when a match-and-replace script is active.
+    pub fn has_rules(&self) -> bool {
+        self.inner.rules.read().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    /// Applies the match-and-replace rules to a request, when any are set.
+    pub fn apply_rules(&self, head: &str) -> String {
+        let guard = self.inner.rules.read().unwrap_or_else(|e| e.into_inner());
+        match guard.as_ref() {
+            Some(script) => crate::bambda::run(script, head),
+            None => head.to_string(),
+        }
+    }
+
+    /// Adds a `Cookie` header when the request lacks one and the jar has something to send.
+    fn apply_cookies(&self, head: String, host: &str, port: u16) -> String {
+        if head.to_lowercase().contains("\ncookie:") || head.to_lowercase().starts_with("cookie:") {
+            return head;
+        }
+        let path = request_path(&head);
+        let secure = port == 443;
+        let Some(value) = self.inner.cookies.header(host, &path, secure) else {
+            return head;
+        };
+        // Keep the head/body separator intact whatever line ending the request used.
+        if let Some(at) = head.find("\r\n\r\n") {
+            let mut out = String::with_capacity(head.len() + value.len() + 16);
+            out.push_str(&head[..at]);
+            out.push_str("\r\nCookie: ");
+            out.push_str(&value);
+            out.push_str(&head[at..]);
+            return out;
+        }
+        format!("{head}\r\nCookie: {value}\r\n\r\n")
+    }
+
+    pub async fn stop(&self) {
+        let handle = self.inner.task.lock().await.take();
+        if let Some(h) = handle {
+            h.abort();
+        }
+        // The capture listeners belong to the same session, so stopping the proxy stops them.
+        if let Some(h) = self.inner.dns_task.lock().await.take() {
+            h.abort();
+        }
+        if let Some(h) = self.inner.smtp_task.lock().await.take() {
+            h.abort();
+        }
+        *self.inner.bound.lock().await = None;
+        self.emit(Event::ListenerStopped);
+    }
+
+    /// The cookie jar, for the Proxy panel's Cookies view.
+    pub fn cookies(&self) -> &crate::cookies::CookieJar {
+        &self.inner.cookies
+    }
+
+    pub fn set_intercept(&self, on: bool) {
+        self.inner.intercept.store(on, Ordering::SeqCst);
+        if !on {
+            self.release_all();
+        }
+    }
+
+    pub fn intercepting(&self) -> bool {
+        self.inner.intercept.load(Ordering::SeqCst)
+    }
+
+    pub async fn held(&self) -> Vec<HeldInfo> {
+        let held = self.inner.held.lock().await;
+        let mut items: Vec<HeldInfo> = held
+            .iter()
+            .map(|(id, h)| HeldInfo {
+                id: *id,
+                method: h.method.clone(),
+                target: h.target.clone(),
+                raw: h.raw.clone(),
+            })
+            .collect();
+        items.sort_by_key(|h| h.id);
+        items
+    }
+
+    /// Releases one parked request. Returns false when the id is unknown or already answered.
+    pub async fn forward(&self, id: u64) -> bool {
+        let item = self.inner.held.lock().await.remove(&id);
+        let ok = item.map(|i| i.decision.send(Some(())).is_ok()).unwrap_or(false);
+        self.emit(Event::Released { id, forwarded: ok });
+        ok
+    }
+
+    /// Discards one parked request instead of letting it through.
+    pub async fn discard(&self, id: u64) -> bool {
+        let item = self.inner.held.lock().await.remove(&id);
+        let ok = item.map(|i| i.decision.send(None).is_ok()).unwrap_or(false);
+        self.emit(Event::Released { id, forwarded: false });
+        ok
+    }
+
+    pub async fn forward_all(&self) {
+        self.release_all();
+    }
+
+    /// Releases every parked request. Used when interception is switched off.
+    pub fn release_all(&self) {
+        // Dropping the sender is how a parked request learns it was dropped.
+        if let Ok(mut held) = self.inner.held.try_lock() {
+            for (_, item) in held.drain() {
+                let _ = item.decision.send(Some(()));
+            }
+        }
+    }
+
+    /// Sends one raw request and returns the status and full response text.
+    pub async fn one_shot(&self, host: &str, port: u16, raw: &str, timeout_ms: u64) -> Result<(u16, String), String> {
+        // The rules apply to every request this build sends, not only the ones that pass through
+        // the listener, so Repeater, the scanner and Discover see the same rewriting.
+        let raw = self.apply_rules(raw);
+        let call = one_shot(host, port, &raw);
+        match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
+            Ok(Ok(pair)) => Ok(pair),
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err("timed out".to_string()),
+        }
+    }
+
+    /// Runs an Intruder grid with bounded concurrency, emitting one result per request.
+    pub async fn attack(
+        &self,
+        host: String,
+        port: u16,
+        requests: Vec<String>,
+        threads: usize,
+        rules: MatchRules,
+    ) {
+        self.inner.matches.store(0, Ordering::SeqCst);
+        let total = requests.len();
+        let cursor = Arc::new(AtomicUsize::new(0));
+        let workers = threads.clamp(1, 64).min(total.max(1));
+
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let cursor = cursor.clone();
+            let host = host.clone();
+            let requests = requests.clone();
+            let rules = rules.clone();
+            let proxy = self.clone();
+            let baseline = Arc::new(AtomicUsize::new(usize::MAX));
+            handles.push(tokio::spawn(async move {
+                loop {
+                    let index = cursor.fetch_add(1, Ordering::SeqCst);
+                    if index >= requests.len() {
+                        return;
+                    }
+                    let raw = requests[index].clone();
+                    let outcome = proxy.one_shot(&host, port, &raw, 15_000).await;
+                    let event = match outcome {
+                        Ok((status, body)) => {
+                            let length = body.len();
+                            let matched = apply_rules(&rules, &baseline, status, &body);
+                            if matched {
+                                proxy.inner.matches.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Event::AttackResult { index, status, length, matched, error: None }
+                        }
+                        Err(error) => Event::AttackResult {
+                            index,
+                            status: 0,
+                            length: 0,
+                            matched: false,
+                            error: Some(error),
+                        },
+                    };
+                    proxy.emit(event);
+                }
+            }));
+        }
+        for handle in handles {
+            let _ = handle.await;
+        }
+        let matches = self.inner.matches.load(Ordering::SeqCst);
+        self.emit(Event::AttackDone { total, matches });
+    }
+
+    async fn handle(self, stream: TcpStream) {
+        let _ = stream.set_nodelay(true);
+        let (read, write) = stream.into_split();
+        let mut reader = BufReader::new(read);
+
+        let head = match read_head(&mut reader).await {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let mut parts = head.lines().next().unwrap_or("").split_whitespace();
+        let method = parts.next().unwrap_or("").to_string();
+        let target = parts.next().unwrap_or("").to_string();
+
+        if method.eq_ignore_ascii_case("CONNECT") {
+            self.tunnel(reader, write, &method, &target).await;
+        } else {
+            self.forward_request(reader, write, head, &method, &target).await;
+        }
+    }
+
+    async fn forward_request(
+        self,
+        mut reader: Io,
+        mut client: Out,
+        head: String,
+        method: &str,
+        target: &str,
+    ) {
+        if self.inner.intercept.load(Ordering::SeqCst) {
+            let (decision, wait) = oneshot::channel();
+            let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
+            self.inner.held.lock().await.insert(
+                id,
+                Held { method: method.to_string(), target: target.to_string(), raw: head.clone(), decision },
+            );
+            self.emit(Event::Held {
+                id,
+                method: method.to_string(),
+                target: target.to_string(),
+                raw: head.clone(),
+            });
+            if !matches!(wait.await, Ok(Some(()))) {
+                self.inner.held.lock().await.remove(&id);
+                self.emit(Event::Dropped { id });
+                return;
+            }
+        }
+
+        let Some((host, port)) = host_port(&head, target) else {
+            self.emit(Event::Error(format!("cannot resolve target: {target}")));
+            return;
+        };
+        let mut upstream = match TcpStream::connect((host.as_str(), port)).await {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = client
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+                self.emit(Event::Tx {
+                    method: method.to_string(),
+                    target: target.to_string(),
+                    status: 502,
+                    bytes: 0,
+                    request: head.clone(),
+                    response: "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into(),
+                });
+                return;
+            }
+        };
+        // Session handling: replay cookies this jar already holds for the target, and learn new ones
+        // from the response. A request that already carries a Cookie header is left alone, so an
+        // explicit cookie always wins over the jar.
+        // Match-and-replace runs first, so a rule can rewrite a header the cookie jar would add.
+        let head = self.apply_cookies(self.apply_rules(&head), &host, port);
+        if upstream.write_all(head.as_bytes()).await.is_err() {
+            self.emit(Event::Error(format!("write upstream: {target}")));
+            return;
+        }
+
+        let (up_read, up_write) = upstream.into_split();
+        // A WebSocket upgrade is relay-only after the handshake, so the blind forwarder must not
+        // start: it would consume the client half this handler needs to decode frames.
+        // A WebSocket upgrade is relay-only after the handshake, so this path keeps both halves
+        // here and returns before the ordinary forwarder below can take the client's read half.
+        if crate::ws::is_upgrade(&head) {
+            let mut up_reader = BufReader::new(up_read);
+            let (status, status_line) = take_status_line(&mut up_reader).await;
+            if client.write_all(&status_line).await.is_err() {
+                return;
+            }
+            if status != 101 {
+                self.emit(Event::Error(format!(
+                    "upgrade to websocket refused with {status}"
+                )));
+                return;
+            }
+            // The 101 still carries headers, so the head has to be drained before frames start.
+            let mut rest = String::new();
+            loop {
+                match up_reader.read_line(&mut rest).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if n == 0 || rest.ends_with("\r\n\r\n") || rest.ends_with("\n\n") {
+                            break;
+                        }
+                        if rest.len() > 64 * 1024 {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = client.write_all(rest.as_bytes()).await;
+            let _ = client.flush().await;
+            let response = format!("{}{rest}", String::from_utf8_lossy(&status_line));
+            let id = self.inner.next_ws_id();
+            self.emit(Event::WsOpen {
+                id,
+                // The resolved authority, not the request target: the target is just the path, and
+                // a WebSocket list grouped by target would be useless.
+                host: format!("{host}:{port}"),
+                request: head.clone(),
+                response,
+            });
+            self.relay_websocket(id, reader, client, up_reader, up_write).await;
+            self.emit(Event::WsClosed { id });
+            return;
+        }
+
+        // Never wait for client EOF: a keep-alive client does not send one.
+        let mut out = up_write;
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 16384];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => {
+                        if out.write_all(&buf[..n]).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut up_reader = BufReader::new(up_read);
+        let (status, status_line) = take_status_line(&mut up_reader).await;
+        if client.write_all(&status_line).await.is_err() {
+            return;
+        }
+        let (body, captured) = copy_across(&mut up_reader, &mut client).await;
+        let _ = client.flush().await;
+
+        let mut response = String::from_utf8_lossy(&status_line).into_owned();
+        response.push_str(&String::from_utf8_lossy(&captured));
+        for cookie in crate::cookies::parse_set_cookie_headers(&response) {
+            self.inner.cookies.store(&host, &cookie);
+        }
+        self.inner.cookies.evict_expired();
+        self.emit(Event::Tx {
+            method: method.to_string(),
+            target: target.to_string(),
+            status,
+            bytes: body,
+            request: head,
+            response,
+        });
+    }
+
+    async fn tunnel(self, mut reader: Io, mut client: Out, method: &str, authority: &str) {
+        let (host, port) = split_authority(authority);
+        let upstream = match TcpStream::connect((host.as_str(), port)).await {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = client
+                    .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+                self.emit(Event::Error(format!("connect {authority}: {e}")));
+                return;
+            }
+        };
+        if client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.is_err() {
+            return;
+        }
+        let (up_read, mut up_write) = upstream.into_split();
+
+        let up = tokio::spawn(async move {
+            let mut r = BufReader::new(up_read);
+            let mut buf = vec![0u8; 16384];
+            loop {
+                match r.read(&mut buf).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => {
+                        if client.write_all(&buf[..n]).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut buf = vec![0u8; 16384];
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if up_write.write_all(&buf[..n]).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        up.abort();
+        self.emit(Event::Tx {
+            method: method.to_string(),
+            target: authority.to_string(),
+            status: 200,
+            bytes: 0,
+            request: format!("CONNECT {authority} HTTP/1.1\r\n\r\n"),
+            response: "HTTP/1.1 200 Connection Established\r\n\r\n".into(),
+        });
+    }
+}
+
+impl Proxy {
+    /// Relays WebSocket frames in both directions, recording each decoded one.
+    ///
+    /// Frames are forwarded byte-for-byte so the proxy cannot alter what the two peers negotiated;
+    /// the decode is used only for the record. The loop ends as soon as *either* side closes,
+    /// because a WebSocket conversation is over when one peer hangs up, not only when the client does.
+    async fn relay_websocket(
+        &self,
+        id: u64,
+        mut from_client: Io,
+        mut to_client: Out,
+        mut from_server: BufReader<tokio::net::tcp::OwnedReadHalf>,
+        mut to_server: Out,
+    ) {
+        // Bytes arriving mid-frame are carried into the next decode, so each direction keeps its own
+        // buffer rather than decoding each read in isolation.
+        let mut to_upstream: Vec<u8> = Vec::new();
+        let mut to_downstream: Vec<u8> = Vec::new();
+        let mut up_buf = vec![0u8; 16384];
+        let mut down_buf = vec![0u8; 16384];
+        loop {
+            tokio::select! {
+                read = from_client.read(&mut up_buf) => {
+                    let n = match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    if to_server.write_all(&up_buf[..n]).await.is_err() {
+                        break;
+                    }
+                    let _ = to_server.flush().await;
+                    to_upstream.extend_from_slice(&up_buf[..n]);
+                    drain_frames(&mut to_upstream, &mut |frame| self.inner.record_frame(id, true, frame));
+                }
+                read = from_server.read(&mut down_buf) => {
+                    let n = match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    if to_client.write_all(&down_buf[..n]).await.is_err() {
+                        break;
+                    }
+                    let _ = to_client.flush().await;
+                    to_downstream.extend_from_slice(&down_buf[..n]);
+                    drain_frames(&mut to_downstream, &mut |frame| self.inner.record_frame(id, false, frame));
+                }
+            }
+        }
+    }
+}
+
+/// The most bytes a single frame header plus payload can occupy, given the codec's ceiling.
+const CARRY_CEILING: usize = crate::ws::MAX_FRAME_PAYLOAD + 14;
+
+/// Decodes and reports every whole frame at the front of `buffer`, then removes those bytes.
+///
+/// Whatever is left is an incomplete frame and stays buffered for the next read. A frame larger
+/// than `CARRY_CEILING` cannot be legal, so a buffer that reaches it without producing a frame means
+/// the stream is desynchronised and the remainder is dropped rather than grown without limit.
+fn drain_frames(buffer: &mut Vec<u8>, on_frame: &mut dyn FnMut(&crate::ws::Frame)) {
+    loop {
+        let Ok((frames, used)) = crate::ws::decode(buffer) else {
+            // A malformed stream cannot resynchronise on a frame boundary.
+            buffer.clear();
+            return;
+        };
+        if frames.is_empty() || used == 0 {
+            if buffer.len() > CARRY_CEILING {
+                buffer.clear();
+            }
+            return;
+        }
+        for frame in &frames {
+            on_frame(frame);
+        }
+        buffer.drain(..used);
+    }
+}
+
+fn question_id(bytes: &[u8]) -> u16 {
+    if bytes.len() >= 2 {
+        u16::from_be_bytes([bytes[0], bytes[1]])
+    } else {
+        0
+    }
+}
+
+/// Reads one SMTP message and records it. Errors are swallowed: a capture tool must not interrupt
+/// whatever is on the other end of the socket.
+async fn observe_smtp(stream: tokio::net::TcpStream, inner: Arc<Inner>) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+    let mut line = String::new();
+    let _ = write_half.write_all(b"220 gulpsuite ESMTP\r\n").await;
+
+    let mut from = String::new();
+    let mut to: Vec<String> = Vec::new();
+    let mut subject = String::new();
+    let mut body = String::new();
+    let mut in_data = false;
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
+        if in_data {
+            // Header lines still arrive inside DATA, so the subject has to be picked up here; by
+            // the time this reaches the command section it has already been consumed.
+            if subject.is_empty() && trimmed.to_ascii_uppercase().starts_with("SUBJECT:") {
+                subject = trimmed["SUBJECT:".len()..].trim().to_string();
+            }
+            if trimmed == "." {
+                in_data = false;
+                inner.record_smtp("client to server".into(), from.clone(), to.clone(), subject.clone(), body.clone());
+                from.clear();
+                to.clear();
+                subject.clear();
+                body.clear();
+                let _ = write_half.write_all(b"250 OK\r\n").await;
+                continue;
+            }
+            // A leading dot is an escape for a literal one.
+            body.push_str(trimmed.strip_prefix('.').unwrap_or(&trimmed));
+            body.push('\n');
+            // A message body is capped so a large upload cannot grow without bound.
+            if body.len() > 1024 * 1024 {
+                in_data = false;
+            }
+            continue;
+        }
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.starts_with("EHLO") || upper.starts_with("HELO") {
+            let _ = write_half.write_all(b"250 gulpsuite\r\n").await;
+        } else if upper.starts_with("MAIL FROM") {
+            from = address_of(&trimmed);
+            let _ = write_half.write_all(b"250 OK\r\n").await;
+        } else if upper.starts_with("RCPT TO") {
+            to.push(address_of(&trimmed));
+            let _ = write_half.write_all(b"250 OK\r\n").await;
+        } else if upper.starts_with("DATA") {
+            in_data = true;
+            let _ = write_half.write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n").await;
+        } else if upper.starts_with("QUIT") {
+            let _ = write_half.write_all(b"221 Bye\r\n").await;
+            return;
+        } else {
+            let _ = write_half.write_all(b"250 OK\r\n").await;
+        }
+    }
+}
+
+/// Pulls the address out of `MAIL FROM:<a@b>` or `RCPT TO:<c@d>`.
+fn address_of(line: &str) -> String {
+    let Some(start) = line.find('<') else { return line.trim().to_string() };
+    let Some(end) = line[start..].find('>').map(|i| start + i) else {
+        return line[start + 1..].trim().to_string();
+    };
+    line[start + 1..end].trim().to_string()
+}
+
+async fn read_head(reader: &mut Io) -> io::Result<String> {
+    let mut head = String::new();
+    loop {
+        let n = reader.read_line(&mut head).await?;
+        if n == 0 || head.ends_with("\r\n\r\n") || head.ends_with("\n\n") {
+            return Ok(head);
+        }
+        if head.len() > 64 * 1024 {
+            return Err(io::Error::other("request head too large"));
+        }
+    }
+}
+
+/// Consumes the status line, handing back the code and the raw bytes to replay verbatim.
+async fn take_status_line(reader: &mut Io) -> (u16, Vec<u8>) {
+    let mut raw = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        match reader.read_exact(&mut byte).await {
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        raw.push(byte[0]);
+        if raw.len() >= 2 && raw[raw.len() - 2] == b'\r' && byte[0] == b'\n' {
+            break;
+        }
+        if raw.len() >= 8192 {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let code = text
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse::<u16>().ok())
+        .unwrap_or(0);
+    (code, raw)
+}
+
+/// Streams a body to the client while keeping the first `BODY_CAPTURE_LIMIT` bytes for display.
+async fn copy_across(from: &mut Io, to: &mut Out) -> (u64, Vec<u8>) {
+    let mut buf = vec![0u8; 16384];
+    let mut total = 0u64;
+    let mut kept: Vec<u8> = Vec::new();
+    loop {
+        match from.read(&mut buf).await {
+            Ok(0) | Err(_) => return (total, kept),
+            Ok(n) => {
+                total += n as u64;
+                if kept.len() < BODY_CAPTURE_LIMIT {
+                    let room = BODY_CAPTURE_LIMIT - kept.len();
+                    kept.extend_from_slice(&buf[..n.min(room)]);
+                }
+                if to.write_all(&buf[..n]).await.is_err() {
+                    return (total, kept);
+                }
+            }
+        }
+    }
+}
+
+async fn one_shot(host: &str, port: u16, raw: &str) -> io::Result<(u16, String)> {
+    let mut stream = TcpStream::connect((host, port)).await?;
+    stream.write_all(normalise_newlines(raw).as_bytes()).await?;
+    stream.flush().await?;
+    let (read, _write) = stream.into_split();
+    let mut reader = BufReader::new(read);
+    let (status, status_line) = take_status_line(&mut reader).await;
+    let mut full = status_line;
+    let mut buf = vec![0u8; 16384];
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => full.extend_from_slice(&buf[..n]),
+        }
+    }
+    Ok((status, String::from_utf8_lossy(&full).into_owned()))
+}
+
+/// CRLF-normalises a request and guarantees the terminating blank line.
+fn normalise_newlines(raw: &str) -> String {
+    let s = raw.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n");
+    // The head already ends in at most one CRLF; the blank line needs exactly one more, so
+    // appending a full CRLFCRLF emitted a stray empty line.
+    if s.ends_with("\r\n\r\n") {
+        s
+    } else if s.ends_with("\r\n") {
+        format!("{s}\r\n")
+    } else {
+        format!("{s}\r\n\r\n")
+    }
+}
+
+/// Decides whether one response counts as a hit.
+fn apply_rules(rules: &MatchRules, baseline: &AtomicUsize, status: u16, body: &str) -> bool {
+    if !rules.negative_status.is_empty() && rules.negative_status.contains(&status) {
+        return false;
+    }
+    if let Some(re) = &rules.negative_regex {
+        if re.is_match(body) {
+            return false;
+        }
+    }
+    if !rules.status.is_empty() && !rules.status.contains(&status) {
+        return false;
+    }
+    if rules.length {
+        let previous = baseline.load(Ordering::SeqCst);
+        if previous == usize::MAX {
+            // The first response defines the baseline and never matches itself.
+            baseline.store(body.len(), Ordering::SeqCst);
+            return false;
+        }
+        return body.len() != previous;
+    }
+    true
+}
+
+fn split_authority(authority: &str) -> (String, u16) {
+    split_authority_with_default(authority, 443)
+}
+
+/// `default_port` matters: an absolute `http://` URL without a port is 80, while a CONNECT
+/// authority without a port is 443. Assuming 443 for both sent plain HTTP to the TLS port.
+fn split_authority_with_default(authority: &str, default_port: u16) -> (String, u16) {
+    match authority.rsplit_once(':') {
+        // Only treat the tail as a port when it actually parses as one.
+        Some((h, p)) => match p.parse::<u16>() {
+            Ok(port) => (h.to_string(), port),
+            Err(_) => (authority.to_string(), default_port),
+        },
+        None => (authority.to_string(), default_port),
+    }
+}
+
+pub fn host_port(head: &str, target: &str) -> Option<(String, u16)> {
+    for (scheme, default_port) in [("http://", 80u16), ("https://", 443)] {
+        if let Some(rest) = target.strip_prefix(scheme) {
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+            return Some(split_authority_with_default(authority, default_port));
+        }
+    }
+    for line in head.lines() {
+        if let Some(value) = line
+            .split_once(':')
+            .filter(|(k, _)| k.trim().eq_ignore_ascii_case("host"))
+            .map(|(_, v)| v.trim())
+        {
+            return Some(split_authority(value));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_defaults_to_https() {
+        assert_eq!(split_authority("example.com"), ("example.com".into(), 443));
+        assert_eq!(split_authority("example.com:8443"), ("example.com".into(), 8443));
+    }
+
+    #[test]
+    fn target_host_beats_missing_header() {
+        let head = "GET http://example.com/x HTTP/1.1\r\n";
+        assert_eq!(host_port(head, "http://example.com/x"), Some(("example.com".into(), 80)));
+        // A scheme decides the default port; HTTPS is not HTTP.
+        assert_eq!(host_port(head, "https://example.com/x"), Some(("example.com".into(), 443)));
+        assert_eq!(host_port(head, "http://example.com:8080/x"), Some(("example.com".into(), 8080)));
+        // A query string must not end up inside the authority.
+        assert_eq!(host_port(head, "http://example.com/x?a=b"), Some(("example.com".into(), 80)));
+    }
+
+    #[test]
+    fn falls_back_to_host_header() {
+        let head = "GET /x HTTP/1.1\r\nHost: example.com:8080\r\n\r\n";
+        assert_eq!(host_port(head, "/x"), Some(("example.com".into(), 8080)));
+    }
+
+    #[test]
+    fn unresolvable_target_is_none() {
+        assert_eq!(host_port("GET /x HTTP/1.1\r\n", "/x"), None);
+    }
+
+    #[test]
+    fn status_filter_is_allow_list() {
+        let baseline = AtomicUsize::new(usize::MAX);
+        let rules = MatchRules::new(vec![200], vec![], None, false);
+        assert!(apply_rules(&rules, &baseline, 200, "ok"));
+        assert!(!apply_rules(&rules, &baseline, 404, "ok"));
+    }
+
+    #[test]
+    fn negative_filters_win_over_positive() {
+        let baseline = AtomicUsize::new(usize::MAX);
+        let rules = MatchRules::new(vec![200], vec![200], Some("boom".into()), false);
+        assert!(!apply_rules(&rules, &baseline, 200, "boom"));
+    }
+
+    #[test]
+    fn length_rule_uses_first_response_as_baseline() {
+        let baseline = AtomicUsize::new(usize::MAX);
+        let rules = MatchRules::new(vec![], vec![], None, true);
+        assert!(!apply_rules(&rules, &baseline, 200, "aaaa"), "baseline never matches");
+        assert!(!apply_rules(&rules, &baseline, 200, "aaaa"), "same length never matches");
+        assert!(apply_rules(&rules, &baseline, 200, "aaaaa"), "different length matches");
+    }
+
+    #[test]
+    fn newlines_are_normalised_and_terminated() {
+        assert_eq!(normalise_newlines("GET / HTTP/1.1\n"), "GET / HTTP/1.1\r\n\r\n");
+        // Already terminated inputs must not gain an extra blank line.
+        assert_eq!(normalise_newlines("GET / HTTP/1.1"), "GET / HTTP/1.1\r\n\r\n");
+        assert_eq!(normalise_newlines("GET / HTTP/1.1\r\n\r\n"), "GET / HTTP/1.1\r\n\r\n");
+    }
+
+    #[tokio::test]
+    async fn one_shot_round_trips_verbatim() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 2048];
+            let _ = socket.read(&mut buf).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        });
+        let (status, body) = one_shot("127.0.0.1", port, "GET / HTTP/1.1\nHost: x\n\n").await.unwrap();
+        assert_eq!(status, 204);
+        assert!(body.starts_with("HTTP/1.1 204"));
+    }
+
+    #[tokio::test]
+    async fn start_binds_a_port_and_records_a_transaction() {
+        let (proxy, mut events) = Proxy::new();
+        // Port 0 asks the OS for a free port, so the test never collides with anything.
+        let port = proxy.start(0).await.unwrap();
+        assert!(port > 0);
+        assert!(proxy.start(0).await.is_err(), "a second start must be refused");
+
+        // 127.0.0.1:1 refuses connections, so the proxy answers 502 and logs the transaction.
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        client
+            .write_all(b"GET http://127.0.0.1:1/ HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 256];
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut buf)).await;
+
+        // Lifecycle events share the stream now, so the transaction is selected rather than assumed.
+        let event = loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .expect("proxy logged no transaction")
+                .unwrap();
+            match event {
+                Event::Listening { .. } | Event::ListenerStopped => continue,
+                other => break other,
+            }
+        };
+        assert!(
+            matches!(event, Event::Tx { status: 502, .. } | Event::Error(_)),
+            "expected a 502 or an error, got {event:?}"
+        );
+        proxy.stop().await;
+        assert!(proxy.start(0).await.is_ok(), "stop must free the slot");
+    }
+
+    #[tokio::test]
+    async fn start_announces_the_port_it_bound() {
+        // The UI enables Stop from this event, so a silent bind leaves the panel stuck on
+        // "Starting..." forever.
+        let (proxy, mut events) = Proxy::new();
+        let bound = proxy.start(0).await.expect("bind");
+        let mut saw = false;
+        for _ in 0..16 {
+            match events.recv().await.expect("event") {
+                Event::Listening { port } => {
+                    assert_eq!(port, bound);
+                    saw = true;
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        assert!(saw, "start never announced its port");
+        assert_eq!(proxy.bound_port().await, Some(bound));
+
+        proxy.stop().await;
+        let mut stopped = false;
+        for _ in 0..16 {
+            match events.recv().await.expect("event") {
+                Event::ListenerStopped => {
+                    stopped = true;
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        assert!(stopped, "stop never announced itself");
+        assert_eq!(proxy.bound_port().await, None);
+    }
+
+    #[tokio::test]
+    async fn a_second_start_reports_the_running_port_instead_of_binding_again() {
+        let (proxy, mut events) = Proxy::new();
+        let bound = proxy.start(0).await.expect("bind");
+        assert!(proxy.start(0).await.is_err(), "second start must fail");
+        let announced = loop {
+            match events.recv().await.expect("event") {
+                Event::Listening { port } => break port,
+                _ => continue,
+            }
+        };
+        assert_eq!(announced, bound, "the still-running port should be reported");
+        proxy.stop().await;
+    }
+
+    #[tokio::test]
+    async fn interception_parks_until_forwarded() {
+        let (proxy, mut events) = Proxy::new();
+        proxy.set_intercept(true);
+        let port = proxy.start(0).await.unwrap();
+        tokio::spawn(async move {
+            let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+            let _ = client
+                .write_all(b"GET http://127.0.0.1:1/ HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n")
+                .await;
+            let mut buf = vec![0u8; 256];
+            let _ = client.read(&mut buf).await;
+        });
+
+        let held = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let list = proxy.held().await;
+                if let Some(first) = list.first() {
+                    return first.clone();
+                }
+                let _ = events.recv().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("request was never parked");
+
+        assert!(proxy.forward(held.id).await, "forward should release a held request");
+        proxy.stop().await;
+    }
+
+    #[tokio::test]
+    async fn dropping_an_unknown_id_reports_failure() {
+        let (proxy, _rx) = Proxy::new();
+        assert!(!proxy.forward(999).await);
+        assert!(!proxy.discard(999).await);
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    /// Clipping must cut on a char boundary, never mid-character.
+    #[test]
+    fn clipping_never_splits_a_character() {
+        let text = "e\u{301}".repeat(64); // combining mark: multi-byte chars
+        let clipped = crate::ui::app::clip_public(&text, 32);
+        assert!(clipped.len() <= 32);
+        assert!(clipped.chars().all(|c| c == 'e' || c == '\u{301}'));
+        // Round-tripping must not panic and must be valid UTF-8.
+        assert_eq!(clipped.chars().count(), text[..clipped.len()].chars().count());
+    }
+}
+
+/// The request path for cookie scoping.
+///
+/// A proxied request uses the absolute form `GET http://host/path HTTP/1.1`, so the target token is
+/// a full URL and its path is only the part after the authority. Taking the token verbatim made every
+/// cookie fail its path match, which is why nothing was ever replayed.
+pub fn request_path(head: &str) -> String {
+    let target = head.lines().next().and_then(|line| line.split_whitespace().nth(1));
+    let Some(target) = target else {
+        return "/".into();
+    };
+    let without_query = target.split(['?', '#']).next().unwrap_or(target);
+    if without_query.starts_with("http://") || without_query.starts_with("https://") {
+        let Some((_, authority)) = without_query.split_once("://") else {
+            return "/".into();
+        };
+        return match authority.find('/') {
+            Some(at) => authority[at..].to_string(),
+            None => "/".into(),
+        };
+    }
+    if without_query.is_empty() {
+        return "/".into();
+    }
+    without_query.to_string()
+}
+

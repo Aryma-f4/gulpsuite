@@ -1,0 +1,26 @@
+[package]
+name = "gulpsuite"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "gulpsuite"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gulpsuite"
+path = "src/bin/gulpsuite.rs"
+
+[[bin]]
+name = "gulpsuite-engine"
+path = "src/bin/gulpsuite-engine.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "io-std", "time"] }
+serde_json = "1"
+regex = "1"
+eframe = "0.33"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+opt-level = 2

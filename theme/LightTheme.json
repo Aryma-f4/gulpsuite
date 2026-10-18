@@ -1,0 +1,368 @@
+{
+  "name": "Light",
+  "dark": false,
+  "colors": {
+    "swatches": {
+      "orange": {
+        "core": "#FF6633",
+        "shades": [
+          "#AD5B28",
+          "#DB612F",
+          "#FF7B4E",
+          "#FF8D64",
+          "#FF9E7A",
+          "#FFB090",
+          "#FFC1A6"
+        ]
+      },
+      "blue": {
+        "core": "#26649D",
+        "shades": [
+          "#323945",
+          "#2C5175",
+          "#5384B2",
+          "#79A0C3",
+          "#9FBBD4",
+          "#CADAF0",
+          "#EBF1F6"
+        ]
+      },
+      "red": {
+        "core": "#D6213F",
+        "shades": [
+          "#5D3D3F",
+          "#A02E3F",
+          "#DF4C63",
+          "#E67082",
+          "#EE95A1",
+          "#F5B9BF",
+          "#FDDDDE"
+        ]
+      },
+      "purple": {
+        "core": "#5B4FFF",
+        "shades": [
+          "#363648",
+          "#4B44AE",
+          "#786FFF",
+          "#9189FE",
+          "#AAA4FE",
+          "#C3BFFD",
+          "#DBD9FC"
+        ]
+      },
+      "teal": {
+        "core": "#00A2B9",
+        "shades": [
+          "#31494E",
+          "#2A828E",
+          "#5FBAC2",
+          "#83CDD1",
+          "#A5DBE2",
+          "#C0EFF4",
+          "#D6FAFF"
+        ]
+      },
+      "magenta": {
+        "core": "#C311A8",
+        "shades": [
+          "#63315B",
+          "#87486F",
+          "#BB608D",
+          "#D37FA4",
+          "#DA97B1",
+          "#F2BDD4",
+          "#FFE2FB"
+        ]
+      },
+      "green": {
+        "core": "#3BA317",
+        "shades": [
+          "#333E31",
+          "#387723",
+          "#5FB441",
+          "#7DC164",
+          "#9BCF88",
+          "#B8DCAA",
+          "#D5E9CD"
+        ]
+      },
+      "yellow": {
+        "core": "#D38C01",
+        "shades": [
+          "#4A3E2C",
+          "#976A14",
+          "#DBA02F",
+          "#E1B156",
+          "#E7C17D",
+          "#EDD2A3",
+          "#F3E2C9"
+        ]
+      },
+      "black": {
+        "core": "#000000",
+        "shades": [
+          "#2B2B2B",
+          "#323334",
+          "#424244",
+          "#525255",
+          "#6A6A6C",
+          "#818181",
+          "#C5C7C8",
+          "#FFFFFF"
+        ]
+      },
+      "white": {
+        "core": "#FFFFFF",
+        "shades": [
+          "#FFFFFF",
+          "#FBFBFB",
+          "#EEEEEE",
+          "#DFDFDF",
+          "#C9C9C9",
+          "#B0AFAF",
+          "#4B4B4B",
+          "#2B2B2B"
+        ]
+      }
+    },
+    "palette": {
+      "mono": "@white",
+      "primary": "@orange",
+      "secondary": "@blue",
+      "tertiary": "@purple",
+      "error": "@red",
+      "warning": "@yellow",
+      "info": "@blue",
+      "success": "@green",
+      "hint": "@teal"
+    },
+    "ui": {
+      "groups": {
+        "0": {
+          "accent": "@purple[5]",
+          "background": "@purple[7]"
+        },
+        "1": {
+          "accent": "@red[5]",
+          "background": "@red[7]"
+        },
+        "2": {
+          "accent": "@yellow[5]",
+          "background": "@yellow[7]"
+        },
+        "3": {
+          "accent": "@green[5]",
+          "background": "@green[7]"
+        },
+        "4": {
+          "accent": "@blue[5]",
+          "background": "@blue[7]"
+        },
+        "5": {
+          "accent": "@teal[5]",
+          "background": "@teal[7]"
+        },
+        "6": {
+          "accent": "@magenta[5]",
+          "background": "@magenta[7]"
+        },
+        "7": {
+          "accent": "$mono[6]",
+          "background": "$mono[5]"
+        },
+        "8": {
+          "accent": "@purple[3]",
+          "background": "@purple[5]"
+        },
+        "9": {
+          "accent": "@red[3]",
+          "background": "@red[5]"
+        },
+        "10": {
+          "accent": "@yellow[3]",
+          "background": "@yellow[5]"
+        },
+        "11": {
+          "accent": "@green[3]",
+          "background": "@green[5]"
+        },
+        "12": {
+          "accent": "@blue[3]",
+          "background": "@blue[5]"
+        },
+        "13": {
+          "accent": "@teal[3]",
+          "background": "@teal[5]"
+        },
+        "14": {
+          "accent": "@magenta[3]",
+          "background": "@magenta[5]"
+        }
+      },
+      "highlight": {
+        "0": {
+          "background": "#FF6464",
+          "text": "@white"
+        },
+        "1": {
+          "background": "#FFC864",
+          "text": "@black"
+        },
+        "2": {
+          "background": "#FFFF64",
+          "text": "@black"
+        },
+        "3": {
+          "background": "#64FF64",
+          "text": "@black"
+        },
+        "4": {
+          "background": "#64FFFF",
+          "text": "@black"
+        },
+        "5": {
+          "background": "#6464FF",
+          "text": "@white"
+        },
+        "6": {
+          "background": "#FFC8C8",
+          "text": "@black"
+        },
+        "7": {
+          "background": "#FF64FF",
+          "text": "@black"
+        },
+        "8": {
+          "background": "#B4B4B4",
+          "text": "@black"
+        }
+      },
+      "target": {
+        "method": {
+          "connect": "@teal[2]",
+          "delete": "@teal[2]",
+          "get": "@magenta[2]",
+          "head": "@teal[2]",
+          "options": "@magenta[2]",
+          "patch": "@teal[2]",
+          "post": "@purple[2]",
+          "put": "@teal[2]",
+          "trace": "@teal[2]",
+          "unknown": "$mono[7]"
+        }
+      },
+      "editor": {
+        "java": {
+          "class": "@blue[0]",
+          "error": "@red[0]",
+          "interface": "@green[3]",
+          "method": "@red[3]",
+          "package": "$mono[4]",
+          "variable": "@yellow[3]"
+        },
+        "message": {
+          "highlight": {
+            "alert": "#FFFF00",
+            "defaultFixed": "#FFAFAF",
+            "search": "#FFFF00"
+          },
+          "compare": {
+            "added": "@green[5]",
+            "deleted": "@red[5]",
+            "modified": "@blue[5]"
+          },
+          "annotation": "#005A00",
+          "background": "$mono[1]",
+          "cdata": "#CC6600",
+          "cdataDelimiter": "#CC6600",
+          "comment": "#005A00",
+          "cookieName": "#0000C0",
+          "cookieValue": "#A01010",
+          "currentLineBackground": "#F0F0F0",
+          "datatype": "#000075",
+          "entityReference": "#008000",
+          "function": "#000075",
+          "gutterBorder": "#DDDDDD",
+          "headerName": "#000075",
+          "headerValue": "#202020",
+          "httpFirstLine": "#141414",
+          "lineNumbers": "#787878",
+          "literalBoolean": "#000075",
+          "literalNumber": "#0000FF",
+          "literalQuote": "#141414",
+          "literalString": "#008000",
+          "lozengeBackground": "#E1E0E0",
+          "lozengeText": "$mono[8]",
+          "nestedLanguageBackground": "#C9C9C914",
+          "operator": "#202020",
+          "paramName": "#0000C0",
+          "paramValue": "#A01010",
+          "preprocessor": "#005A00",
+          "processingInstruction": "#005A00",
+          "regex": "#202020",
+          "reservedWord2": "#000075",
+          "reservedWord": "#000075",
+          "selectionBackground": "$secondary[6]",
+          "selectionForeground": "@white",
+          "separator": "#202020",
+          "tagDelimiter": "#141414",
+          "tagName": "#B000C0",
+          "text": "#141414",
+          "variable": "#000075"
+        }
+      },
+      "background": {
+        "1": "$mono[1]",
+        "2": "$mono[2]",
+        "3": "$mono[3]",
+        "4": "$mono[4]",
+        "5": "$secondary[7]",
+        "6": "$secondary[6]",
+        "7": "$error[0]",
+        "8": "$tertiary[7]",
+        "9": "$error[6]",
+        "10": "$hint[4]"
+      },
+      "text": {
+        "header": "@black",
+        "body": "$mono[8]",
+        "hover": "@black",
+        "disabled": "$mono[7]",
+        "link": "$primary[1]",
+        "linkHover": "$primary[3]",
+        "ai": "$tertiary[2]",
+        "aiHover": "$tertiary[3]",
+        "error": "$error[0]",
+        "information": "$info[0]",
+        "white": "@white"
+      },
+      "icon": {
+        "default": "$mono[8]",
+        "hover": "@black",
+        "disabled": "$mono[7]",
+        "link": "$primary[1]",
+        "linkHover": "$primary[3]",
+        "ai": "$tertiary[2]",
+        "error": "$error[0]",
+        "information": "$info[0]",
+        "warning": "$warning[2]",
+        "success": "$success[2]",
+        "white": "@white"
+      },
+      "status": {
+        "new": "@blue[3]",
+        "inProgress": "@purple[0]",
+        "postponed": "@orange[3]",
+        "ignored": "@red[3]",
+        "done": "@green[3]"
+      },
+      "issue": {
+        "high": "@red[0]",
+        "info": "$mono[6]",
+        "low": "@blue[0]",
+        "medium": "@orange[0]"
+      }
+    }
+  }
+}

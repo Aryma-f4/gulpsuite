@@ -1,0 +1,11 @@
+# Build output
+engine/target/
+/gulpsuite
+/Gulpsuite.app/
+*.dSYM
+
+# Reverse engineering scratch: extracted Burp classes and resources, not part of the app
+/recon/
+
+# macOS
+.DS_Store
