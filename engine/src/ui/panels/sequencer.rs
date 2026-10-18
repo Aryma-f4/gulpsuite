@@ -27,7 +27,7 @@ fn automaton(app: &mut App, ui: &mut Ui) {
                 .push(app.panels.sequencer.text.clone());
         }
         if ui.button("Add from Repeater response").clicked() {
-            let (_, body) = crate::analysis::split_message(&app.panels.repeater.response);
+            let (_, body) = crate::analysis::split_message(&app.panels.repeater.active().response);
             if !body.trim().is_empty() {
                 app.panels.sequencer.automaton.push(body.to_string());
             }

@@ -43,7 +43,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
     ui.horizontal(|ui| {
         if ui.button("Save Repeater request").clicked() {
-            let (host, name) = (app.panels.repeater.host.clone(), app.panels.repeater.raw.clone());
+            let (host, name) = (
+                app.panels.repeater.active().host.clone(),
+                app.panels.repeater.active().raw.clone(),
+            );
             if name.trim().is_empty() {
                 app.status = "Nothing to save: the Repeater request is empty".into();
             } else {
@@ -54,7 +57,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         host,
                         name: format!("item-{next}"),
                         request: name,
-                        response: app.panels.repeater.response.clone(),
+                        response: app.panels.repeater.active().response.clone(),
                         notes: String::new(),
                     },
                 );
@@ -183,10 +186,9 @@ fn load_into_repeater(app: &mut App, index: usize) {
     let Some(item) = app.organizer.get(index) else {
         return;
     };
-    app.panels.repeater.raw = item.request.clone();
-    app.panels.repeater.host = item.host.clone();
-    app.panels.repeater.response = item.response.clone();
-    app.panels.repeater.editing = false;
+    app.panels
+        .repeater
+        .reuse(&item.host, &item.request, &item.response);
     app.tool = 4;
     app.status = format!("Loaded {} into Repeater", item.name);
 }

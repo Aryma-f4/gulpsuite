@@ -5,22 +5,26 @@ use eframe::egui::Ui;
 use super::heading;
 use crate::ui::app::App;
 
+/// One request in the Repeater. Burp keeps several open at once, each in its own tab.
 #[derive(Clone)]
-pub struct RepeaterPanel {
+pub struct RepeaterTab {
+    /// The name on the tab, taken from the target.
+    pub name: String,
     pub host: String,
     pub raw: String,
     pub response: String,
     pub status: Option<u16>,
     pub sending: bool,
     /// The in-flight request id, if any.
-    pending: Option<u64>,
+    pub pending: Option<u64>,
     /// The raw editor is shown only on demand; the coloured view is the default.
     pub editing: bool,
 }
 
-impl Default for RepeaterPanel {
+impl Default for RepeaterTab {
     fn default() -> Self {
-        RepeaterPanel {
+        RepeaterTab {
+            name: "1".into(),
             host: "http://example.com/".into(),
             raw: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".into(),
             response: String::new(),
@@ -32,31 +36,116 @@ impl Default for RepeaterPanel {
     }
 }
 
+#[derive(Clone)]
+pub struct RepeaterPanel {
+    pub tabs: Vec<RepeaterTab>,
+    /// The tab that is open.
+    pub active: usize,
+}
+
+impl Default for RepeaterPanel {
+    fn default() -> Self {
+        RepeaterPanel {
+            tabs: vec![RepeaterTab::default()],
+            active: 0,
+        }
+    }
+}
+
+impl RepeaterPanel {
+    /// The tab that is open. There is always one, because a new panel starts with a tab.
+    pub fn active(&self) -> &RepeaterTab {
+        self.tabs.get(self.active).unwrap_or(&self.tabs[0])
+    }
+
+    pub fn active_mut(&mut self) -> &mut RepeaterTab {
+        let index = self.active.min(self.tabs.len().saturating_sub(1));
+        &mut self.tabs[index]
+    }
+
+    /// Opens a request in a new tab, the way Burp does when something is sent to the Repeater.
+    pub fn open(&mut self, host: &str, raw: &str) {
+        let name = name_for(host, self.tabs.len() + 1);
+        self.tabs.push(RepeaterTab {
+            name,
+            host: host.to_string(),
+            raw: raw.to_string(),
+            response: String::new(),
+            status: None,
+            sending: false,
+            pending: None,
+            editing: false,
+        });
+        self.active = self.tabs.len() - 1;
+    }
+
+    /// Puts a request into the tab that is open, replacing what is in it.
+    pub fn reuse(&mut self, host: &str, raw: &str, response: &str) {
+        let count = self.tabs.len();
+        let tab = self.active_mut();
+        tab.name = name_for(host, count);
+        tab.host = host.to_string();
+        tab.raw = raw.to_string();
+        tab.response = response.to_string();
+        tab.status = None;
+        tab.editing = false;
+    }
+
+    /// Closes a tab, keeping at least one open.
+    pub fn close(&mut self, index: usize) {
+        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+            return;
+        }
+        self.tabs.remove(index);
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len() - 1;
+        }
+    }
+}
+
+/// The name on a tab: the host, with a number when the name is taken.
+fn name_for(host: &str, fallback: usize) -> String {
+    let rest = host
+        .strip_prefix("http://")
+        .or_else(|| host.strip_prefix("https://"))
+        .unwrap_or(host);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() {
+        fallback.to_string()
+    } else {
+        authority.to_string()
+    }
+}
+
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     heading(ui, &theme, "Repeater");
 
+    tabs(app, ui, &theme);
+
     // Collect anything that came back since the last frame.
-    if let Some(id) = app.panels.repeater.pending {
+    let pending = app.panels.repeater.active().pending;
+    if let Some(id) = pending {
         if let Some((status, body)) = app.take_response(id) {
-            app.panels.repeater.status = Some(status);
-            app.panels.repeater.response = body;
-            app.panels.repeater.sending = false;
-            app.panels.repeater.pending = None;
-            app.status = format!("Response {status} ({} bytes)", app.panels.repeater.response.len());
+            let tab = app.panels.repeater.active_mut();
+            tab.status = Some(status);
+            tab.response = body;
+            tab.sending = false;
+            tab.pending = None;
+            app.status = format!("Response {status} ({} bytes)", tab.response.len());
         }
     }
 
     ui.horizontal(|ui| {
         ui.label("Target");
         ui.add(
-            eframe::egui::TextEdit::singleline(&mut app.panels.repeater.host)
+            eframe::egui::TextEdit::singleline(&mut app.panels.repeater.active_mut().host)
                 .desired_width(320.0)
                 .font(eframe::egui::TextStyle::Monospace),
         );
         if ui
             .add_enabled(
-                !app.panels.repeater.sending,
+                !app.panels.repeater.active().sending,
                 eframe::egui::Button::new("Send"),
             )
             .clicked()
@@ -67,26 +156,28 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     ui.add_space(4.0);
 
     let message_bg = theme.color("ui.editor.message.background");
-    let colour = match app.panels.repeater.status {
+    let colour = match app.panels.repeater.active().status {
         Some(200..=399) => theme.color("ui.icon.success"),
         Some(400..=499) => theme.color("ui.icon.warning"),
         Some(_) => theme.color("ui.icon.error"),
         None => theme.color("ui.icon.default"),
     };
-    let response = app.panels.repeater.response.clone();
-    let request = app.panels.repeater.raw.clone();
+    let response = app.panels.repeater.active().response.clone();
+    let request = app.panels.repeater.active().raw.clone();
 
     ui.columns(2, |columns| {
         columns[0].horizontal(|ui| {
             ui.label("Request");
-            if ui.button(if app.panels.repeater.editing { "View" } else { "Edit" }).clicked() {
-                app.panels.repeater.editing = !app.panels.repeater.editing;
+            let editing = app.panels.repeater.active().editing;
+            if ui.button(if editing { "View" } else { "Edit" }).clicked() {
+                let tab = app.panels.repeater.active_mut();
+                tab.editing = !tab.editing;
             }
         });
-        if app.panels.repeater.editing {
+        if app.panels.repeater.active().editing {
             crate::ui::highlight::show_editable(
                 &mut columns[0],
-                &mut app.panels.repeater.raw,
+                &mut app.panels.repeater.active_mut().raw,
                 &theme,
                 message_bg,
             );
@@ -96,7 +187,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
         columns[1].horizontal(|ui| {
             ui.label("Response");
-            let status = match app.panels.repeater.status {
+            let status = match app.panels.repeater.active().status {
                 Some(status) => status.to_string(),
                 None if response.is_empty() => "no response yet".into(),
                 None => "error".into(),
@@ -109,6 +200,39 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     ui.add_space(6.0);
     ui.separator();
     analyzers(app, ui, &response);
+}
+
+/// The row of tabs, the way Burp shows the requests that are open.
+fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
+    ui.horizontal_wrapped(|ui| {
+        for index in 0..app.panels.repeater.tabs.len() {
+            let selected = index == app.panels.repeater.active;
+            let name = app.panels.repeater.tabs[index].name.clone();
+            let label = eframe::egui::RichText::new(name)
+                .color(theme.color(if selected {
+                    "ui.text.body"
+                } else {
+                    "ui.icon.default"
+                }));
+            if ui.selectable_label(selected, label).clicked() {
+                app.panels.repeater.active = index;
+            }
+            if app.panels.repeater.tabs.len() > 1
+                && ui
+                    .small_button(eframe::egui::RichText::new("x").small())
+                    .on_hover_text("Close this tab")
+                    .clicked()
+            {
+                app.panels.repeater.close(index);
+                break;
+            }
+        }
+        if ui.button("+").on_hover_text("New tab").clicked() {
+            let host = app.panels.repeater.active().host.clone();
+            app.panels.repeater.open(&host, "");
+        }
+    });
+    ui.add_space(2.0);
 }
 
 /// Burp's response analyzers. Backed by `http/message/responses/analysis/*` in the shipped API:
@@ -135,14 +259,13 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
         Vec::new()
     };
     // Variations compare this response against its siblings from the same host in the history.
+    let host = app.panels.repeater.active().host.clone();
     let siblings: Vec<String> = app
         .log
         .iter()
         .rev()
         .filter(|tx| {
-            !tx.response.is_empty()
-                && tx.target != app.panels.repeater.host
-                && app.panels.repeater.host.ends_with(&tx.host)
+            !tx.response.is_empty() && tx.target != host && host.ends_with(&tx.host)
         })
         .take(20)
         .map(|tx| {
@@ -247,10 +370,10 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
 }
 
 pub(crate) fn send(app: &mut App) {
-    let host = app.panels.repeater.host.trim().to_string();
+    let host = app.panels.repeater.active().host.trim().to_string();
     // A live Bambda script rewrites the request before it leaves, and a broken one blocks the send
     // rather than quietly sending something the operator did not intend.
-    let raw = match app.panels.extender.apply_live(&app.panels.repeater.raw) {
+    let raw = match app.panels.extender.apply_live(&app.panels.repeater.active().raw) {
         Ok(raw) => raw,
         Err(why) => {
             app.status = format!("Bambda rejected the request: {why}");
@@ -275,10 +398,74 @@ pub(crate) fn send(app: &mut App) {
         app.status = "Target is missing a host".into();
         return;
     }
-    app.panels.repeater.status = None;
-    app.panels.repeater.response = format!("Sending to {hostname}:{port}…");
+    let tab = app.panels.repeater.active_mut();
+    tab.status = None;
+    tab.response = format!("Sending to {hostname}:{port}…");
     let id = app.send_request(hostname, port, raw, secure);
-    app.panels.repeater.pending = Some(id);
-    app.panels.repeater.sending = true;
+    let tab = app.panels.repeater.active_mut();
+    tab.pending = Some(id);
+    tab.sending = true;
     app.status = format!("Sent request #{id}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::app::App;
+
+    /// Burp keeps several requests open at once, each in its own tab, and something sent to the
+    /// Repeater arrives in a new one.
+    #[test]
+    fn the_repeater_keeps_several_requests_open() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.panels.repeater
+            .open("http://a.test/one", "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n");
+        app.panels
+            .repeater
+            .open("http://b.test/two", "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
+
+        assert_eq!(app.panels.repeater.tabs.len(), 3, "the first tab plus two");
+        assert_eq!(app.panels.repeater.active, 2, "the last one sent is open");
+        assert!(
+            app.panels.repeater.active().raw.contains("/two"),
+            "the open tab is the one that was sent last"
+        );
+
+        // Closing a tab keeps at least one open.
+        app.panels.repeater.close(2);
+        assert_eq!(app.panels.repeater.tabs.len(), 2);
+        app.panels.repeater.close(0);
+        app.panels.repeater.close(0);
+        assert_eq!(app.panels.repeater.tabs.len(), 1, "one tab always remains");
+    }
+
+    /// The tab bar is drawn, with the name of the open tab on it.
+    #[test]
+    fn the_repeater_draws_its_tabs() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.panels.repeater
+            .open("http://b.test/two", "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
+
+        let output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+            eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                draw(&mut app, ui);
+            });
+        });
+        let texts: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                eframe::egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        let all = texts.join("\n");
+        assert!(all.contains("b.test"), "the tab should be named after the host: {all}");
+        assert!(
+            all.contains("/two"),
+            "the open request should be in the editor: {all}"
+        );
+    }
 }

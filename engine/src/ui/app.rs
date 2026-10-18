@@ -1181,9 +1181,7 @@ impl App {
         let ctx = &ctx;
         eframe::egui::Popup::context_menu(trigger).show(|ui| {
             if ui.button("Send to Repeater").clicked() {
-                self.panels.repeater.raw = request.clone();
-                self.panels.repeater.host = target.clone();
-                self.panels.repeater.editing = false;
+                self.panels.repeater.open(&target, &request);
                 self.tool = REPEATER;
                 self.view = 0;
                 self.status = "Request sent to Repeater".into();

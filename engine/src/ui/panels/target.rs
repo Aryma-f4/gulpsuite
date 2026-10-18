@@ -170,9 +170,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
             .map(|tx| (tx.request.clone(), tx.target.clone()));
         match found {
             Some((request, target)) => {
-                app.panels.repeater.raw = request;
-                app.panels.repeater.host = target;
-                app.panels.repeater.editing = false;
+                app.panels.repeater.open(&target, &request);
                 app.tool = 4;
                 app.status = format!("Sent {path} to Repeater");
             }

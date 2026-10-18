@@ -239,8 +239,8 @@ fn bambda(app: &mut App, ui: &mut Ui) {
     );
 
     let source = match app.panels.extender.apply_to {
-        BambdaTarget::RepeaterRequest => app.panels.repeater.raw.clone(),
-        BambdaTarget::RepeaterResponse => app.panels.repeater.response.clone(),
+        BambdaTarget::RepeaterRequest => app.panels.repeater.active().raw.clone(),
+        BambdaTarget::RepeaterResponse => app.panels.repeater.active().response.clone(),
         BambdaTarget::ProxyHistory => app
             .log
             .back()

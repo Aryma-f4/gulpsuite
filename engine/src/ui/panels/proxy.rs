@@ -216,9 +216,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
             app.release(selected, false);
         }
         if !is_response && ui.button("To Repeater").clicked() {
-            app.panels.repeater.raw = edited.clone();
-            app.panels.repeater.host = current.target.clone();
-            app.panels.repeater.editing = false;
+            app.panels.repeater.open(&current.target, &edited);
             app.tool = 4;
             app.status = format!("Held request #{} sent to Repeater", selected);
         }
@@ -342,8 +340,7 @@ fn history(app: &mut App, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label(format!("{}", tx.target));
                 if ui.button("To Repeater").clicked() {
-                    app.panels.repeater.raw = tx.request.clone();
-                    app.panels.repeater.host = tx.target.clone();
+                    app.panels.repeater.open(&tx.target, &tx.request);
                     app.tool = 4;
                     app.status = "Request copied to Repeater".into();
                 }
@@ -422,10 +419,8 @@ fn history(app: &mut App, ui: &mut Ui) {
                             // exactly what the operator does not want to do. Only on click, so the
                             // bodies are copied once here rather than every frame.
                             if let Some(tx) = app.log.get(index) {
-                                app.panels.repeater.raw = tx.request.clone();
-                                app.panels.repeater.host = tx.target.clone();
+                                app.panels.repeater.open(&tx.target, &tx.request);
                             }
-                            app.panels.repeater.editing = false;
                             app.tool = 4;
                             app.status = "Request copied to Repeater".into();
                         }
