@@ -258,7 +258,8 @@ fn start(app: &mut App) {
                 };
                 // Fill any placeholders with the values seen so far.
                 let request = crate::replay::substitute(&step.request, &live);
-                let outcome = match proxy.one_shot(&host, port, &request, 15_000).await {
+                let secure = step.url.starts_with("https://");
+                let outcome = match proxy.one_shot_secure(&host, port, &request, secure, 15_000).await {
                     Ok((status, body)) => {
                         // Harvest whatever this response offers for the placeholders still missing.
                         for name in &wanted {

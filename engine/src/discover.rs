@@ -103,7 +103,7 @@ pub async fn probe(
             continue;
         };
         let raw = crate::scanner::http::build_get(&url, &host, port, tls, None);
-        let Ok((_, text)) = proxy.one_shot(&host, port, &raw, TIMEOUT_MS).await else {
+        let Ok((_, text)) = proxy.one_shot_secure(&host, port, &raw, tls, TIMEOUT_MS).await else {
             continue;
         };
         probes += 1;

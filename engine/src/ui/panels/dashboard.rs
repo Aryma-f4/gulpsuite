@@ -32,10 +32,6 @@ fn tasks_column(app: &mut App, ui: &mut Ui, width: f32) {
             heading(ui, &theme, "Tasks");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 pane_icons(app, ui, &theme);
-            });
-        });
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if crate::ui::app::primary_button(ui, &theme, "New live task").clicked() {
                     app.status = "Live audit task started".into();
                     app.tool = crate::ui::app::PROXY;
@@ -51,11 +47,20 @@ fn tasks_column(app: &mut App, ui: &mut Ui, width: f32) {
             crate::ui::icons::paint(ui.painter(), funnel, theme.color("ui.icon.default"), Glyph::Funnel);
             ui.allocate_space(Vec2::new(4.0, 0.0));
             ui.label("Filter");
-            egui::ComboBox::from_id_salt("dashboard-filter")
-                .selected_text("All")
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut 0usize, 0usize, "All");
-                });
+            // Burp's filter is a bare dropdown arrow rather than a labelled combo box.
+            let (chevron, response) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::click());
+            if response.clicked() {
+                app.status = "Filter: all tasks".into();
+            }
+            let centre = chevron.center();
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    egui::pos2(centre.x - 4.0, centre.y - 2.0),
+                    egui::pos2(centre.x, centre.y + 2.0),
+                    egui::pos2(centre.x + 4.0, centre.y - 2.0),
+                ],
+                egui::Stroke::new(1.4, theme.color("ui.icon.default")),
+            ));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut search = String::new();
                 ui.add(
@@ -125,13 +130,8 @@ fn task_card(app: &mut App, ui: &mut Ui, name: &str, description: &str, selected
     };
     let response = frame.show(ui, |ui| {
         ui.horizontal(|ui| {
-            let title = ui.add(
-                egui::Label::new(
-                    egui::RichText::new(name)
-                        .font(crate::ui::app::bold_font(12.0)),
-                )
-                .sense(egui::Sense::click()),
-            );
+            let title =
+                crate::ui::app::bold_click_label(ui, name, 12.0, theme.color("ui.text.body"));
             if title.clicked() {
                 picked = true;
                 app.dashboard_task = if name.starts_with('2') { 0 } else { 1 };
@@ -162,24 +162,27 @@ fn task_card(app: &mut App, ui: &mut Ui, name: &str, description: &str, selected
                 acc[severity_index(f.severity)] += 1;
                 acc
             });
-            ui.label("Issues:");
-            for (index, severity) in [
-                Severity::High,
-                Severity::Medium,
-                Severity::Low,
-                Severity::Info,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let colour = match severity {
-                    Severity::High => theme.color("ui.issue.high"),
-                    Severity::Medium => theme.color("ui.issue.medium"),
-                    Severity::Low => theme.color("ui.issue.low"),
-                    Severity::Info => theme.color("palette.mono.5"),
-                };
-                issue_pill(ui, counts[index], colour);
-            }
+            // Burp puts the counters on the right of the card, highest severity first.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label("Issues:");
+                for (index, severity) in [
+                    Severity::High,
+                    Severity::Medium,
+                    Severity::Low,
+                    Severity::Info,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let colour = match severity {
+                        Severity::High => theme.color("ui.issue.high"),
+                        Severity::Medium => theme.color("ui.issue.medium"),
+                        Severity::Low => theme.color("ui.issue.low"),
+                        Severity::Info => theme.color("palette.mono.5"),
+                    };
+                    issue_pill(ui, counts[index], colour);
+                }
+            });
         });
     });
     if picked && !selected {
@@ -392,9 +395,9 @@ fn vulnerabilities_table(app: &mut App, ui: &mut Ui) {
             .num_columns(3)
             .spacing([16.0, 4.0])
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Issue type").font(crate::ui::app::bold_font(12.0)));
-                ui.label(egui::RichText::new("Host").font(crate::ui::app::bold_font(12.0)));
-                ui.label(egui::RichText::new("Time").font(crate::ui::app::bold_font(12.0)));
+                crate::ui::app::bold_text(ui, "Issue type", 12.0, theme.color("ui.text.body"));
+                crate::ui::app::bold_text(ui, "Host", 12.0, theme.color("ui.text.body"));
+                crate::ui::app::bold_text(ui, "Time", 12.0, theme.color("ui.text.body"));
                 ui.end_row();
             });
     });
@@ -421,15 +424,15 @@ fn vulnerabilities_table(app: &mut App, ui: &mut Ui) {
 fn empty_state(ui: &mut Ui, colour: Color32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(110.0, 64.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    for (dx, dy, angle) in [(-22.0, 6.0, -0.26f32), (2.0, -10.0, 0.0), (22.0, 12.0, 0.26)] {
+    for (dx, dy, angle) in [(-26.0, 4.0, -0.3f32), (0.0, -12.0, 0.0), (26.0, 14.0, 0.3)] {
         let center = rect.center() + Vec2::new(dx, dy);
         let (sin, cos) = angle.sin_cos();
         let corner = |x: f32, y: f32| center + Vec2::new(x * cos - y * sin, x * sin + y * cos);
         let points = vec![
-            corner(-16.0, -9.0),
-            corner(16.0, -9.0),
-            corner(16.0, 9.0),
-            corner(-16.0, 9.0),
+            corner(-14.0, -8.0),
+            corner(14.0, -8.0),
+            corner(14.0, 8.0),
+            corner(-14.0, 8.0),
         ];
         painter.add(egui::Shape::convex_polygon(points, colour, egui::Stroke::NONE));
         // The light slot across the middle of each card.
@@ -517,16 +520,16 @@ fn task_configuration(app: &mut App, ui: &mut Ui) {
         .num_columns(2)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Task type:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Task type:", 12.0, theme.color("ui.text.body"));
             ui.label("Live audit");
             ui.end_row();
-            ui.label(egui::RichText::new("Scope:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Scope:", 12.0, theme.color("ui.text.body"));
             ui.label("Proxy (all traffic)");
             ui.end_row();
-            ui.label(egui::RichText::new("Configuration:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Configuration:", 12.0, theme.color("ui.text.body"));
             ui.label("Audit checks - passive");
             ui.end_row();
-            ui.label(egui::RichText::new("Capturing").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Capturing", 12.0, theme.color("ui.text.body"));
             switch(ui, &mut capturing, theme.color("palette.secondary.core"));
             ui.end_row();
         });
@@ -547,20 +550,20 @@ fn task_progress(app: &mut App, ui: &mut Ui) {
         .num_columns(4)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Total audit items:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Total audit items:", 12.0, theme.color("ui.text.body"));
             ui.label(pages.to_string());
-            ui.label(egui::RichText::new("Requests:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Requests:", 12.0, theme.color("ui.text.body"));
             ui.label(app.log.len().to_string());
             ui.end_row();
-            ui.label(egui::RichText::new("Audit items pending:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Audit items pending:", 12.0, theme.color("ui.text.body"));
             ui.label("0");
-            ui.label(egui::RichText::new("Network errors:").font(crate::ui::app::bold_font(12.0)));
-            ui.label("0");
-            ui.end_row();
-            ui.label(egui::RichText::new("Audit items in progress:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Network errors:", 12.0, theme.color("ui.text.body"));
             ui.label("0");
             ui.end_row();
-            ui.label(egui::RichText::new("Audit items completed:").font(crate::ui::app::bold_font(12.0)));
+            crate::ui::app::bold_text(ui, "Audit items in progress:", 12.0, theme.color("ui.text.body"));
+            ui.label("0");
+            ui.end_row();
+            crate::ui::app::bold_text(ui, "Audit items completed:", 12.0, theme.color("ui.text.body"));
             ui.label(items.to_string());
             ui.end_row();
         });
@@ -574,5 +577,4 @@ fn task_log(app: &mut App, ui: &mut Ui) {
         ui.allocate_space(Vec2::new(4.0, 0.0));
         heading(ui, &theme, "Task log");
     });
-    muted(ui, &theme, "Nothing logged yet.");
 }

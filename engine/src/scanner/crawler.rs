@@ -216,12 +216,12 @@ pub async fn crawl(
         }
 
         on_progress(Progress::Fetching(url.clone()));
-        let Some((host, port, _tls, raw)) =
+        let Some((host, port, tls, raw)) =
             super::active::InjectionPoint::query(&url, "x").request("x")
         else {
             continue;
         };
-        let response_text = match proxy.one_shot(&host, port, &raw, 15_000).await {
+        let response_text = match proxy.one_shot_secure(&host, port, &raw, tls, 15_000).await {
             Ok((_, text)) => text,
             Err(_) => continue,
         };

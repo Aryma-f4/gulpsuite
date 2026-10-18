@@ -257,6 +257,7 @@ pub(crate) fn send(app: &mut App) {
             return;
         }
     };
+    let secure = host.starts_with("https://");
     let rest = host
         .strip_prefix("http://")
         .or_else(|| host.strip_prefix("https://"))
@@ -276,7 +277,7 @@ pub(crate) fn send(app: &mut App) {
     }
     app.panels.repeater.status = None;
     app.panels.repeater.response = format!("Sending to {hostname}:{port}…");
-    let id = app.send_request(hostname, port, raw);
+    let id = app.send_request(hostname, port, raw, secure);
     app.panels.repeater.pending = Some(id);
     app.panels.repeater.sending = true;
     app.status = format!("Sent request #{id}");

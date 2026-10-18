@@ -53,9 +53,9 @@ fn event_to_json(event: &Event) -> Value {
     match event {
         Event::Listening { port } => json!({ "type": "listening", "port": port }),
         Event::ListenerStopped => json!({ "type": "listener-stopped" }),
-        Event::Tx { method, target, status, bytes, request, response } => {
+        Event::Tx { method, target, status, bytes, request, response, secure } => {
             json!({ "type": "tx", "method": method, "target": target, "status": status,
-                    "bytes": bytes, "request": request, "response": response })
+                    "bytes": bytes, "request": request, "response": response, "secure": secure })
         }
         Event::DnsListening { port } => json!({ "type": "dns-listening", "port": port }),
         Event::SmtpListening { port } => json!({ "type": "smtp-listening", "port": port }),
@@ -75,6 +75,9 @@ fn event_to_json(event: &Event) -> Value {
         Event::WsClosed { id } => json!({ "type": "ws-closed", "id": id }),
         Event::Held { id, method, target, raw } => {
             json!({ "type": "held", "id": id, "method": method, "target": target, "raw": raw })
+        }
+        Event::HeldResponse { id, status, raw } => {
+            json!({ "type": "held-response", "id": id, "status": status, "raw": raw })
         }
         Event::Released { id, forwarded } => {
             json!({ "type": "released", "id": id, "forwarded": forwarded })

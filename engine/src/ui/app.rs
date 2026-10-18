@@ -193,6 +193,8 @@ pub struct Transaction {
     pub status: u16,
     pub bytes: u64,
     pub host: String,
+    /// Whether the traffic was carried over TLS.
+    pub secure: bool,
     /// The request as sent, so Repeater can pick it up intact.
     pub request: String,
     /// The response head plus captured body.
@@ -242,6 +244,10 @@ pub struct App {
     pub view: usize,
     pub status: String,
     pub intercepting: bool,
+    /// Whether responses are parked as well, so they can be changed before the client sees them.
+    pub intercepting_responses: bool,
+    /// Whether an https connection is intercepted, or passed through as a tunnel.
+    pub tls_intercepting: bool,
     pub listening: Option<u16>,
     pub panels: panels::Panels,
     /// One runtime for the whole session; every proxy call goes through it.
@@ -259,6 +265,14 @@ pub struct App {
     pub capturing: bool,
     /// Whether the settings popup is open.
     pub show_settings: bool,
+    /// Whether the search window is open.
+    pub show_search: bool,
+    /// Whether the console window is open.
+    pub show_console: bool,
+    /// What the user has typed into the search window.
+    pub search_text: String,
+    /// The proxy's event trail, shown in the console window.
+    pub console: VecDeque<String>,
     /// Progress from a Discover run, when one is in flight.
     pub discover_updates: Option<std::sync::mpsc::Receiver<crate::discover::Update>>,
     /// Findings from the most recent scan, so the Dashboard's Issue audit view can report them.
@@ -272,6 +286,12 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut ctx = cc.egui_ctx.clone();
         install_fonts(&mut ctx);
+        App::with_context(&ctx)
+    }
+
+    /// Builds the app around a context. The window and the tests both go through here, so the
+    /// fonts are the only thing the window has to add.
+    pub fn with_context(_ctx: &Context) -> Self {
 
         // Burp's own light and dark themes ship with Burp, so the shell loads the file instead of
         // tinting one. `GULP_THEME=light` picks the light theme at startup, which is how the two
@@ -324,6 +344,8 @@ impl App {
             view: 0,
             status: "Ready".into(),
             intercepting: true,
+            intercepting_responses: false,
+            tls_intercepting: true,
             listening: None,
             panels: panels::Panels::default(),
             _requests_tx: req_tx,
@@ -331,6 +353,10 @@ impl App {
             memory_text: "Memory: —".to_string(),
             dashboard_task: 0,
             capturing: true,
+            show_search: false,
+            show_console: false,
+            search_text: String::new(),
+            console: VecDeque::new(),
             show_settings: false,
             memory_checked: std::time::Instant::now() - crate::meminfo::REFRESH,
             discover_updates: None,
@@ -344,6 +370,9 @@ impl App {
     // ---- proxy control, kept off the UI thread -------------------------------------------
 
     pub fn start_proxy(&mut self, port: u16) {
+        // The settings of the window are the ones the proxy runs with.
+        self.proxy.set_tls_interception(self.tls_intercepting);
+        self.proxy.set_intercept_response(self.intercepting_responses);
         let proxy = self.proxy.clone();
         let runtime = self.runtime.handle().clone();
         std::thread::spawn(move || {
@@ -420,6 +449,22 @@ impl App {
         });
         self.held.retain(|h| h.id != id);
         self.status = format!("Request #{id} {}", if forward { "forwarded" } else { "dropped" });
+    }
+
+    /// Forwards a parked request with the message the operator edited.
+    pub fn forward_edited(&mut self, id: u64, raw: &str) {
+        let proxy = self.proxy.clone();
+        let runtime = self.runtime.handle().clone();
+        let raw = raw.to_string();
+        std::thread::spawn(move || {
+            runtime.block_on(async {
+                proxy.forward_edited(id, &raw).await
+            });
+        });
+        self.held.retain(|h| h.id != id);
+        self.panels.proxy_panel.held_edit = None;
+        self.panels.proxy_panel.held_selected = None;
+        self.status = format!("Request #{id} forwarded");
     }
 
     pub fn release_all(&mut self) {
@@ -537,14 +582,14 @@ impl App {
     }
 
     /// Sends one request off-thread; the result lands in `responses` for `take_response`.
-    pub fn send_request(&mut self, host: String, port: u16, raw: String) -> u64 {
+    pub fn send_request(&mut self, host: String, port: u16, raw: String, secure: bool) -> u64 {
         let id = self.next_request;
         self.next_request += 1;
         let proxy = self.proxy.clone();
         let runtime = self.runtime.handle().clone();
         let tx = self._requests_tx.clone();
         std::thread::spawn(move || {
-            let result = runtime.block_on(proxy.one_shot(&host, port, &raw, 15_000));
+            let result = runtime.block_on(proxy.one_shot_secure(&host, port, &raw, secure, 15_000));
             let _ = tx.send((id, result));
         });
         id
@@ -560,8 +605,10 @@ impl App {
     }
 
     fn apply(&mut self, event: Event) {
+        // The console window shows the same trail the proxy reports.
+        self.note(&format!("{event:?}"));
         match event {
-            Event::Tx { method, target, status, bytes, request, response } => {
+            Event::Tx { method, target, status, bytes, request, response, secure } => {
                 let host = host_of(&target);
                 retain(&mut self.log, Transaction {
                     method,
@@ -571,12 +618,30 @@ impl App {
                     host,
                     request,
                     response,
+                    secure,
                     truncated: false,
                 }, bytes, &mut self.log_version);
             }
             Event::Held { id, method, target, raw } => {
                 if !self.held.iter().any(|h| h.id == id) {
-                    self.held.push(HeldInfo { id, method, target, raw });
+                    self.held.push(HeldInfo {
+                        id,
+                        kind: crate::proxy::HeldKind::Request,
+                        method,
+                        target,
+                        raw,
+                    });
+                }
+            }
+            Event::HeldResponse { id, status, raw } => {
+                if !self.held.iter().any(|h| h.id == id) {
+                    self.held.push(HeldInfo {
+                        id,
+                        kind: crate::proxy::HeldKind::Response,
+                        method: format!("{status}"),
+                        target: String::new(),
+                        raw,
+                    });
                 }
             }
             Event::Released { id, .. } | Event::Dropped { id } => {
@@ -698,19 +763,6 @@ fn install_fonts(ctx: &mut Context) {
             family.insert(0, "system".to_owned());
         }
     }
-    // SF Pro ships as one variable face, so there is no bold file for it and egui would fall back
-    // to its emoji font for anything marked strong. Arial Bold is the closest static bold face on
-    // the system.
-    if let Ok(bytes) = std::fs::read("/System/Library/Fonts/Supplemental/Arial Bold.ttf") {
-        fonts
-            .font_data
-            .insert("system-bold".to_owned(), eframe::egui::FontData::from_owned(bytes).into());
-        fonts
-            .families
-            .entry(eframe::egui::FontFamily::Name(BOLD_FAMILY.into()))
-            .or_default()
-            .insert(0, "system-bold".to_owned());
-    }
     // Burp shows HTTP messages in a monospaced face; SF Mono is the system one.
     if let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNSMono.ttf") {
         fonts
@@ -790,6 +842,8 @@ impl eframe::App for App {
                 ui.allocate_space(Vec2::new(0.0, for_body - self.tab_rows_height));
                 self.status_bar(ctx, ui);
             });
+
+        self.windows(ctx);
     }
 }
 
@@ -804,13 +858,40 @@ impl eframe::App for App {
 ///   Button.hoverBorderColor   = palette.mono.5   -> ui.background.5
 ///   Button.arc = 8, Button.font = bold, Button.margin = 2,20,2,20, Button.borderWidth = 1
 ///
-/// The family name bold text is drawn with. egui has no bold weight of its own, so the shell
-/// keeps a bold face of its own here.
-pub const BOLD_FAMILY: &str = "GulpsuiteBold";
+/// Draws text in the platform face, twice, with a half point offset.
+///
+/// egui has no bold weight of its own, and SF Pro ships as a single variable face with no bold
+/// file to load, so the second pass is what makes the text read bold. Doing it this way keeps
+/// Burp's own metrics: a real bold face is about a quarter wider and would break the layout.
+pub fn bold_text(ui: &mut Ui, text: &str, size: f32, color: eframe::egui::Color32) -> eframe::egui::Response {
+    bold_label_sense(ui, text, size, color, Sense::hover())
+}
 
-/// A font id in the bold face, for the places Burp sets text in bold.
-pub fn bold_font(size: f32) -> FontId {
-    FontId::new(size, eframe::egui::FontFamily::Name(BOLD_FAMILY.into()))
+/// A bold label that can be clicked, for the places Burp makes a title act as a control.
+pub fn bold_click_label(
+    ui: &mut Ui,
+    text: &str,
+    size: f32,
+    color: eframe::egui::Color32,
+) -> eframe::egui::Response {
+    bold_label_sense(ui, text, size, color, Sense::click())
+}
+
+fn bold_label_sense(
+    ui: &mut Ui,
+    text: &str,
+    size: f32,
+    color: eframe::egui::Color32,
+    sense: Sense,
+) -> eframe::egui::Response {
+    let font = FontId::new(size, eframe::egui::FontFamily::Proportional);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), sense);
+    let painter = ui.painter_at(rect);
+    let pos = rect.left_top();
+    painter.galley(pos + Vec2::new(0.5, 0.0), galley.clone(), color);
+    painter.galley(pos, galley, color);
+    response
 }
 
 /// Burp's primary button: a filled accent button with white text.
@@ -825,7 +906,7 @@ pub(crate) fn primary_button(
 ) -> eframe::egui::Response {
     let fill = theme.color("ui.icon.link");
     let text_color = theme.color("ui.text.white");
-    let font = bold_font(11.0);
+    let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), text_color);
     let size = eframe::egui::vec2(galley.size().x + 40.0, 23.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -833,13 +914,14 @@ pub(crate) fn primary_button(
         let painter = ui.painter_at(rect);
         let background = if response.hovered() { fill.linear_multiply(1.1) } else { fill };
         painter.rect_filled(rect, crate::ui::theme::BURP_BUTTON_ARC as f32, background);
-        painter.text(
-            rect.center(),
-            eframe::egui::Align2::CENTER_CENTER,
-            text,
-            font,
-            text_color,
-        );
+        // Two passes, so the button label reads bold the way Burp's does. The galley is placed by
+        // its top left corner, so it is centred first.
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), text_color);
+        let origin = rect.center() - galley.size() / 2.0;
+        painter.galley(origin + Vec2::new(0.5, 0.0), galley.clone(), text_color);
+        painter.galley(origin, galley, text_color);
     }
     response
 }
@@ -1383,7 +1465,15 @@ impl App {
                 crate::ui::icons::paint(&painter, area, self.theme.color("ui.icon.default"), glyph);
                 let response = ui.interact(area, ui.id().with(("tool-icon", index)), Sense::click());
                 if response.clicked() {
-                    self.status = format!("{tooltip} is not available in this build").into();
+                    match glyph {
+                        crate::ui::icons::Glyph::Gear => self.show_settings = true,
+                        crate::ui::icons::Glyph::Search => {
+                            self.show_search = true;
+                            self.search_text.clear();
+                        }
+                        crate::ui::icons::Glyph::Terminal => self.show_console = true,
+                        _ => self.open_browser(),
+                    }
                 }
                 if response.hovered() {
                     response.show_tooltip_text(tooltip);
@@ -1393,6 +1483,207 @@ impl App {
         }
     }
 
+    /// The floating windows Burp opens from the icons at the right of the tool row.
+    fn windows(&mut self, ctx: &Context) {
+        if self.show_settings {
+            let mut open = true;
+            eframe::egui::Window::new("Settings")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(320.0)
+                .show(ctx, |ui| self.settings(ui));
+            self.show_settings = open;
+        }
+        if self.show_search {
+            let mut open = true;
+            eframe::egui::Window::new("Search")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ctx, |ui| self.search_window(ui));
+            self.show_search = open;
+        }
+        if self.show_console {
+            let mut open = true;
+            eframe::egui::Window::new("Browser console")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(520.0)
+                .show(ctx, |ui| self.console_window(ui));
+            self.show_console = open;
+        }
+    }
+
+    /// Burp's settings dialog: the theme, the project and the listener's port.
+    fn settings(&mut self, ui: &mut Ui) {
+        let theme = self.theme.clone();
+        ui.label(eframe::egui::RichText::new("Appearance").strong());
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.is_dark(), "Dark")
+                .clicked()
+            {
+                self.set_dark(true);
+            }
+            if ui
+                .selectable_label(!self.is_dark(), "Light")
+                .clicked()
+            {
+                self.set_dark(false);
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(eframe::egui::RichText::new("Project").strong());
+        ui.horizontal(|ui| {
+            if ui.button("Save project").clicked() {
+                self.save_project();
+            }
+            if ui.button("Open project").clicked() {
+                self.open_project();
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(eframe::egui::RichText::new("Listener").strong());
+        ui.horizontal(|ui| {
+            ui.label("Port");
+            let mut port = self.panels.proxy_panel.port.to_string();
+            if ui.text_edit_singleline(&mut port).changed() {
+                if let Ok(port) = port.trim().parse::<u16>() {
+                    self.panels.proxy_panel.port = port;
+                }
+            }
+            let listening = self.listening.is_some();
+            if ui.add_enabled(!listening, eframe::egui::Button::new("Start")).clicked() {
+                self.start_proxy(self.panels.proxy_panel.port);
+            }
+            if ui.add_enabled(listening, eframe::egui::Button::new("Stop")).clicked() {
+                self.stop_proxy();
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(eframe::egui::RichText::new("Https").strong());
+        ui.horizontal(|ui| {
+            let mut tls = self.tls_intercepting;
+            if ui.checkbox(&mut tls, "Intercept https (TLS)").changed() {
+                self.tls_intercepting = tls;
+                self.proxy.set_tls_interception(tls);
+            }
+        });
+        super::panels::muted(
+            ui,
+            &theme,
+            "With interception on, a browser has to trust the proxy's own authority before https works.",
+        );
+        if let Some(path) = self.proxy.authority_path() {
+            let path = path.to_string_lossy().to_string();
+            ui.horizontal(|ui| {
+                ui.label(eframe::egui::RichText::new("Certificate").strong());
+                ui.label(eframe::egui::RichText::new(&path).monospace().color(theme.color("ui.text.body")));
+                if ui.button("Copy").clicked() {
+                    ui.ctx().copy_text(path.clone());
+                    self.status = "Certificate path copied".into();
+                }
+            });
+        }
+        ui.add_space(6.0);
+        super::panels::muted(ui, &theme, "Gulpsuite: a Burp Suite style proxy, in one Rust process.");
+    }
+
+    /// Burp's search window: it looks through the captured traffic.
+    fn search_window(&mut self, ui: &mut Ui) {
+        let theme = self.theme.clone();
+        ui.horizontal(|ui| {
+            ui.label("Search");
+            ui.text_edit_singleline(&mut self.search_text);
+            if ui.button("Clear").clicked() {
+                self.search_text.clear();
+            }
+        });
+        let needle = self.search_text.trim().to_lowercase();
+        if needle.is_empty() {
+            super::panels::muted(ui, &theme, "Type to search the captured requests and responses.");
+            return;
+        }
+        let mut matches = Vec::new();
+        for (index, tx) in self.log.iter().enumerate() {
+            if tx.target.to_lowercase().contains(&needle)
+                || tx.request.to_lowercase().contains(&needle)
+                || tx.response.to_lowercase().contains(&needle)
+            {
+                matches.push((index, tx.method.clone(), tx.target.clone(), tx.status));
+            }
+            if matches.len() >= 200 {
+                break;
+            }
+        }
+        if matches.is_empty() {
+            super::panels::muted(ui, &theme, "No matches.");
+            return;
+        }
+        eframe::egui::ScrollArea::vertical().show(ui, |ui| {
+            eframe::egui::Grid::new("search-results")
+                .num_columns(3)
+                .striped(true)
+                .show(ui, |ui| {
+                    for name in ["Method", "Target", "Status"] {
+                        ui.label(eframe::egui::RichText::new(name).strong().color(theme.color("ui.text.body")));
+                    }
+                    ui.end_row();
+                    for (index, method, target, status) in matches {
+                        let response = ui.label(
+                            eframe::egui::RichText::new(&method).color(theme.color("icon.link")),
+                        );
+                        if response.clicked() {
+                            self.panels.proxy_panel.selected = Some(index);
+                            self.tool = crate::ui::app::PROXY;
+                            self.view = 1;
+                            self.show_search = false;
+                        }
+                        ui.label(target);
+                        ui.label(status.to_string());
+                        ui.end_row();
+                    }
+                });
+        });
+    }
+
+    /// The console window: the proxy's event trail, newest last.
+    fn console_window(&mut self, ui: &mut Ui) {
+        let theme = self.theme.clone();
+        if self.console.is_empty() {
+            super::panels::muted(ui, &theme, "Nothing yet. The proxy writes here as it works.");
+            return;
+        }
+        eframe::egui::ScrollArea::vertical()
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                for line in &self.console {
+                    ui.label(eframe::egui::RichText::new(line).monospace());
+                }
+            });
+    }
+
+    /// Burp's browser icon opens a browser on the target. This build has no embedded browser, so
+    /// the system's own is used, with the proxy address spelled out.
+    fn open_browser(&mut self) {
+        let target = self
+            .log
+            .iter()
+            .rev()
+            .find_map(|tx| {
+                tx.target
+                    .strip_prefix("http://")
+                    .or_else(|| tx.target.strip_prefix("https://"))
+                    .map(|rest| {
+                        let host = rest.split('/').next().unwrap_or(rest);
+                        format!("http://{host}/")
+                    })
+            })
+            .unwrap_or_else(|| "http://127.0.0.1:8080/".to_string());
+        let status = format!("Opening {target}");
+        let _ = std::process::Command::new("open").arg(&target).spawn();
+        self.status = status;
+    }
     /// The tool's own area. Burp insets its content rather than butting it against the window edge.
     fn panel(&mut self, ui: &mut Ui, rect: Rect) {
         let painter = ui.painter_at(rect);
@@ -1522,6 +1813,15 @@ impl App {
         let _ = ctx;
     }
 
+    /// Adds one line to the console trail, keeping only the most recent ones.
+    fn note(&mut self, line: &str) {
+        const CONSOLE_CAPACITY: usize = 500;
+        if self.console.len() >= CONSOLE_CAPACITY {
+            self.console.remove(0);
+        }
+        self.console.push_back(line.to_string());
+    }
+
     /// The memory readout for the status bar, refreshed a couple of times a second at most.
     /// Burp writes it as "Memory: 211.6MB of 2.00GB".
     fn memory_readout(&mut self) -> String {
@@ -1568,6 +1868,7 @@ mod retention_tests {
             host: "host".into(),
             request: "GET / HTTP/1.1\r\n\r\n".into(),
             response: "HTTP/1.1 200 OK\r\n\r\n".into(),
+            secure: false,
             truncated: false,
         }
     }
@@ -1992,5 +2293,40 @@ mod burp_tab_parity_tests {
     #[test]
     fn every_tool_has_a_view_list_of_the_same_length() {
         assert_eq!(TOOL_VIEWS.len(), TOOLS.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::Event;
+
+    /// Every event the proxy reports shows up in the console trail, so the console window is a
+    /// record of what the proxy did.
+    #[test]
+    fn every_event_shows_up_in_the_console() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.apply(Event::DnsListening { port: 5353 });
+        assert!(
+            app.console.iter().any(|line| line.contains("5353")),
+            "the console should carry the event: {:?}",
+            app.console
+        );
+    }
+
+    /// The console keeps only the most recent lines, so a long run cannot grow without bound.
+    #[test]
+    fn the_console_stays_bounded() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        for port in 0..1000 {
+            app.apply(Event::DnsListening { port });
+        }
+        assert!(
+            app.console.len() <= 500,
+            "the console should stay bounded, got {}",
+            app.console.len()
+        );
     }
 }

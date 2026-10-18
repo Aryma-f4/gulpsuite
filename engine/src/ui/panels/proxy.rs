@@ -10,11 +10,20 @@ pub struct ProxyPanel {
     pub port: u16,
     /// Index into the log of the row whose detail is open.
     pub selected: Option<usize>,
+    /// Which parked request is open in the intercept editor.
+    pub held_selected: Option<u64>,
+    /// The edited message waiting to be forwarded, with the id of the message it belongs to.
+    pub held_edit: Option<(u64, String)>,
 }
 
 impl Default for ProxyPanel {
     fn default() -> Self {
-        ProxyPanel { port: 8080, selected: None }
+        ProxyPanel {
+            port: 8080,
+            selected: None,
+            held_selected: None,
+            held_edit: None,
+        }
     }
 }
 
@@ -120,50 +129,130 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         }
         ui.checkbox(&mut app.intercepting, "Intercept");
         app.proxy.set_intercept(app.intercepting);
+        ui.separator();
+        // Burp has a switch for responses as well, so a response can be changed before the client
+        // gets to see it.
+        let mut responses = app.intercepting_responses;
+        if ui.checkbox(&mut responses, "Responses").changed() {
+            app.intercepting_responses = responses;
+            app.proxy.set_intercept_response(responses);
+        }
+        // Https is intercepted with a certificate of the proxy's own, so the traffic inside the
+        // tunnel can be seen. With it off the tunnel is passed through as it is.
+        let mut tls = app.tls_intercepting;
+        if ui.checkbox(&mut tls, "TLS").changed() {
+            app.tls_intercepting = tls;
+            app.proxy.set_tls_interception(tls);
+        }
     });
 
-    if !app.held.is_empty() {
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if ui.button("Forward all").clicked() {
-                app.release_all();
-            }
-        });
-        eframe::egui::ScrollArea::vertical()
-            .max_height(170.0)
-            .show(ui, |ui| {
-                eframe::egui::Grid::new("held-grid").num_columns(3).striped(true).show(ui, |ui| {
-                    for name in ["Method", "Target", ""] {
-                        ui.label(eframe::egui::RichText::new(name).strong().color(theme.color("ui.text.body")));
-                    }
-                    ui.end_row();
-                    for item in app.held.clone() {
-                        ui.label(eframe::egui::RichText::new(&item.method).color(theme.color("icon.link")));
-                        ui.label(eframe::egui::RichText::new(&item.target).color(theme.color("ui.text.body")));
-                        ui.horizontal(|ui| {
-                            if ui.button("Forward").clicked() {
-                                app.release(item.id, true);
-                            }
-                            if ui.button("Drop").clicked() {
-                                app.release(item.id, false);
-                            }
-                            if ui.button("To Repeater").clicked() {
-                                app.panels.repeater.raw = item.raw.clone();
-                                app.panels.repeater.host = item.target.clone();
-                                app.panels.repeater.editing = false;
-                                app.tool = 4;
-                                app.status = format!("Held request #{} sent to Repeater", item.id);
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-            });
+    if app.held.is_empty() {
+        muted(ui, &theme, "Nothing held. Traffic passes straight through.");
+        return;
     }
 
-    if app.held.is_empty() {
-        muted(ui, &theme, "No requests held. Traffic passes straight through.");
+    // Burp parks the request and shows it in an editor, so it can be changed before it is let
+    // through. The edit lives with the held item, and the row that is being edited is the one
+    // that is open.
+    ui.add_space(6.0);
+    // A selection that points at a message that is gone falls back to the first one that is
+    // still held, so the buttons always act on something real.
+    let selected = app
+        .panels
+        .proxy_panel
+        .held_selected
+        .filter(|id| app.held.iter().any(|item| item.id == *id))
+        .unwrap_or(app.held[0].id);
+    let current = app
+        .held
+        .iter()
+        .find(|item| item.id == selected)
+        .cloned()
+        .unwrap_or_else(|| app.held[0].clone());
+
+    let requests = app
+        .held
+        .iter()
+        .filter(|item| item.kind == crate::proxy::HeldKind::Request)
+        .count();
+    let responses = app.held.len() - requests;
+    ui.horizontal(|ui| {
+        ui.label(format!(
+            "{} request(s), {} response(s) held",
+            requests, responses
+        ));
+        ui.separator();
+        for item in app.held.clone() {
+            let label = match item.kind {
+                crate::proxy::HeldKind::Request => format!("{} {}", item.method, item.target),
+                crate::proxy::HeldKind::Response => format!("response {}", item.method),
+            };
+            if ui
+                .selectable_label(item.id == selected, truncate(&label, 34))
+                .clicked()
+            {
+                app.panels.proxy_panel.held_selected = Some(item.id);
+                // The edit belongs to the message that is open.
+                app.panels.proxy_panel.held_edit = None;
+            }
+        }
+    });
+
+    // The editor holds the message that will be sent.
+    let mut edited = app
+        .panels
+        .proxy_panel
+        .held_edit
+        .as_ref()
+        .filter(|(id, _)| *id == selected)
+        .map(|(_, text)| text.clone())
+        .unwrap_or_else(|| current.raw.clone());
+    let is_response = current.kind == crate::proxy::HeldKind::Response;
+    ui.horizontal(|ui| {
+        if ui.button(if is_response { "Forward" } else { "Forward" }).clicked() {
+            app.forward_edited(selected, &edited);
+        }
+        if ui.button(if is_response { "Cancel" } else { "Drop" }).clicked() {
+            app.release(selected, false);
+        }
+        if !is_response && ui.button("To Repeater").clicked() {
+            app.panels.repeater.raw = edited.clone();
+            app.panels.repeater.host = current.target.clone();
+            app.panels.repeater.editing = false;
+            app.tool = 4;
+            app.status = format!("Held request #{} sent to Repeater", selected);
+        }
+        if ui.button("Reset").clicked() {
+            app.panels.proxy_panel.held_edit = None;
+        }
+        if ui.button("Forward all").clicked() {
+            app.release_all();
+        }
+    });
+    ui.add_space(4.0);
+    eframe::egui::ScrollArea::vertical()
+        .max_height(320.0)
+        .show(ui, |ui| {
+            let response = ui.add(
+                eframe::egui::TextEdit::multiline(&mut edited)
+                    .font(eframe::egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(12),
+            );
+            if response.changed() {
+                app.panels.proxy_panel.held_edit = Some((selected, edited));
+            }
+        });
+}
+
+/// Shortens a label so a row of held requests still fits.
+fn truncate(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
     }
+    let mut out: String = text.chars().take(limit.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
 }
 
 /// The session cookie jar. Burp keeps this under its session settings rather than a tool tab, so
@@ -344,4 +433,87 @@ fn history(app: &mut App, ui: &mut Ui) {
                     }
                 });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::{HeldInfo, HeldKind};
+
+    /// The text the frame drew, so a test can look for a label or a message.
+    fn text_of(output: &eframe::egui::FullOutput) -> Vec<String> {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                eframe::egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The intercept view has to show the parked request in an editor, with the buttons that let
+    /// it through. It is checked headless, because the window cannot be driven from a test.
+    #[test]
+    fn the_intercept_view_shows_the_parked_request() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.held.push(HeldInfo {
+            id: 7,
+            kind: HeldKind::Request,
+            method: "GET".into(),
+            target: "/held".into(),
+            raw: "GET /held HTTP/1.1\r\nHost: example.test\r\n\r\n".into(),
+        });
+
+        let output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+            eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                intercept(&mut app, ui);
+            });
+        });
+        let texts = text_of(&output);
+
+        let all = texts.join("\n");
+        assert!(
+            all.contains("GET /held HTTP/1.1"),
+            "the parked request should be in the editor: {all}"
+        );
+        for button in ["Forward", "Drop", "To Repeater", "Reset"] {
+            assert!(
+                all.contains(button),
+                "the {button} button should be there: {all}"
+            );
+        }
+    }
+
+    /// A parked response is shown with its own wording.
+    #[test]
+    fn the_intercept_view_shows_a_parked_response() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::with_context(&ctx);
+        app.held.push(HeldInfo {
+            id: 8,
+            kind: HeldKind::Response,
+            method: "200".into(),
+            target: String::new(),
+            raw: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".into(),
+        });
+
+        let output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
+            eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                intercept(&mut app, ui);
+            });
+        });
+        let texts = text_of(&output);
+
+        let all = texts.join("\n");
+        assert!(
+            all.contains("HTTP/1.1 200 OK"),
+            "the parked response should be in the editor: {all}"
+        );
+        assert!(
+            all.contains("Cancel"),
+            "a parked response is cancelled rather than dropped: {all}"
+        );
+    }
 }

@@ -259,12 +259,14 @@ pub(crate) fn start(app: &mut App) {
                         continue;
                     }
                     // Re-fetch the page so its forms are known; the crawl does not retain bodies.
-                    let Some((host, port, _, raw)) =
+                    let Some((host, port, tls, raw)) =
                         crate::scanner::active::InjectionPoint::query(url, "x").request("x")
                     else {
                         continue;
                     };
-                    let Ok((_, body_text)) = proxy.one_shot(&host, port, &raw, 8_000).await else {
+                    let Ok((_, body_text)) =
+                        proxy.one_shot_secure(&host, port, &raw, tls, 8_000).await
+                    else {
                         continue;
                     };
                     let body = crate::scanner::http::parse_response(&body_text).body;
@@ -275,8 +277,12 @@ pub(crate) fn start(app: &mut App) {
                     {
                         for check in &checks {
                             for payload in check.payloads {
-                                let Some((h, p, _, request)) = point.request(payload) else { continue };
-                                let Ok((_, text)) = proxy.one_shot(&h, p, &request, 8_000).await else { continue };
+                                let Some((h, p, tls, request)) = point.request(payload) else { continue };
+                                let Ok((_, text)) =
+                                    proxy.one_shot_secure(&h, p, &request, tls, 8_000).await
+                                else {
+                                    continue;
+                                };
                                 probes += 1;
                                 let response = crate::scanner::http::parse_response(&text);
                                 if let Some(finding) = crate::scanner::active::evaluate(

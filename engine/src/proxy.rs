@@ -12,8 +12,18 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, broadcast, oneshot};
 
-type Io = BufReader<tokio::net::tcp::OwnedReadHalf>;
-type Out = tokio::net::tcp::OwnedWriteHalf;
+/// A connection that can be read and written, whether it is a plain socket or a TLS one.
+pub trait Stream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Stream for T {}
+
+/// A whole connection, boxed.
+type StreamBox = Box<dyn Stream>;
+/// A stream the proxy reads from.
+type ReadBox = Box<dyn tokio::io::AsyncRead + Unpin + Send>;
+/// A stream the proxy writes to.
+type WriteBox = Box<dyn tokio::io::AsyncWrite + Unpin + Send>;
+type Io = BufReader<ReadBox>;
+type Out = WriteBox;
 
 /// How much of a body the proxy keeps for display. Beyond this the operator still sees the correct
 /// byte count, but the text is truncated, so memory stays bounded on a large transfer.
@@ -34,8 +44,12 @@ pub enum Event {
         request: String,
         /// The response head and captured body.
         response: String,
+        /// Whether the traffic was carried over TLS.
+        secure: bool,
     },
     Held { id: u64, method: String, target: String, raw: String },
+    /// A response parked for the operator to look at, change or let through.
+    HeldResponse { id: u64, status: u16, raw: String },
     Released { id: u64, forwarded: bool },
     Dropped { id: u64 },
     /// A connection completed a WebSocket handshake and its frames are now being recorded.
@@ -60,18 +74,33 @@ pub enum Event {
     Error(String),
 }
 
-/// A request parked until the operator forwards or drops it.
+/// What a parked message is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HeldKind {
+    Request,
+    Response,
+}
+
+/// A message parked until the operator forwards or drops it.
+///
+/// The decision carries the message to send, so the operator can edit it before it is let
+/// through. `None` means drop it.
 struct Held {
+    kind: HeldKind,
     method: String,
     target: String,
     raw: String,
-    decision: oneshot::Sender<Option<()>>,
+    decision: oneshot::Sender<Option<String>>,
 }
+
+/// The most body bytes the proxy will hold for editing. A bigger body is streamed untouched.
+pub const MAX_HELD_BODY: usize = 8 * 1024 * 1024;
 
 /// A parked request as the UI sees it.
 #[derive(Clone, Debug)]
 pub struct HeldInfo {
     pub id: u64,
+    pub kind: HeldKind,
     pub method: String,
     pub target: String,
     pub raw: String,
@@ -114,6 +143,10 @@ struct Inner {
     bound: tokio::sync::Mutex<Option<u16>>,
     held: Mutex<HashMap<u64, Held>>,
     intercept: AtomicBool,
+    /// Whether responses are parked as well.
+    intercept_response: AtomicBool,
+    /// Whether an https connection is intercepted, or passed through as a tunnel.
+    intercept_tls: AtomicBool,
     next_held: AtomicU64,
     next_ws: AtomicU64,
     matches: AtomicUsize,
@@ -123,6 +156,11 @@ struct Inner {
     /// The match-and-replace script, applied to requests on their way out. Burp calls this feature
     /// "Match and replace"; the script language here is the same Bambda one.
     rules: std::sync::RwLock<Option<Vec<crate::bambda::Statement>>>,
+    /// The authority that signs the certificates the proxy hands to clients that ask for https.
+    authority: Option<Arc<crate::tls::Authority>>,
+    /// Authorities the proxy trusts on top of the system roots, for origins that serve a
+    /// certificate from their own certificate authority.
+    extra_roots: std::sync::Mutex<Vec<rustls::pki_types::CertificateDer<'static>>>,
 }
 
 impl Inner {
@@ -171,6 +209,9 @@ pub struct Proxy {
 impl Proxy {
     pub fn new() -> (Self, broadcast::Receiver<Event>) {
         let (events, rx) = broadcast::channel(1024);
+        // The authority is made up front, so the certificate a browser has to trust is on disk
+        // before the first https request is made.
+        let authority = crate::tls::Authority::generate().ok().map(Arc::new);
         (
             Proxy {
                 inner: Arc::new(Inner {
@@ -180,12 +221,16 @@ impl Proxy {
                     bound: tokio::sync::Mutex::new(None),
                     held: Mutex::new(HashMap::new()),
                     intercept: AtomicBool::new(false),
+            intercept_response: AtomicBool::new(false),
+            intercept_tls: AtomicBool::new(true),
                     next_held: AtomicU64::new(1),
                     next_ws: AtomicU64::new(1),
                     matches: AtomicUsize::new(0),
                     events,
                     cookies: crate::cookies::CookieJar::new(),
                     rules: std::sync::RwLock::new(None),
+                    authority,
+                    extra_roots: std::sync::Mutex::new(Vec::new()),
                 }),
             },
             rx,
@@ -403,12 +448,52 @@ impl Proxy {
         self.inner.intercept.load(Ordering::SeqCst)
     }
 
+    /// Trusts one more authority when the proxy dials an origin.
+    ///
+    /// An origin that serves a certificate from its own certificate authority is otherwise
+    /// unreachable, because the proxy only trusts the system roots.
+    pub fn add_trusted_root(&self, root: rustls::pki_types::CertificateDer<'static>) {
+        if let Ok(mut roots) = self.inner.extra_roots.lock() {
+            roots.push(root);
+        }
+    }
+
+    /// The proxy's own certificate, for a client that has to trust the proxy.
+    pub fn authority_certificate(&self) -> Option<rustls::pki_types::CertificateDer<'static>> {
+        self.inner.authority.as_ref().map(|a| a.certificate_der())
+    }
+
+    /// Where the proxy's certificate was written, so a browser can be pointed at it.
+    pub fn authority_path(&self) -> Option<std::path::PathBuf> {
+        self.inner.authority.as_ref().map(|a| a.path.clone())
+    }
+
+    /// Whether an https connection is intercepted. With it off the connection is passed through
+    /// as a tunnel, so nothing inside it can be seen or changed.
+    pub fn set_tls_interception(&self, on: bool) {
+        self.inner.intercept_tls.store(on, Ordering::SeqCst);
+    }
+
+    pub fn tls_intercepting(&self) -> bool {
+        self.inner.intercept_tls.load(Ordering::SeqCst)
+    }
+
+    /// Turns response interception on or off. It only matters while requests are intercepted.
+    pub fn set_intercept_response(&self, on: bool) {
+        self.inner.intercept_response.store(on, Ordering::SeqCst);
+    }
+
+    pub fn intercepting_response(&self) -> bool {
+        self.inner.intercept_response.load(Ordering::SeqCst)
+    }
+
     pub async fn held(&self) -> Vec<HeldInfo> {
         let held = self.inner.held.lock().await;
         let mut items: Vec<HeldInfo> = held
             .iter()
             .map(|(id, h)| HeldInfo {
                 id: *id,
+                kind: h.kind,
                 method: h.method.clone(),
                 target: h.target.clone(),
                 raw: h.raw.clone(),
@@ -421,7 +506,19 @@ impl Proxy {
     /// Releases one parked request. Returns false when the id is unknown or already answered.
     pub async fn forward(&self, id: u64) -> bool {
         let item = self.inner.held.lock().await.remove(&id);
-        let ok = item.map(|i| i.decision.send(Some(())).is_ok()).unwrap_or(false);
+        let ok = item
+            .map(|i| i.decision.send(Some(i.raw)).is_ok())
+            .unwrap_or(false);
+        self.emit(Event::Released { id, forwarded: ok });
+        ok
+    }
+
+    /// Releases one parked request with the message the operator edited.
+    pub async fn forward_edited(&self, id: u64, raw: &str) -> bool {
+        let item = self.inner.held.lock().await.remove(&id);
+        let ok = item
+            .map(|i| i.decision.send(Some(raw.to_string())).is_ok())
+            .unwrap_or(false);
         self.emit(Event::Released { id, forwarded: ok });
         ok
     }
@@ -443,17 +540,29 @@ impl Proxy {
         // Dropping the sender is how a parked request learns it was dropped.
         if let Ok(mut held) = self.inner.held.try_lock() {
             for (_, item) in held.drain() {
-                let _ = item.decision.send(Some(()));
+                let _ = item.decision.send(Some(item.raw));
             }
         }
     }
 
     /// Sends one raw request and returns the status and full response text.
     pub async fn one_shot(&self, host: &str, port: u16, raw: &str, timeout_ms: u64) -> Result<(u16, String), String> {
+        self.one_shot_secure(host, port, raw, false, timeout_ms).await
+    }
+
+    /// The same, over TLS when the target is a secure one.
+    pub async fn one_shot_secure(
+        &self,
+        host: &str,
+        port: u16,
+        raw: &str,
+        secure: bool,
+        timeout_ms: u64,
+    ) -> Result<(u16, String), String> {
         // The rules apply to every request this build sends, not only the ones that pass through
         // the listener, so Repeater, the scanner and Discover see the same rewriting.
         let raw = self.apply_rules(raw);
-        let call = one_shot(host, port, &raw);
+        let call = one_shot(host, port, &raw, secure);
         match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
             Ok(Ok(pair)) => Ok(pair),
             Ok(Err(e)) => Err(e.to_string()),
@@ -519,12 +628,12 @@ impl Proxy {
         self.emit(Event::AttackDone { total, matches });
     }
 
-    async fn handle(self, stream: TcpStream) {
+    async fn handle(self, mut stream: TcpStream) {
         let _ = stream.set_nodelay(true);
-        let (read, write) = stream.into_split();
-        let mut reader = BufReader::new(read);
-
-        let head = match read_head(&mut reader).await {
+        // The first request is read a byte at a time, so nothing is taken off the wire that the
+        // connection still needs. A `CONNECT` needs the whole socket, because the TLS handshake
+        // runs on it afterwards.
+        let head = match read_head_exact(&mut stream).await {
             Ok(h) => h,
             Err(_) => return,
         };
@@ -533,10 +642,21 @@ impl Proxy {
         let target = parts.next().unwrap_or("").to_string();
 
         if method.eq_ignore_ascii_case("CONNECT") {
-            self.tunnel(reader, write, &method, &target).await;
-        } else {
-            self.forward_request(reader, write, head, &method, &target).await;
+            if self.inner.intercept_tls.load(Ordering::SeqCst) {
+                self.serve_tls(stream, head).await;
+            } else {
+                // Without interception the tunnel is passed through as it is, so nothing inside it
+                // can be seen.
+                let (read, write) = stream.into_split();
+                let reader = BufReader::new(Box::new(read) as ReadBox);
+                self.tunnel(reader, Box::new(write) as Out, &method, &target).await;
+            }
+            return;
         }
+        let (read, write) = stream.into_split();
+        let reader = BufReader::new(Box::new(read) as ReadBox);
+        self.forward_request(reader, Box::new(write) as Out, head, &method, &target, false)
+            .await;
     }
 
     async fn forward_request(
@@ -546,24 +666,57 @@ impl Proxy {
         head: String,
         method: &str,
         target: &str,
+        secure: bool,
     ) {
+        // While intercepting, the body is read in as well, so the whole message can be edited
+        // before it goes out. A body too large to hold is streamed on untouched.
+        let mut head = head;
+        let mut held_body: Option<Vec<u8>> = None;
         if self.inner.intercept.load(Ordering::SeqCst) {
+            if let Some(length) = content_length(&head) {
+                if length <= MAX_HELD_BODY {
+                    let mut buffer = vec![0u8; length];
+                    if reader.read_exact(&mut buffer).await.is_ok() {
+                        held_body = Some(buffer);
+                    }
+                }
+            }
+            let raw = match &held_body {
+                Some(body) => format!("{head}{}", String::from_utf8_lossy(body)),
+                None => head.clone(),
+            };
             let (decision, wait) = oneshot::channel();
             let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
             self.inner.held.lock().await.insert(
                 id,
-                Held { method: method.to_string(), target: target.to_string(), raw: head.clone(), decision },
+                Held {
+                    kind: HeldKind::Request,
+                    method: method.to_string(),
+                    target: target.to_string(),
+                    raw: raw.clone(),
+                    decision,
+                },
             );
             self.emit(Event::Held {
                 id,
                 method: method.to_string(),
                 target: target.to_string(),
-                raw: head.clone(),
+                raw,
             });
-            if !matches!(wait.await, Ok(Some(()))) {
-                self.inner.held.lock().await.remove(&id);
-                self.emit(Event::Dropped { id });
-                return;
+            match wait.await {
+                Ok(Some(edited)) => {
+                    // The operator may have changed the request line, the headers or the body.
+                    let (edited_head, edited_body) = split_message(&edited);
+                    head = fix_content_length(&edited_head, edited_body.as_deref());
+                    if let Some(body) = edited_body {
+                        held_body = Some(body.into_bytes());
+                    }
+                }
+                _ => {
+                    self.inner.held.lock().await.remove(&id);
+                    self.emit(Event::Dropped { id });
+                    return;
+                }
             }
         }
 
@@ -571,7 +724,8 @@ impl Proxy {
             self.emit(Event::Error(format!("cannot resolve target: {target}")));
             return;
         };
-        let mut upstream = match TcpStream::connect((host.as_str(), port)).await {
+        let roots = self.inner.extra_roots.lock().map(|r| r.clone()).unwrap_or_default();
+        let mut upstream = match connect_upstream(&host, port, secure, &roots).await {
             Ok(s) => s,
             Err(_) => {
                 let _ = client
@@ -584,6 +738,7 @@ impl Proxy {
                     bytes: 0,
                     request: head.clone(),
                     response: "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into(),
+                    secure,
                 });
                 return;
             }
@@ -597,14 +752,22 @@ impl Proxy {
             self.emit(Event::Error(format!("write upstream: {target}")));
             return;
         }
+        if let Some(body) = held_body.as_ref() {
+            // The body was read in while intercepting, so it is sent from here and the client's
+            // stream holds nothing more to copy.
+            if upstream.write_all(body).await.is_err() {
+                self.emit(Event::Error(format!("write upstream body: {target}")));
+                return;
+            }
+        }
 
-        let (up_read, up_write) = upstream.into_split();
+        let (up_read, up_write) = tokio::io::split(upstream);
         // A WebSocket upgrade is relay-only after the handshake, so the blind forwarder must not
         // start: it would consume the client half this handler needs to decode frames.
         // A WebSocket upgrade is relay-only after the handshake, so this path keeps both halves
         // here and returns before the ordinary forwarder below can take the client's read half.
         if crate::ws::is_upgrade(&head) {
-            let mut up_reader = BufReader::new(up_read);
+            let mut up_reader = BufReader::new(Box::new(up_read) as ReadBox);
             let (status, status_line) = take_status_line(&mut up_reader).await;
             if client.write_all(&status_line).await.is_err() {
                 return;
@@ -642,34 +805,128 @@ impl Proxy {
                 request: head.clone(),
                 response,
             });
-            self.relay_websocket(id, reader, client, up_reader, up_write).await;
+            self.relay_websocket(id, reader, client, up_reader, Box::new(up_write) as Out).await;
             self.emit(Event::WsClosed { id });
             return;
         }
 
-        // Never wait for client EOF: a keep-alive client does not send one.
-        let mut out = up_write;
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; 16384];
-            loop {
-                match reader.read(&mut buf).await {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => {
-                        if out.write_all(&buf[..n]).await.is_err() {
+        // Never wait for client EOF: a keep-alive client does not send one. When the body was
+        // read in while intercepting it has already been sent, so there is nothing left to copy.
+        if held_body.is_none() {
+            let mut out: Out = Box::new(up_write);
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 16384];
+                loop {
+                    match reader.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => {
+                            if out.write_all(&buf[..n]).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        let mut up_reader = BufReader::new(Box::new(up_read) as ReadBox);
+
+        if self.inner.intercept_response.load(Ordering::SeqCst) {
+            // The whole response head is read in, because the length of the body is only known
+            // once the headers have been seen.
+            let (head_status, head_text, head_bytes) = read_response_head(&mut up_reader).await;
+            // A response without a known length is not held, because reading it to the end would
+            // wait for the origin to close.
+            if let Some(length) = content_length(&head_text).filter(|n| *n <= MAX_HELD_BODY) {
+                let mut body = vec![0u8; length];
+                if up_reader.read_exact(&mut body).await.is_ok() {
+                    let raw = format!("{head_text}{}", String::from_utf8_lossy(&body));
+                    let (decision, wait) = oneshot::channel();
+                    let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
+                    self.inner.held.lock().await.insert(
+                        id,
+                        Held {
+                            kind: HeldKind::Response,
+                            method: method.to_string(),
+                            target: target.to_string(),
+                            raw: raw.clone(),
+                            decision,
+                        },
+                    );
+                    self.emit(Event::HeldResponse {
+                        id,
+                        status: head_status,
+                        raw,
+                    });
+                    match wait.await {
+                        Ok(Some(edited)) => {
+                            // The changed response is what the client gets, with the length kept
+                            // in step with its body.
+                            let (edited_head, edited_body) = split_message(&edited);
+                            let edited_head = fix_content_length(&edited_head, edited_body.as_deref());
+                            // The head and the body go out as one message.
+                            let edited = match edited_body {
+                                Some(body) => format!("{edited_head}{body}"),
+                                None => edited_head,
+                            };
+                            if client.write_all(edited.as_bytes()).await.is_err() {
+                                return;
+                            }
+                            let _ = client.flush().await;
+                            // The response is over, so the connection is closed cleanly. Over TLS
+                            // this is what sends the close notice the client is waiting for.
+                            let _ = client.shutdown().await;
+                            self.emit(Event::Tx {
+                                method: method.to_string(),
+                                target: target.to_string(),
+                                status: head_status,
+                                bytes: edited.len() as u64,
+                                request: head.clone(),
+                                response: edited,
+                                secure,
+                            });
+                            return;
+                        }
+                        _ => {
+                            self.inner.held.lock().await.remove(&id);
+                            self.emit(Event::Dropped { id });
                             return;
                         }
                     }
                 }
             }
-        });
+            // Not held: what was read goes to the client, and the rest is streamed as it is.
+            if client.write_all(&head_bytes).await.is_err() {
+                return;
+            }
+            let (bytes, captured) = copy_across(&mut up_reader, &mut client).await;
+            let _ = client.flush().await;
+            let mut response = String::from_utf8_lossy(&head_bytes).into_owned();
+            response.push_str(&String::from_utf8_lossy(&captured));
+            for cookie in crate::cookies::parse_set_cookie_headers(&response) {
+                self.inner.cookies.store(&host, &cookie);
+            }
+            self.inner.cookies.evict_expired();
+            self.emit(Event::Tx {
+                method: method.to_string(),
+                target: target.to_string(),
+                status: head_status,
+                bytes,
+                request: head.clone(),
+                response,
+                secure,
+            });
+            return;
+        }
 
-        let mut up_reader = BufReader::new(up_read);
+        // Not intercepting responses: the status line is read and the rest is streamed.
         let (status, status_line) = take_status_line(&mut up_reader).await;
         if client.write_all(&status_line).await.is_err() {
             return;
         }
         let (body, captured) = copy_across(&mut up_reader, &mut client).await;
         let _ = client.flush().await;
+        let _ = client.shutdown().await;
 
         let mut response = String::from_utf8_lossy(&status_line).into_owned();
         response.push_str(&String::from_utf8_lossy(&captured));
@@ -684,7 +941,71 @@ impl Proxy {
             bytes: body,
             request: head,
             response,
+            secure,
         });
+    }
+
+
+    /// Answers a `CONNECT` and then speaks TLS to the client, so the traffic inside the tunnel
+    /// can be seen, changed and logged like any other request.
+    ///
+    /// The client is told to trust the proxy's own authority, which is why a browser has to be
+    /// told about that certificate before https works through the proxy.
+    async fn serve_tls(self, mut stream: TcpStream, head: String) {
+        let authority = head
+            .lines()
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("")
+            .to_string();
+        let (host, _port) = split_authority(&authority);
+        if host.is_empty() {
+            self.emit(Event::Error("CONNECT without a host".into()));
+            return;
+        }
+
+        let Some(signer) = self.inner.authority.clone() else {
+            self.emit(Event::Error("no certificate authority available".into()));
+            return;
+        };
+        let config = match signer.server_config(&host) {
+            Ok(c) => c,
+            Err(e) => {
+                self.emit(Event::Error(format!("certificate for {host}: {e}")));
+                return;
+            }
+        };
+        if stream
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let tls = match acceptor.accept(stream).await {
+            Ok(t) => t,
+            Err(e) => {
+                self.emit(Event::Error(format!("tls handshake with {host}: {e}")));
+                return;
+            }
+        };
+        let (read, write) = tokio::io::split(tls);
+        let mut reader = BufReader::new(Box::new(read) as ReadBox);
+        let client: Out = Box::new(write);
+
+        // One request per connection, the same as the plain path.
+        let head = match read_head(&mut reader).await {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let mut parts = head.lines().next().unwrap_or("").split_whitespace();
+        let method = parts.next().unwrap_or("").to_string();
+        let target = parts.next().unwrap_or("").to_string();
+        self.forward_request(reader, client, head, &method, &target, true)
+            .await;
     }
 
     async fn tunnel(self, mut reader: Io, mut client: Out, method: &str, authority: &str) {
@@ -738,6 +1059,7 @@ impl Proxy {
             bytes: 0,
             request: format!("CONNECT {authority} HTTP/1.1\r\n\r\n"),
             response: "HTTP/1.1 200 Connection Established\r\n\r\n".into(),
+            secure: true,
         });
     }
 }
@@ -753,7 +1075,7 @@ impl Proxy {
         id: u64,
         mut from_client: Io,
         mut to_client: Out,
-        mut from_server: BufReader<tokio::net::tcp::OwnedReadHalf>,
+        mut from_server: Io,
         mut to_server: Out,
     ) {
         // Bytes arriving mid-frame are carried into the next decode, so each direction keeps its own
@@ -906,11 +1228,140 @@ fn address_of(line: &str) -> String {
     line[start + 1..end].trim().to_string()
 }
 
-async fn read_head(reader: &mut Io) -> io::Result<String> {
+async fn read_head<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<String> {
     let mut head = String::new();
     loop {
         let n = reader.read_line(&mut head).await?;
         if n == 0 || head.ends_with("\r\n\r\n") || head.ends_with("\n\n") {
+            return Ok(head);
+        }
+        if head.len() > 64 * 1024 {
+            return Err(io::Error::other("request head too large"));
+        }
+    }
+}
+
+
+/// The `Content-Length` a request head carries, when it has one.
+fn content_length(head: &str) -> Option<usize> {
+    for line in head.lines() {
+        // The request line has no colon, so a line without one is simply skipped.
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                return value.trim().parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Splits a raw message into its head and its body. The head keeps the blank line that ends it.
+fn split_message(raw: &str) -> (String, Option<String>) {
+    for separator in ["\r\n\r\n", "\n\n"] {
+        if let Some(index) = raw.find(separator) {
+            let head = raw[..index + separator.len()].to_string();
+            let body = raw[index + separator.len()..].to_string();
+            return (head, Some(body));
+        }
+    }
+    (raw.to_string(), None)
+}
+
+/// Keeps the `Content-Length` in step with the body that is actually sent.
+fn fix_content_length(head: &str, body: Option<&str>) -> String {
+    let Some(body) = body else {
+        return head.to_string();
+    };
+    if !head
+        .lines()
+        .any(|line| line.split_once(':').is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("content-length")))
+    {
+        return head.to_string();
+    }
+    let mut out = String::with_capacity(head.len() + 16);
+    for line in head.split_inclusive('\n') {
+        let replaced = line
+            .split_once(':')
+            .map(|(name, _value)| {
+                if name.trim().eq_ignore_ascii_case("content-length") {
+                    format!("{name}: {}\r\n", body.len())
+                } else {
+                    line.to_string()
+                }
+            })
+            .unwrap_or_else(|| line.to_string());
+        out.push_str(&replaced);
+    }
+    out
+}
+
+
+/// Reads the status line and the headers of a response, up to the blank line that ends them.
+async fn read_response_head(reader: &mut Io) -> (u16, String, Vec<u8>) {
+    let mut raw = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        match reader.read_exact(&mut byte).await {
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        raw.push(byte[0]);
+        let len = raw.len();
+        if len >= 4 && &raw[len - 4..] == b"\r\n\r\n" {
+            break;
+        }
+        if len >= 2 && &raw[len - 2..] == b"\n\n" {
+            break;
+        }
+        if len >= 64 * 1024 {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let status = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+    (status, text, raw)
+}
+
+
+/// Dials an origin, over TLS when the request is secure.
+async fn connect_upstream(
+    host: &str,
+    port: u16,
+    secure: bool,
+    extra_roots: &[rustls::pki_types::CertificateDer<'static>],
+) -> io::Result<StreamBox> {
+    let tcp = TcpStream::connect((host, port)).await?;
+    if !secure {
+        return Ok(Box::new(tcp));
+    }
+    let config = crate::tls::client_config_with(extra_roots).map_err(io::Error::other)?;
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let name = rustls::pki_types::ServerName::try_from(host.to_string())
+        .map_err(|_| io::Error::other(format!("bad server name: {host}")))?;
+    let tls = connector.connect(name, tcp).await?;
+    Ok(Box::new(tls))
+}
+
+/// Reads a request head one byte at a time.
+///
+/// A buffered reader would take more off the wire than the head, and those bytes are lost when
+/// the reader is dropped. The first request of a connection is read this way, because a `CONNECT`
+/// has to leave the socket whole for the TLS handshake that follows it.
+async fn read_head_exact(stream: &mut TcpStream) -> io::Result<String> {
+    let mut head = String::new();
+    loop {
+        let mut byte = [0u8; 1];
+        match stream.read_exact(&mut byte).await {
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        }
+        head.push_str(&String::from_utf8_lossy(&byte));
+        if head.ends_with("\r\n\r\n") || head.ends_with("\n\n") {
             return Ok(head);
         }
         if head.len() > 64 * 1024 {
@@ -967,12 +1418,12 @@ async fn copy_across(from: &mut Io, to: &mut Out) -> (u64, Vec<u8>) {
     }
 }
 
-async fn one_shot(host: &str, port: u16, raw: &str) -> io::Result<(u16, String)> {
-    let mut stream = TcpStream::connect((host, port)).await?;
+async fn one_shot(host: &str, port: u16, raw: &str, secure: bool) -> io::Result<(u16, String)> {
+    let mut stream = connect_upstream(host, port, secure, &[]).await?;
     stream.write_all(normalise_newlines(raw).as_bytes()).await?;
     stream.flush().await?;
-    let (read, _write) = stream.into_split();
-    let mut reader = BufReader::new(read);
+    let (read, _write) = tokio::io::split(stream);
+    let mut reader = BufReader::new(Box::new(read) as ReadBox);
     let (status, status_line) = take_status_line(&mut reader).await;
     let mut full = status_line;
     let mut buf = vec![0u8; 16384];
@@ -1136,7 +1587,9 @@ mod tests {
                 .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
                 .await;
         });
-        let (status, body) = one_shot("127.0.0.1", port, "GET / HTTP/1.1\nHost: x\n\n").await.unwrap();
+        let (status, body) = one_shot("127.0.0.1", port, "GET / HTTP/1.1\nHost: x\n\n", false)
+            .await
+            .unwrap();
         assert_eq!(status, 204);
         assert!(body.starts_with("HTTP/1.1 204"));
     }

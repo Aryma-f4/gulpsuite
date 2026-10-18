@@ -14,4 +14,5 @@ pub mod proxy;
 pub mod ws;
 pub mod replay;
 pub mod scanner;
+pub mod tls;
 pub mod ui;

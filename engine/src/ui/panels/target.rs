@@ -24,7 +24,13 @@ fn tree(app: &mut App) -> BTreeMap<String, SiteMapPaths> {
             .split_once(&tx.host)
             .map(|(_, rest)| rest.to_string())
             .unwrap_or_else(|| tx.target.clone());
-        *built.entry(tx.host.clone()).or_default().entry(path).or_default() += 1;
+        // Burp shows the scheme with the host, so a secure site is not mixed up with a plain one.
+        let host = if tx.secure {
+            format!("https://{}", tx.host)
+        } else {
+            format!("http://{}", tx.host)
+        };
+        *built.entry(host).or_default().entry(path).or_default() += 1;
     }
     app.site_map = Some((app.log_version, built.clone()));
     built
@@ -212,6 +218,7 @@ mod tests {
                     host: "example.test".into(),
                     request: String::new(),
                     response: String::new(),
+                    secure: false,
                     truncated: false,
                 },
                 10,

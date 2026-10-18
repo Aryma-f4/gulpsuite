@@ -140,12 +140,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
 /// A heading with Burp's title colour.
 pub fn heading(ui: &mut Ui, theme: &Theme, text: &str) {
-    ui.label(
-        eframe::egui::RichText::new(text)
-            .size(15.0)
-            .font(crate::ui::app::bold_font(15.0))
-            .color(theme.color("ui.text.body")),
-    );
+    crate::ui::app::bold_text(ui, text, 15.0, theme.color("ui.text.body"));
 }
 
 pub fn label(ui: &mut Ui, theme: &Theme, text: &str) {

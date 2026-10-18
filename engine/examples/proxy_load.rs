@@ -66,7 +66,7 @@ async fn main() {
     let mut version = 0u64;
     tokio::spawn(async move {
         while let Ok(event) = events.recv().await {
-            if let Event::Tx { method, target, status, bytes, request, response } = event {
+            if let Event::Tx { method, target, status, bytes, request, response, secure } = event {
                 let host = target
                     .split_once("://")
                     .map(|(_, rest)| rest.split('/').next().unwrap_or("").to_string())
@@ -82,6 +82,7 @@ async fn main() {
                         host,
                         request,
                         response,
+                        secure,
                         truncated: false,
                     },
                     wire,
