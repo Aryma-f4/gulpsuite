@@ -62,7 +62,13 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 fn start(app: &mut App) {
     let paths = crate::discover::paths_from(&app.panels.discover_paths);
     // `host` is recorded as host:port, which is what the probe needs; `target` is only a path.
-    let hosts = crate::discover::hosts_from(app.log.iter().map(|tx| tx.host.clone()));
+    let hosts = crate::discover::hosts_from(app.log.iter().map(|tx| {
+        if tx.secure {
+            format!("https://{}", tx.host)
+        } else {
+            format!("http://{}", tx.host)
+        }
+    }));
     if hosts.is_empty() || paths.is_empty() {
         app.status = "Discover needs history to work from and at least one path".into();
         return;

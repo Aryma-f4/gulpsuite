@@ -56,7 +56,8 @@ fn discovery_reports_the_paths_that_answer() {
     // The host comes from proxy history, exactly as the panel reads it.
     let history = vec![format!("http://{host}/seed")];
     let hosts = discover::hosts_from(history.into_iter());
-    assert_eq!(hosts, vec![host.clone()]);
+    // The scheme is kept, so a secure site is probed over TLS.
+    assert_eq!(hosts, vec![format!("http://{host}")]);
 
     let paths = discover::paths_from("/robots.txt\n/.env\n/admin\n/nothing-here");
     let urls = discover::plan(&hosts, &paths);

@@ -743,8 +743,8 @@ fn host_of(target: &str) -> String {
         .strip_prefix("http://")
         .or_else(|| target.strip_prefix("https://"))
         .unwrap_or(target);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority).to_string()
+    // The port is kept, because two services on one machine are two different things.
+    rest.split(['/', '?', '#']).next().unwrap_or(rest).to_string()
 }
 
 /// Burp draws its UI with the platform font, so the shell uses the same one instead of egui's

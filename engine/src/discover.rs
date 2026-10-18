@@ -50,22 +50,25 @@ pub fn paths_from(text: &str) -> Vec<String> {
 
 /// Extracts the distinct authorities from proxy history.
 ///
-/// The port is kept: two services on the same machine are two different things to probe, and the
-/// proxy records `host` as `host:port` already.
+/// The scheme and the port are kept: a secure site and a plain one are two different things to
+/// probe, and so are two services on the same machine.
 pub fn hosts_from(targets: impl Iterator<Item = String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for target in targets {
-        // Drop the scheme first: splitting the whole value on '/' would leave "http:".
-        let rest = target.split_once("://").map(|(_, r)| r).unwrap_or(target.as_str());
+        let (scheme, rest) = match target.split_once("://") {
+            Some((scheme, rest)) => (scheme, rest),
+            None => ("http", target.as_str()),
+        };
         let authority = rest.split('/').next().unwrap_or("");
         // Trim any userinfo, but keep the port.
         let authority = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
         if authority.is_empty() {
             continue;
         }
-        if seen.insert(authority.to_string()) {
-            out.push(authority.to_string());
+        let host = format!("{scheme}://{authority}");
+        if seen.insert(host.clone()) {
+            out.push(host);
         }
     }
     out
@@ -79,7 +82,8 @@ pub fn plan(hosts: &[String], paths: &[String]) -> Vec<String> {
             if out.len() >= MAX_PROBES {
                 break 'outer;
             }
-            out.push(format!("http://{host}{path}"));
+            // The host carries the scheme it was seen with, so a secure site is probed over TLS.
+            out.push(format!("{host}{path}"));
         }
     }
     out
@@ -128,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn authorities_keep_their_port_and_are_deduplicated() {
+    fn authorities_keep_their_scheme_and_port_and_are_deduplicated() {
         let targets = vec![
             "http://a.test/x".to_string(),
             "http://a.test/x".to_string(),
@@ -140,21 +144,26 @@ mod tests {
         ];
         assert_eq!(
             hosts_from(targets.into_iter()),
-            vec!["a.test", "a.test:8080", "b.test", "c.test"]
+            vec![
+                "http://a.test",
+                "http://a.test:8080",
+                "https://b.test",
+                "http://c.test"
+            ]
         );
     }
 
     #[test]
     fn the_plan_crosses_hosts_with_paths() {
-        let hosts = vec!["a.test".to_string(), "b.test".to_string()];
+        let hosts = vec!["http://a.test".to_string(), "https://b.test".to_string()];
         let paths = vec!["/x".to_string(), "/y".to_string()];
         assert_eq!(
             plan(&hosts, &paths),
             vec![
                 "http://a.test/x",
                 "http://a.test/y",
-                "http://b.test/x",
-                "http://b.test/y"
+                "https://b.test/x",
+                "https://b.test/y"
             ]
         );
     }
