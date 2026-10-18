@@ -53,6 +53,8 @@ pub struct Panels {
     /// Collaborator state.
     pub collaborator_local: bool,
     pub collaborator_port: Option<u16>,
+    /// The port the collaborator's resolver listens on, when it runs.
+    pub collaborator_dns_port: Option<u16>,
     pub collaborator_token: String,
     pub collaborator_stop: bool,
     pub collaborator_hits: Vec<crate::collaborator::Hit>,
@@ -93,6 +95,7 @@ impl Default for Panels {
             ws_handshake: None,
             collaborator_local: true,
             collaborator_port: None,
+            collaborator_dns_port: None,
             collaborator_token: crate::collaborator::new_token(),
             collaborator_stop: false,
             collaborator_hits: Vec::new(),

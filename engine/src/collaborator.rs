@@ -1,11 +1,16 @@
 //! A local Collaborator server.
 //!
 //! Burp's Collaborator hands out a unique hostname and reports which servers interacted with it,
-//! over DNS or HTTP. The hosted service is not available here, so this is a self-contained HTTP
-//! variant: a token becomes a hostname, and any request to it is recorded. That is enough to drive
-//! out-of-band interaction workflows against a target this machine can reach.
+//! over DNS or HTTP. The hosted service is not available here, so this is a self-contained
+//! variant: a token becomes a hostname, and any request to it is recorded. The same hostname is
+//! answered by a local resolver, so a target that looks a name up instead of fetching it is
+//! recorded as well. That is enough to drive out-of-band interaction workflows against a target
+//! this machine can reach.
 
 use std::sync::Mutex;
+
+/// The domain the generated hostnames sit under.
+pub const DOMAIN: &str = "burpcollaborator.test";
 
 /// How long an interaction is kept. Bounded so a long session does not accumulate without limit.
 pub const MAX_HITS: usize = 1_000;
@@ -13,11 +18,15 @@ pub const MAX_HITS: usize = 1_000;
 /// A recorded interaction.
 #[derive(Clone, Debug)]
 pub struct Hit {
+    /// How the interaction arrived: `HTTP` or `DNS`.
+    pub kind: String,
     pub method: String,
     pub path: String,
     pub peer: String,
     /// The hostname that was requested, which carries the token.
     pub host: String,
+    /// The address a lookup was answered with, when the interaction was a lookup.
+    pub resolved: Option<String>,
 }
 
 /// Generates a random alphanumeric token of `length` characters.
@@ -59,6 +68,24 @@ pub fn is_running() -> bool {
     listener::is_running()
 }
 
+/// Starts the local resolver, returning the port it bound.
+///
+/// The resolver answers every name under the collaborator's domain with the loopback address, and
+/// records the lookup, so a target that resolves a name reaches this machine.
+pub fn start_dns() -> Result<u16, String> {
+    resolver::start()
+}
+
+/// Stops the local resolver.
+pub fn stop_dns() {
+    resolver::stop();
+}
+
+/// True while the resolver is answering.
+pub fn dns_running() -> bool {
+    resolver::is_running()
+}
+
 /// Takes everything recorded since the last call, leaving the store empty.
 pub fn take_hits() -> Vec<Hit> {
     std::mem::take(&mut *HITS.lock().unwrap_or_else(|e| e.into_inner()))
@@ -74,6 +101,75 @@ pub fn record(hit: Hit) {
 }
 
 static HITS: Mutex<Vec<Hit>> = Mutex::new(Vec::new());
+
+mod resolver {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    /// Set by `stop`, cleared by `start`.
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+
+    pub fn stop() {
+        RUNNING.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_running() -> bool {
+        RUNNING.load(Ordering::SeqCst)
+    }
+
+    pub fn start() -> Result<u16, String> {
+        let socket = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        // A short timeout lets the thread notice that the resolver was stopped.
+        socket
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .map_err(|e| e.to_string())?;
+        let port = socket.local_addr().map_err(|e| e.to_string())?.port();
+        RUNNING.store(true, Ordering::SeqCst);
+        let domain = format!(".{}", DOMAIN);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 2048];
+            while RUNNING.load(Ordering::SeqCst) {
+                let Ok((read, peer)) = socket.recv_from(&mut buf) else {
+                    continue;
+                };
+                let Ok(message) = crate::dns::decode(&buf[..read]) else {
+                    continue;
+                };
+                let Some(question) = message.questions.first() else {
+                    continue;
+                };
+                if !question.name.ends_with(&domain) {
+                    continue;
+                }
+                let address = [127, 0, 0, 1];
+                record(Hit {
+                    kind: "DNS".to_string(),
+                    method: crate::dns::kind_name(question.kind).to_string(),
+                    path: question.name.clone(),
+                    peer: peer.to_string(),
+                    host: question.name.clone(),
+                    resolved: Some("127.0.0.1".to_string()),
+                });
+                let answer = if question.kind == crate::dns::kind::A {
+                    crate::dns::response(
+                        message.id,
+                        &question.name,
+                        question.kind,
+                        question.class,
+                        60,
+                        address,
+                    )
+                } else {
+                    crate::dns::empty_response(message.id, &question.name, question.kind, question.class)
+                };
+                let _ = socket.send_to(&answer, peer);
+            }
+        });
+        Ok(port)
+    }
+}
 
 mod listener {
     use super::*;
@@ -115,7 +211,14 @@ mod listener {
                             .map(|a| a.to_string())
                             .unwrap_or_else(|_| "unknown".into());
                         let (method, target, host) = parse_request(&request);
-                        super::record(Hit { method, path: target, peer, host });
+                        super::record(Hit {
+                            kind: "HTTP".to_string(),
+                            method,
+                            path: target,
+                            peer,
+                            host,
+                            resolved: None,
+                        });
                         let body = "collaborator";
                         let response = format!(
                             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -231,7 +334,14 @@ mod tests {
     fn taking_hits_empties_the_store() {
         let _guard = SERVER.lock().unwrap_or_else(|e| e.into_inner());
         let _ = take_hits();
-        record(Hit { method: "GET".into(), path: "/x".into(), peer: "p".into(), host: "h".into() });
+        record(Hit {
+            kind: "HTTP".into(),
+            method: "GET".into(),
+            path: "/x".into(),
+            peer: "p".into(),
+            host: "h".into(),
+            resolved: None,
+        });
         assert_eq!(take_hits().len(), 1);
         assert!(take_hits().is_empty(), "a second take should see nothing new");
     }
@@ -257,15 +367,58 @@ mod tests {
     }
 
     #[test]
+    fn the_resolver_answers_a_lookup_and_records_it() {
+        let _guard = SERVER.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = take_hits();
+        let port = start_dns().expect("resolver starts");
+        assert!(dns_running());
+
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        let name = format!("abc123.{DOMAIN}");
+        let query = crate::dns::query(1234, &name, crate::dns::kind::A, 1);
+        socket
+            .send_to(&query, ("127.0.0.1", port))
+            .expect("send query");
+
+        let mut buf = [0u8; 2048];
+        let (read, _) = socket.recv_from(&mut buf).expect("answer");
+        let answer = crate::dns::decode(&buf[..read]).expect("decodes");
+        assert!(answer.is_response);
+        assert_eq!(answer.id, 1234);
+        assert_eq!(answer.answers.len(), 1);
+        assert_eq!(answer.answers[0].name, name);
+
+        let hits = take_hits();
+        assert_eq!(hits.len(), 1, "the lookup should be recorded");
+        assert_eq!(hits[0].kind, "DNS");
+        assert_eq!(hits[0].host, name);
+        assert_eq!(hits[0].resolved.as_deref(), Some("127.0.0.1"));
+
+        stop_dns();
+        for _ in 0..100 {
+            if !dns_running() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!dns_running());
+    }
+
+    #[test]
     fn the_hit_store_stays_bounded() {
         let _guard = SERVER.lock().unwrap_or_else(|e| e.into_inner());
         let _ = take_hits();
         for index in 0..MAX_HITS + 10 {
             record(Hit {
+                kind: "HTTP".into(),
                 method: "GET".into(),
                 path: format!("/{index}"),
                 peer: "p".into(),
                 host: "h".into(),
+                resolved: None,
             });
         }
         let store = HITS.lock().unwrap_or_else(|e| e.into_inner());

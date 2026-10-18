@@ -193,6 +193,52 @@ pub fn query(id: u16, name: &str, kind: u16, class: u16) -> Vec<u8> {
     out
 }
 
+/// Builds a response that answers one question with one address record.
+///
+/// This is what a resolver answers with, and what the local collaborator hands out so a target
+/// that looks a hostname up reaches this machine.
+pub fn response(id: u16, name: &str, kind: u16, class: u16, ttl: u32, address: [u8; 4]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    out.extend_from_slice(&id.to_be_bytes());
+    // Response, recursion available, no error.
+    out.extend_from_slice(&0x8180u16.to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes()); // one question
+    out.extend_from_slice(&1u16.to_be_bytes()); // one answer
+    out.extend_from_slice(&[0, 0, 0, 0]); // no authority or additional
+    for label in name.split('.').filter(|l| !l.is_empty()) {
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out.extend_from_slice(&kind.to_be_bytes());
+    out.extend_from_slice(&class.to_be_bytes());
+    // The answer points back at the question, which starts at offset twelve.
+    out.extend_from_slice(&[0xC0, 0x0C]);
+    out.extend_from_slice(&kind.to_be_bytes());
+    out.extend_from_slice(&class.to_be_bytes());
+    out.extend_from_slice(&ttl.to_be_bytes());
+    out.extend_from_slice(&4u16.to_be_bytes());
+    out.extend_from_slice(&address);
+    out
+}
+
+/// Builds a response that answers one question with nothing.
+pub fn empty_response(id: u16, name: &str, kind: u16, class: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    out.extend_from_slice(&id.to_be_bytes());
+    out.extend_from_slice(&0x8180u16.to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    for label in name.split('.').filter(|l| !l.is_empty()) {
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out.extend_from_slice(&kind.to_be_bytes());
+    out.extend_from_slice(&class.to_be_bytes());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +253,32 @@ mod tests {
         assert_eq!(message.questions[0].name, "www.example.com");
         assert_eq!(message.questions[0].kind, kind::A);
         assert_eq!(message.questions[0].class, 1);
+        assert!(message.answers.is_empty());
+    }
+
+    #[test]
+    fn a_response_answers_with_the_address() {
+        let bytes = response(7, "x.burpcollaborator.test", kind::A, 1, 60, [127, 0, 0, 1]);
+        let message = decode(&bytes).expect("decodes");
+        assert!(message.is_response);
+        assert_eq!(message.id, 7);
+        assert_eq!(message.questions.len(), 1);
+        assert_eq!(message.questions[0].name, "x.burpcollaborator.test");
+        assert_eq!(message.answers.len(), 1);
+        assert_eq!(message.answers[0].name, "x.burpcollaborator.test");
+        assert_eq!(message.answers[0].kind, kind::A);
+        assert_eq!(message.answers[0].ttl, 60);
+        assert_eq!(message.answers[0].data_len, 4);
+        // The address itself is the last four bytes.
+        assert_eq!(&bytes[bytes.len() - 4..], &[127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn an_empty_response_answers_with_nothing() {
+        let bytes = empty_response(8, "x.burpcollaborator.test", kind::TXT, 1);
+        let message = decode(&bytes).expect("decodes");
+        assert!(message.is_response);
+        assert_eq!(message.questions.len(), 1);
         assert!(message.answers.is_empty());
     }
 

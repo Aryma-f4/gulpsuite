@@ -75,6 +75,33 @@ fn server(app: &mut App, ui: &mut Ui) {
         ui.monospace(format!("http://127.0.0.1:{port}/{}.burpcollaborator.test", app.panels.collaborator_token));
     }
 
+    // The resolver answers the same hostname, so a target that looks it up is recorded too.
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        label(ui, &theme, "DNS resolver");
+        if ui.button("Start").clicked() {
+            match crate::collaborator::start_dns() {
+                Ok(port) => {
+                    app.panels.collaborator_dns_port = Some(port);
+                    app.status = format!("Collaborator resolver listening on 127.0.0.1:{port}");
+                }
+                Err(why) => app.status = format!("Resolver start failed: {why}"),
+            }
+        }
+        if ui.button("Stop").clicked() {
+            crate::collaborator::stop_dns();
+            app.panels.collaborator_dns_port = None;
+            app.status = "Collaborator resolver stopped".into();
+        }
+    });
+    if let Some(port) = app.panels.collaborator_dns_port {
+        ui.monospace(format!(
+            "{}.{} resolves to 127.0.0.1 via 127.0.0.1:{port}",
+            app.panels.collaborator_token,
+            crate::collaborator::DOMAIN
+        ));
+    }
+
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         label(ui, &theme, "Token");
@@ -93,8 +120,16 @@ fn server(app: &mut App, ui: &mut Ui) {
     }
     eframe::egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
         for hit in app.panels.collaborator_hits.iter().rev() {
-            ui.label(eframe::egui::RichText::new(format!("{} {}", hit.method, hit.path)).monospace());
-            ui.label(eframe::egui::RichText::new(format!("  from {}", hit.peer)).small().color(theme.color("ui.icon.default")));
+            // The kind says how the interaction arrived, the way Burp's log does.
+            ui.label(
+                eframe::egui::RichText::new(format!("[{}] {} {}", hit.kind, hit.method, hit.path))
+                    .monospace(),
+            );
+            let mut detail = format!("  from {}", hit.peer);
+            if let Some(address) = &hit.resolved {
+                detail.push_str(&format!(" — resolved to {address}"));
+            }
+            ui.label(eframe::egui::RichText::new(detail).small().color(theme.color("ui.icon.default")));
         }
     });
 }
