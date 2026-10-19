@@ -2,7 +2,7 @@
 
 mod collaborator;
 mod comparer;
-mod dashboard;
+pub(crate) mod dashboard;
 pub(crate) mod decoder;
 mod extender;
 pub mod discover;
@@ -24,6 +24,8 @@ use eframe::egui::Ui;
 use crate::proxy::Proxy;
 use crate::ui::app::{self, App};
 use crate::ui::theme::Theme;
+
+pub use dashboard::DashboardState;
 
 /// Per-tool state.
 #[derive(Clone)]

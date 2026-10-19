@@ -265,10 +265,7 @@ pub struct App {
     /// The last memory reading for the status bar, and when it was taken.
     pub memory_text: String,
     pub memory_checked: std::time::Instant,
-    /// Which Dashboard task the detail pane is showing: 0 is the live audit, 1 the passive crawl.
-    pub dashboard_task: usize,
-    /// Whether the Dashboard's tasks are capturing. Burp starts with both of its tasks capturing.
-    pub capturing: bool,
+    pub dashboard: panels::DashboardState,
     /// Whether the settings popup is open.
     pub show_settings: bool,
     /// Whether the search window is open.
@@ -364,8 +361,7 @@ impl App {
             _requests_tx: req_tx,
             scanner_updates: None,
             memory_text: "Memory: —".to_string(),
-            dashboard_task: 0,
-            capturing: true,
+            dashboard: panels::DashboardState::default(),
             show_search: false,
             show_console: false,
             search_text: String::new(),

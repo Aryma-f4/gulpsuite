@@ -1,128 +1,258 @@
-//! Dashboard: Burp's first tool, laid out as a task list beside a tabbed detail pane.
-//!
-//! Geometry follows a 1440x790 Burp v2026.3.3 capture: the split sits at 500px, so the task
-//! column takes roughly the first third of the window, and the detail pane carries its own tab
-//! row, two cards side by side and a task list on the left.
+//! Dashboard task list and selected-task detail, backed by the shared workspace.
+
+use std::collections::BTreeSet;
 
 use eframe::egui::{self, Color32, FontId, Sense, Ui, Vec2};
 
 use super::{heading, muted};
-use crate::scanner::Severity;
 use crate::ui::app::App;
 use crate::ui::icons::Glyph;
+use crate::workspace::{IssueSeverity, Task, TaskId, TaskKind, TaskQuery, TaskState, Workspace};
 
-/// Width of the task column, as a fraction of the window.
-const SPLIT: f32 = 500.0 / 1440.0;
-
-pub fn draw(app: &mut App, ui: &mut Ui) {
-    let left = (ui.available_width() * SPLIT).max(200.0);
-    ui.horizontal_top(|ui| {
-        tasks_column(app, ui, left);
-        ui.separator();
-        detail_pane(app, ui);
-    });
+#[derive(Clone, Debug, Default)]
+pub struct DashboardState {
+    pub search: String,
+    pub states: BTreeSet<TaskState>,
+    pub kinds: BTreeSet<TaskKind>,
+    pub rename_task: Option<TaskId>,
+    pub rename_text: String,
 }
 
-/// The task list: the two task kinds Burp ships, the filter row, and what this session found.
-fn tasks_column(app: &mut App, ui: &mut Ui, width: f32) {
+impl DashboardState {
+    pub fn query(&self) -> TaskQuery {
+        TaskQuery {
+            states: self.states.clone(),
+            kinds: self.kinds.clone(),
+            search: self.search.clone(),
+        }
+    }
+
+    pub fn visible_task_ids(&self, workspace: &Workspace) -> Vec<TaskId> {
+        workspace
+            .tasks
+            .query(&self.query())
+            .into_iter()
+            .map(|task| task.id)
+            .collect()
+    }
+
+    pub fn selected_task<'a>(&self, workspace: &'a Workspace) -> Option<&'a Task> {
+        workspace
+            .tasks
+            .selected()
+            .and_then(|id| workspace.tasks.get(id))
+    }
+
+    pub fn empty_state(&self, workspace: &Workspace) -> DashboardEmpty {
+        if workspace.tasks.is_empty() {
+            DashboardEmpty::NoTasks
+        } else if self.visible_task_ids(workspace).is_empty() {
+            DashboardEmpty::NoMatches
+        } else {
+            DashboardEmpty::Populated
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DashboardEmpty {
+    NoTasks,
+    NoMatches,
+    Populated,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DashboardCommand {
+    NewScan,
+    NewLiveTask,
+    Select(TaskId),
+    Rename(TaskId, String),
+    Pause(TaskId),
+    Resume(TaskId),
+    Cancel(TaskId),
+    Detach(TaskId),
+    ShowSettings,
+    ShowHelp,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TaskControls {
+    pub pause: bool,
+    pub resume: bool,
+    pub cancel: bool,
+    pub rename: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IssueCounts {
+    pub info: usize,
+    pub low: usize,
+    pub medium: usize,
+    pub high: usize,
+}
+
+pub fn controls_for(state: TaskState) -> TaskControls {
+    TaskControls {
+        pause: state == TaskState::Running,
+        resume: state == TaskState::Paused,
+        cancel: matches!(
+            state,
+            TaskState::Queued | TaskState::Running | TaskState::Paused
+        ),
+        rename: true,
+    }
+}
+
+pub fn issue_counts(workspace: &Workspace, task_id: TaskId) -> IssueCounts {
+    let mut counts = IssueCounts::default();
+    for issue in workspace
+        .issues
+        .iter()
+        .filter(|issue| issue.task_id == task_id)
+    {
+        match issue.severity {
+            IssueSeverity::Info => counts.info += 1,
+            IssueSeverity::Low => counts.low += 1,
+            IssueSeverity::Medium => counts.medium += 1,
+            IssueSeverity::High => counts.high += 1,
+        }
+    }
+    counts
+}
+
+pub fn draw(app: &mut App, ui: &mut Ui) {
+    let split = crate::ui::reference::burp_2026_3_3().dashboard.split_ratio;
+    let left = (ui.available_width() * split).max(260.0);
+    let mut commands = Vec::new();
+    ui.horizontal_top(|ui| {
+        tasks_column(app, ui, left, &mut commands);
+        ui.separator();
+        detail_pane(app, ui, &mut commands);
+    });
+    for command in commands {
+        apply_command(app, command);
+    }
+}
+
+fn tasks_column(app: &mut App, ui: &mut Ui, width: f32, commands: &mut Vec<DashboardCommand>) {
     let theme = app.theme.clone();
     ui.vertical(|ui| {
         ui.set_width(width);
         ui.horizontal(|ui| {
             heading(ui, &theme, "Tasks");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                pane_icons(app, ui, &theme);
+                pane_icons(ui, &theme, commands);
                 if crate::ui::app::primary_button(ui, &theme, "New live task").clicked() {
-                    app.status = "Live audit task started".into();
-                    app.tool = crate::ui::app::PROXY;
+                    commands.push(DashboardCommand::NewLiveTask);
                 }
                 if crate::ui::app::primary_button(ui, &theme, "New scan").clicked() {
-                    app.tool = crate::ui::app::PROXY;
+                    commands.push(DashboardCommand::NewScan);
                 }
             });
         });
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let (funnel, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-            crate::ui::icons::paint(ui.painter(), funnel, theme.color("ui.icon.default"), Glyph::Funnel);
-            ui.allocate_space(Vec2::new(4.0, 0.0));
-            ui.label("Filter");
-            // Burp's filter is a bare dropdown arrow rather than a labelled combo box.
-            let (chevron, response) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::click());
-            if response.clicked() {
-                app.status = "Filter: all tasks".into();
-            }
-            let centre = chevron.center();
-            ui.painter().add(egui::Shape::line(
-                vec![
-                    egui::pos2(centre.x - 4.0, centre.y - 2.0),
-                    egui::pos2(centre.x, centre.y + 2.0),
-                    egui::pos2(centre.x + 4.0, centre.y - 2.0),
-                ],
-                egui::Stroke::new(1.4, theme.color("ui.icon.default")),
-            ));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let mut search = String::new();
-                ui.add(
-                    egui::TextEdit::singleline(&mut search)
-                        .hint_text("Search")
-                        .desired_width(120.0),
-                );
-            });
-        });
+        filter_row(app, ui);
         ui.add_space(6.0);
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            // Burp lists the live audit first and the passive crawl second, and marks the selected
-            // card with a blue edge.
-            task_card(
-                app,
+        let ids = app.dashboard.visible_task_ids(&app.workspace);
+        match app.dashboard.empty_state(&app.workspace) {
+            DashboardEmpty::NoTasks => dashboard_empty(
                 ui,
-                "2. Live audit from Proxy (all traffic)",
-                "Audit checks - passive",
-                app.dashboard_task == 0,
-            );
-            task_card(
-                app,
+                &theme,
+                "No tasks yet",
+                "Create a scan or live task to start working.",
+            ),
+            DashboardEmpty::NoMatches => dashboard_empty(
                 ui,
-                "1. Live passive crawl from Proxy (all traffic)",
-                "Add links. Add item itself, same domain and URLs in suite scope.",
-                app.dashboard_task == 1,
+                &theme,
+                "No matching tasks",
+                "Clear the search or filters to see your tasks.",
+            ),
+            DashboardEmpty::Populated => {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for id in ids {
+                        if let Some(task) = app.workspace.tasks.get(id).cloned() {
+                            task_card(app, ui, &task, commands);
+                        }
+                    }
+                });
+            }
+        }
+    });
+}
+
+fn filter_row(app: &mut App, ui: &mut Ui) {
+    let theme = app.theme.clone();
+    ui.horizontal(|ui| {
+        let (funnel, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+        crate::ui::icons::paint(
+            ui.painter(),
+            funnel,
+            theme.color("ui.icon.default"),
+            Glyph::Funnel,
+        );
+        ui.menu_button("Filter", |ui| {
+            ui.label(egui::RichText::new("State").strong());
+            for state in [
+                TaskState::Queued,
+                TaskState::Running,
+                TaskState::Paused,
+                TaskState::Completed,
+                TaskState::Failed,
+                TaskState::Cancelled,
+                TaskState::Interrupted,
+            ] {
+                let mut selected = app.dashboard.states.contains(&state);
+                if ui.checkbox(&mut selected, state_name(state)).changed() {
+                    if selected {
+                        app.dashboard.states.insert(state);
+                    } else {
+                        app.dashboard.states.remove(&state);
+                    }
+                }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new("Type").strong());
+            for kind in [
+                TaskKind::LiveAudit,
+                TaskKind::PassiveCrawl,
+                TaskKind::Scan,
+                TaskKind::Intruder,
+                TaskKind::Discover,
+                TaskKind::Other,
+            ] {
+                let mut selected = app.dashboard.kinds.contains(&kind);
+                if ui.checkbox(&mut selected, kind_name(kind)).changed() {
+                    if selected {
+                        app.dashboard.kinds.insert(kind);
+                    } else {
+                        app.dashboard.kinds.remove(&kind);
+                    }
+                }
+            }
+            if ui.button("Clear filters").clicked() {
+                app.dashboard.states.clear();
+                app.dashboard.kinds.clear();
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.dashboard.search)
+                    .hint_text("Search")
+                    .desired_width(150.0),
             );
         });
     });
 }
 
-/// The three icons Burp puts at the top right of a pane: pause, settings and help.
-fn pane_icons(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
-    for glyph in [Glyph::Help, Glyph::Gear, Glyph::Pause] {
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::click());
-        crate::ui::icons::paint(ui.painter(), rect, theme.color("ui.icon.default"), glyph);
-        if response.clicked() {
-            match glyph {
-                Glyph::Gear => app.show_settings = true,
-                Glyph::Pause => {
-                    app.capturing = false;
-                    app.panels.scanner.running = false;
-                    app.status = "Capture paused".into();
-                }
-                _ => app.status = "Help is not available in this build".into(),
-            }
-        }
-        ui.allocate_space(Vec2::new(4.0, 0.0));
-    }
-}
-
-/// One task card: name, what it does, whether it is capturing, and issue counters.
-fn task_card(app: &mut App, ui: &mut Ui, name: &str, description: &str, selected: bool) {
+fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<DashboardCommand>) {
     let theme = app.theme.clone();
+    let selected = app.workspace.tasks.selected() == Some(task.id);
     let accent = theme.color("palette.secondary.core");
-    let border = theme.color("ui.border.1");
-    let mut capturing = app.capturing;
-    let mut picked = selected;
+    let counts = issue_counts(&app.workspace, task.id);
     let frame = egui::Frame {
         fill: theme.color("ui.background.1"),
-        stroke: egui::Stroke::new(1.0, border),
+        stroke: egui::Stroke::new(1.0, theme.color("ui.border.1")),
         corner_radius: egui::CornerRadius::same(4),
         inner_margin: egui::Margin::symmetric(12, 10),
         outer_margin: egui::Margin::symmetric(0, 4),
@@ -130,66 +260,64 @@ fn task_card(app: &mut App, ui: &mut Ui, name: &str, description: &str, selected
     };
     let response = frame.show(ui, |ui| {
         ui.horizontal(|ui| {
-            let title =
-                crate::ui::app::bold_click_label(ui, name, 12.0, theme.color("ui.text.body"));
-            if title.clicked() {
-                picked = true;
-                app.dashboard_task = if name.starts_with('2') { 0 } else { 1 };
+            if app.dashboard.rename_task == Some(task.id) {
+                let submitted = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut app.dashboard.rename_text)
+                            .desired_width(180.0),
+                    )
+                    .lost_focus()
+                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if submitted || ui.button("Save").clicked() {
+                    commands.push(DashboardCommand::Rename(
+                        task.id,
+                        app.dashboard.rename_text.clone(),
+                    ));
+                }
+                if ui.button("Cancel").clicked() {
+                    app.dashboard.rename_task = None;
+                }
+            } else if crate::ui::app::bold_click_label(
+                ui,
+                &task.name,
+                12.0,
+                theme.color("ui.text.body"),
+            )
+            .clicked()
+            {
+                commands.push(DashboardCommand::Select(task.id));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for glyph in [Glyph::Ellipsis, Glyph::Pause] {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                    crate::ui::icons::paint(
-                        ui.painter(),
-                        rect,
-                        theme.color("ui.icon.default"),
-                        glyph,
-                    );
-                    ui.allocate_space(Vec2::new(4.0, 0.0));
+                task_menu(app, ui, task, commands);
+            });
+        });
+        ui.label(egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")));
+        ui.horizontal(|ui| {
+            ui.label(state_name(task.state));
+            let mut active = task.state == TaskState::Running;
+            if switch(ui, &mut active, accent).clicked() {
+                if active {
+                    commands.push(DashboardCommand::Resume(task.id));
+                } else {
+                    commands.push(DashboardCommand::Pause(task.id));
                 }
-            });
-        });
-        ui.label(
-            egui::RichText::new(description).color(theme.color("ui.text.disabled")),
-        );
-        ui.horizontal(|ui| {
-            ui.label("Capturing");
-            ui.allocate_space(Vec2::new(6.0, 0.0));
-            switch(ui, &mut capturing, accent);
-        });
-        ui.horizontal(|ui| {
-            let counts = app.panels.scanner.findings.iter().fold([0usize; 4], |mut acc, f| {
-                acc[severity_index(f.severity)] += 1;
-                acc
-            });
-            // Burp puts the counters on the right of the card, highest severity first.
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label("Issues:");
-                for (index, severity) in [
-                    Severity::High,
-                    Severity::Medium,
-                    Severity::Low,
-                    Severity::Info,
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let colour = match severity {
-                        Severity::High => theme.color("ui.issue.high"),
-                        Severity::Medium => theme.color("ui.issue.medium"),
-                        Severity::Low => theme.color("ui.issue.low"),
-                        Severity::Info => theme.color("palette.mono.5"),
-                    };
-                    issue_pill(ui, counts[index], colour);
-                }
+                issue_pill(ui, counts.info, theme.color("palette.mono.5"));
+                issue_pill(ui, counts.low, theme.color("ui.issue.low"));
+                issue_pill(ui, counts.medium, theme.color("ui.issue.medium"));
+                issue_pill(ui, counts.high, theme.color("ui.issue.high"));
             });
         });
+        if !task.progress.status.is_empty() {
+            muted(ui, &theme, &task.progress.status);
+        }
     });
-    if picked && !selected {
-        app.dashboard_task = if name.starts_with('2') { 0 } else { 1 };
+    if response.response.clicked() {
+        commands.push(DashboardCommand::Select(task.id));
     }
     if selected {
-        // Burp marks the selected card with a blue edge down its left side.
         let rect = response.response.rect;
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
@@ -200,110 +328,97 @@ fn task_card(app: &mut App, ui: &mut Ui, name: &str, description: &str, selected
             accent,
         );
     }
-    if capturing != app.capturing {
-        app.capturing = capturing;
-    }
 }
 
-/// The pill switch Burp uses for "Capturing".
-fn switch(ui: &mut Ui, on: &mut bool, accent: Color32) {
-    let size = Vec2::new(30.0, 16.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    if response.clicked() {
-        *on = !*on;
-    }
-    let painter = ui.painter_at(rect);
-    let track = if *on {
-        accent
-    } else {
-        ui.visuals().widgets.inactive.bg_fill
-    };
-    painter.rect_filled(rect, 8.0, track);
-    let knob = if *on {
-        egui::pos2(rect.max.x - 8.0, rect.center().y)
-    } else {
-        egui::pos2(rect.min.x + 8.0, rect.center().y)
-    };
-    painter.circle_filled(knob, 5.5, Color32::WHITE);
-}
-
-/// A small rounded counter, as Burp draws the issue totals.
-fn issue_pill(ui: &mut Ui, count: usize, colour: Color32) {
-    let text = format!("{count}");
-    let font = FontId::proportional(10.0);
-    let galley = ui.painter().layout_no_wrap(text.clone(), font.clone(), Color32::WHITE);
-    let size = Vec2::new(galley.size().x + 14.0, 16.0);
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 8.0, colour);
-    painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, font, Color32::WHITE);
-}
-
-fn severity_index(severity: Severity) -> usize {
-    match severity {
-        Severity::High => 0,
-        Severity::Medium => 1,
-        Severity::Low => 2,
-        Severity::Info => 3,
-    }
-}
-
-/// The right-hand pane: the selected task's header, then whichever of Burp's six tabs is open.
-fn detail_pane(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            ui.horizontal(|ui| {
-                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                crate::ui::icons::paint(
-                    ui.painter(),
-                    icon,
-                    theme.color("ui.icon.default"),
-                    Glyph::Diamond,
-                );
-                ui.allocate_space(Vec2::new(4.0, 0.0));
-                heading(ui, &theme, task_title(app));
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                pane_icons(app, ui, &theme);
-                ui.horizontal(|ui| {
-                    let (star, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
-                    crate::ui::icons::paint(
-                        ui.painter(),
-                        star,
-                        theme.color("icon.link"),
-                        Glyph::Star,
-                    );
-                    ui.allocate_space(Vec2::new(4.0, 0.0));
-                    ui.label(
-                        egui::RichText::new("Rate this scan").color(theme.color("icon.link")),
-                    );
-                });
-            });
-        });
-        ui.add_space(8.0);
-        // Burp draws this tab row inside the detail pane rather than across the whole window.
-        app.tab_row(ui, crate::ui::app::TOOL_VIEWS[crate::ui::app::SUITE], false, 30.0);
-        match app.view {
-            0 => summary(app, ui),
-            1 => audit_items(app, ui),
-            2 => issues(app, ui),
-            3 => event_log(app, ui),
-            4 => logger(app, ui),
-            _ => audit_log(app, ui),
+fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<DashboardCommand>) {
+    let controls = controls_for(task.state);
+    ui.menu_button("⋯", |ui| {
+        if controls.pause && ui.button("Pause").clicked() {
+            commands.push(DashboardCommand::Pause(task.id));
+            ui.close();
+        }
+        if controls.resume && ui.button("Resume").clicked() {
+            commands.push(DashboardCommand::Resume(task.id));
+            ui.close();
+        }
+        if controls.rename && ui.button("Rename").clicked() {
+            app.dashboard.rename_task = Some(task.id);
+            app.dashboard.rename_text = task.name.clone();
+            ui.close();
+        }
+        if controls.cancel && ui.button("Cancel").clicked() {
+            commands.push(DashboardCommand::Cancel(task.id));
+            ui.close();
+        }
+        if ui.button("Detach details").clicked() {
+            commands.push(DashboardCommand::Detach(task.id));
+            ui.close();
         }
     });
 }
 
-fn task_title(app: &App) -> &'static str {
-    if app.dashboard_task == 0 {
-        "2. Live audit from Proxy (all traffic)"
-    } else {
-        "1. Live passive crawl from Proxy (all traffic)"
+fn pane_icons(ui: &mut Ui, theme: &crate::ui::theme::Theme, commands: &mut Vec<DashboardCommand>) {
+    for (glyph, command, tooltip) in [
+        (Glyph::Help, DashboardCommand::ShowHelp, "Help"),
+        (Glyph::Gear, DashboardCommand::ShowSettings, "Settings"),
+    ] {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::click());
+        crate::ui::icons::paint(ui.painter(), rect, theme.color("ui.icon.default"), glyph);
+        if response.clicked() {
+            commands.push(command);
+        }
+        response.on_hover_text(tooltip);
+        ui.allocate_space(Vec2::new(4.0, 0.0));
     }
 }
 
-fn summary(app: &mut App, ui: &mut Ui) {
+fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>) {
+    let Some(task) = app.dashboard.selected_task(&app.workspace).cloned() else {
+        dashboard_empty(
+            ui,
+            &app.theme,
+            "No task selected",
+            "Select a task on the left to inspect its details.",
+        );
+        return;
+    };
+    let theme = app.theme.clone();
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            crate::ui::icons::paint(
+                ui.painter(),
+                icon,
+                theme.color("ui.icon.default"),
+                Glyph::Diamond,
+            );
+            heading(ui, &theme, &task.name);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Detach").clicked() {
+                    commands.push(DashboardCommand::Detach(task.id));
+                }
+                pane_icons(ui, &theme, commands);
+            });
+        });
+        ui.add_space(8.0);
+        app.tab_row(
+            ui,
+            crate::ui::app::TOOL_VIEWS[crate::ui::app::SUITE],
+            false,
+            30.0,
+        );
+        match app.view {
+            0 => summary(app, ui, &task),
+            1 => audit_items(app, ui, &task),
+            2 => issues(app, ui, &task),
+            3 => event_log(app, ui, &task),
+            4 => logger(app, ui, &task),
+            _ => audit_log(app, ui, &task),
+        }
+    });
+}
+
+fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
     let theme = app.theme.clone();
     let card = egui::Frame {
         fill: theme.color("ui.background.1"),
@@ -314,267 +429,458 @@ fn summary(app: &mut App, ui: &mut Ui) {
         shadow: egui::Shadow::NONE,
     };
     ui.columns(2, |columns| {
-        columns[0].set_min_width(280.0);
         card.show(&mut columns[0], |ui| {
-            ui.horizontal(|ui| {
-                ui.horizontal(|ui| {
-                    let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                    crate::ui::icons::paint(
-                        ui.painter(),
-                        icon,
-                        theme.color("ui.icon.warning"),
-                        Glyph::Warning,
-                    );
-                    ui.allocate_space(Vec2::new(4.0, 0.0));
-                    heading(ui, &theme, "Most serious vulnerabilities found (live)");
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .selectable_label(
-                            false,
-                            egui::RichText::new("View all").color(theme.color("icon.link")),
-                        )
-                        .clicked()
-                    {
-                        // "View all" leads to the Issues tab.
-                        app.view = 2;
-                    }
-                });
-            });
+            heading(ui, &theme, "Most serious vulnerabilities found (live)");
             ui.add_space(8.0);
-            vulnerabilities_table(app, ui);
+            issue_table(app, ui, task.id);
         });
         card.show(&mut columns[1], |ui| {
-            ui.horizontal(|ui| {
-                ui.horizontal(|ui| {
-                    let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                    crate::ui::icons::paint(
-                        ui.painter(),
-                        icon,
-                        theme.color("ui.icon.default"),
-                        Glyph::Diamond,
-                    );
-                    ui.allocate_space(Vec2::new(4.0, 0.0));
-                    heading(ui, &theme, "Task configuration");
+            heading(ui, &theme, "Task configuration");
+            egui::Grid::new(("task-configuration", task.id.0))
+                .num_columns(2)
+                .spacing([16.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Task type:").strong());
+                    ui.label(kind_name(task.kind));
+                    ui.end_row();
+                    ui.label(egui::RichText::new("State:").strong());
+                    ui.label(state_name(task.state));
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Configuration:").strong());
+                    ui.label(&task.configuration);
+                    ui.end_row();
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .selectable_label(
-                            false,
-                            egui::RichText::new("View configuration").color(theme.color("icon.link")),
-                        )
-                        .clicked()
-                    {
-                        app.show_settings = true;
-                    }
-                });
-            });
-            ui.add_space(6.0);
-            task_configuration(app, ui);
             ui.add_space(10.0);
-            task_progress(app, ui);
+            heading(ui, &theme, "Task progress");
+            ui.label(format!(
+                "{}{}",
+                task.progress.completed,
+                task.progress
+                    .total
+                    .map(|total| format!(" of {total}"))
+                    .unwrap_or_default()
+            ));
+            muted(ui, &theme, &task.progress.status);
             ui.add_space(10.0);
-            task_log(app, ui);
+            heading(ui, &theme, "Task log");
+            let events: Vec<_> = app
+                .workspace
+                .events
+                .iter()
+                .filter(|event| event.task_id == Some(task.id))
+                .collect();
+            for event in events.iter().rev().take(8) {
+                ui.label(format!("{}  {}", event.source, event.message));
+            }
+            if events.is_empty() {
+                muted(ui, &theme, "No task events yet.");
+            }
         });
     });
 }
 
-/// The issue table, with Burp's grey header row and its empty state.
-fn vulnerabilities_table(app: &mut App, ui: &mut Ui) {
+fn issue_table(app: &App, ui: &mut Ui, task_id: TaskId) {
     let theme = app.theme.clone();
-    let header = egui::Frame {
-        fill: theme.color("ui.background.3"),
-        stroke: egui::Stroke::NONE,
-        corner_radius: egui::CornerRadius::same(0),
-        inner_margin: egui::Margin::symmetric(10, 6),
-        outer_margin: egui::Margin::ZERO,
-        shadow: egui::Shadow::NONE,
-    };
-    header.show(ui, |ui| {
-        egui::Grid::new("vuln-header")
-            .num_columns(3)
-            .spacing([16.0, 4.0])
-            .show(ui, |ui| {
-                crate::ui::app::bold_text(ui, "Issue type", 12.0, theme.color("ui.text.body"));
-                crate::ui::app::bold_text(ui, "Host", 12.0, theme.color("ui.text.body"));
-                crate::ui::app::bold_text(ui, "Time", 12.0, theme.color("ui.text.body"));
-                ui.end_row();
-            });
-    });
-    let findings = app.panels.scanner.findings.clone();
-    if findings.is_empty() {
-        ui.add_space(40.0);
-        ui.vertical_centered(|ui| {
-            empty_state(ui, theme.color("palette.secondary.core"));
-            ui.add_space(12.0);
-            ui.label(egui::RichText::new("No issues to show").strong());
-            ui.label(
-                egui::RichText::new("Any issues found during the audit will be displayed here.")
-                    .color(theme.color("ui.text.disabled")),
-            );
-        });
-    } else {
-        for finding in findings.iter().take(16) {
-            ui.label(format!("{} · {}", finding.severity.as_str(), finding.name));
-        }
-    }
-}
-
-/// The stacked-cards illustration Burp shows when a panel has nothing in it.
-fn empty_state(ui: &mut Ui, colour: Color32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(110.0, 64.0), Sense::hover());
-    let painter = ui.painter_at(rect);
-    for (dx, dy, angle) in [(-26.0, 4.0, -0.3f32), (0.0, -12.0, 0.0), (26.0, 14.0, 0.3)] {
-        let center = rect.center() + Vec2::new(dx, dy);
-        let (sin, cos) = angle.sin_cos();
-        let corner = |x: f32, y: f32| center + Vec2::new(x * cos - y * sin, x * sin + y * cos);
-        let points = vec![
-            corner(-14.0, -8.0),
-            corner(14.0, -8.0),
-            corner(14.0, 8.0),
-            corner(-14.0, 8.0),
-        ];
-        painter.add(egui::Shape::convex_polygon(points, colour, egui::Stroke::NONE));
-        // The light slot across the middle of each card.
-        painter.add(egui::Shape::line(
-            vec![corner(-16.0, 0.0), corner(16.0, 0.0)],
-            egui::Stroke::new(2.0, Color32::WHITE),
-        ));
-    }
-}
-
-fn audit_items(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Audit items");
-    if app.panels.scanner.pages.is_empty() {
-        muted(ui, &theme, "No audit items yet.");
-        return;
-    }
-    for (url, status) in app.panels.scanner.pages.iter().take(64) {
-        ui.label(format!("{status}  {url}"));
-    }
-}
-
-fn issues(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Issues");
-    let findings = &app.panels.scanner.findings;
-    if findings.is_empty() {
-        muted(ui, &theme, "No issues reported.");
-        return;
-    }
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for finding in findings.iter() {
-            ui.label(format!("{} · {}", finding.severity.as_str(), finding.name));
-        }
-    });
-}
-
-fn event_log(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Event log");
-    if app.log.is_empty() {
-        muted(
+    let issues: Vec<_> = app
+        .workspace
+        .issues
+        .iter()
+        .filter(|issue| issue.task_id == task_id)
+        .collect();
+    if issues.is_empty() {
+        dashboard_empty(
             ui,
             &theme,
-            "Start the listener on the Proxy tool, then point a browser at 127.0.0.1:8080.",
+            "No issues to show",
+            "Issues found by this task will appear here.",
         );
         return;
     }
+    egui::Grid::new(("dashboard-issues", task_id.0))
+        .num_columns(3)
+        .striped(true)
+        .show(ui, |ui| {
+            for name in ["Severity", "Issue type", "URL"] {
+                ui.label(egui::RichText::new(name).strong());
+            }
+            ui.end_row();
+            for issue in issues.into_iter().take(64) {
+                ui.label(severity_name(issue.severity));
+                ui.label(&issue.name);
+                ui.label(&issue.url);
+                ui.end_row();
+            }
+        });
+}
+
+fn audit_items(app: &App, ui: &mut Ui, task: &Task) {
+    heading(ui, &app.theme, "Audit items");
+    ui.label(format!("{} item(s) processed", task.progress.completed));
+    if let Some(total) = task.progress.total {
+        ui.label(format!("{total} total item(s)"));
+    }
+    muted(ui, &app.theme, &task.progress.status);
+}
+
+fn issues(app: &App, ui: &mut Ui, task: &Task) {
+    heading(ui, &app.theme, "Issues");
+    issue_table_readonly(app, ui, task.id);
+}
+
+fn issue_table_readonly(app: &App, ui: &mut Ui, task_id: TaskId) {
+    let issues: Vec<_> = app
+        .workspace
+        .issues
+        .iter()
+        .filter(|issue| issue.task_id == task_id)
+        .collect();
+    if issues.is_empty() {
+        muted(ui, &app.theme, "No issues reported for this task.");
+        return;
+    }
     egui::ScrollArea::vertical().show(ui, |ui| {
-        for entry in app.log.iter().rev().take(64) {
-            ui.label(format!("{}  {}", entry.method, entry.target));
+        for issue in issues {
+            ui.label(format!(
+                "{} · {} · {}",
+                severity_name(issue.severity),
+                issue.name,
+                issue.url
+            ));
         }
     });
 }
 
-fn logger(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Logger");
+fn event_log(app: &App, ui: &mut Ui, task: &Task) {
+    heading(ui, &app.theme, "Event log");
+    let events: Vec<_> = app
+        .workspace
+        .events
+        .iter()
+        .filter(|event| event.task_id == Some(task.id))
+        .collect();
+    if events.is_empty() {
+        muted(ui, &app.theme, "No events recorded for this task.");
+        return;
+    }
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for event in events.into_iter().rev().take(128) {
+            ui.label(format!("{}  {}", event.source, event.message));
+        }
+    });
+}
+
+fn logger(app: &App, ui: &mut Ui, task: &Task) {
+    heading(ui, &app.theme, "Logger");
     muted(
         ui,
-        &theme,
-        &format!("{} request(s) in the Logger tool.", app.log.len()),
+        &app.theme,
+        &format!(
+            "{} item(s) attributed to this task.",
+            task.progress.completed
+        ),
     );
 }
 
-fn audit_log(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Audit log");
-    let running = app.panels.scanner.running;
-    muted(
-        ui,
-        &theme,
-        if running {
-            "Audit in progress."
+fn audit_log(app: &App, ui: &mut Ui, task: &Task) {
+    heading(ui, &app.theme, "Audit log");
+    let events: Vec<_> = app
+        .workspace
+        .events
+        .iter()
+        .filter(|event| event.task_id == Some(task.id))
+        .filter(|event| {
+            matches!(
+                event.level,
+                crate::workspace::EventLevel::Warning
+                    | crate::workspace::EventLevel::Error
+                    | crate::workspace::EventLevel::Critical
+            )
+        })
+        .collect();
+    if events.is_empty() {
+        muted(ui, &app.theme, "No audit warnings or errors.");
+    } else {
+        for event in events.into_iter().rev() {
+            ui.label(format!("{}  {}", event.source, event.message));
+        }
+    }
+}
+
+fn apply_command(app: &mut App, command: DashboardCommand) {
+    match command {
+        DashboardCommand::NewScan => {
+            super::scanner::start(app);
+            app.status = "New scan started from the current scanner configuration".into();
+        }
+        DashboardCommand::NewLiveTask => {
+            let existing = app
+                .workspace
+                .tasks
+                .iter()
+                .find(|task| task.kind == TaskKind::LiveAudit && !task.state.is_terminal())
+                .map(|task| task.id);
+            let id = existing.unwrap_or_else(|| {
+                let id = app.workspace.tasks.create(
+                    TaskKind::LiveAudit,
+                    "Live audit from Proxy (all traffic)",
+                    "Audit checks - passive",
+                    now_ms(),
+                );
+                let _ = app.workspace.tasks.start(id);
+                id
+            });
+            let _ = app.workspace.tasks.select(id);
+            app.status = "Live audit task selected".into();
+        }
+        DashboardCommand::Select(id) => {
+            if let Err(error) = app.workspace.tasks.select(id) {
+                app.status = error.to_string();
+            }
+        }
+        DashboardCommand::Rename(id, name) => match app.workspace.tasks.rename(id, &name) {
+            Ok(()) => {
+                app.dashboard.rename_task = None;
+                app.status = "Task renamed".into();
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        DashboardCommand::Pause(id) => match app.workspace.tasks.pause(id) {
+            Ok(()) => app.status = "Task paused".into(),
+            Err(error) => app.status = error.to_string(),
+        },
+        DashboardCommand::Resume(id) => match app.workspace.tasks.resume(id) {
+            Ok(()) => app.status = "Task resumed".into(),
+            Err(error) => app.status = error.to_string(),
+        },
+        DashboardCommand::Cancel(id) => match app.workspace.tasks.cancel(id) {
+            Ok(()) => {
+                app.panels.scanner.running = false;
+                app.status = "Task cancelled".into();
+            }
+            Err(error) => app.status = error.to_string(),
+        },
+        DashboardCommand::Detach(id) => {
+            let _ = app.workspace.tasks.select(id);
+            app.shell.detail_detached = true;
+            app.status = "Task details detached".into();
+        }
+        DashboardCommand::ShowSettings => app.show_settings = true,
+        DashboardCommand::ShowHelp => {
+            app.status = "Dashboard help: create, filter, select, and control tasks here".into()
+        }
+    }
+}
+
+fn dashboard_empty(ui: &mut Ui, theme: &crate::ui::theme::Theme, title: &str, message: &str) {
+    ui.add_space(32.0);
+    ui.vertical_centered(|ui| {
+        empty_illustration(ui, theme.color("palette.secondary.core"));
+        ui.label(egui::RichText::new(title).strong());
+        ui.label(egui::RichText::new(message).color(theme.color("ui.text.disabled")));
+    });
+}
+
+fn empty_illustration(ui: &mut Ui, colour: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 54.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    for (dx, dy, angle) in [(-22.0, 4.0, -0.3_f32), (0.0, -10.0, 0.0), (22.0, 12.0, 0.3)] {
+        let center = rect.center() + Vec2::new(dx, dy);
+        let (sin, cos) = angle.sin_cos();
+        let corner = |x: f32, y: f32| center + Vec2::new(x * cos - y * sin, x * sin + y * cos);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                corner(-12.0, -7.0),
+                corner(12.0, -7.0),
+                corner(12.0, 7.0),
+                corner(-12.0, 7.0),
+            ],
+            colour,
+            egui::Stroke::NONE,
+        ));
+        painter.line_segment(
+            [corner(-13.0, 0.0), corner(13.0, 0.0)],
+            egui::Stroke::new(2.0, Color32::WHITE),
+        );
+    }
+}
+
+fn switch(ui: &mut Ui, on: &mut bool, accent: Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(30.0, 16.0), Sense::click());
+    if response.clicked() {
+        *on = !*on;
+    }
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        rect,
+        8.0,
+        if *on {
+            accent
         } else {
-            "No audit has run yet."
+            ui.visuals().widgets.inactive.bg_fill
         },
     );
+    let knob = if *on {
+        egui::pos2(rect.max.x - 8.0, rect.center().y)
+    } else {
+        egui::pos2(rect.min.x + 8.0, rect.center().y)
+    };
+    painter.circle_filled(knob, 5.5, Color32::WHITE);
+    response
 }
 
-fn task_configuration(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    let mut capturing = app.capturing;
-    egui::Grid::new("task-config")
-        .num_columns(2)
-        .spacing([16.0, 6.0])
-        .show(ui, |ui| {
-            crate::ui::app::bold_text(ui, "Task type:", 12.0, theme.color("ui.text.body"));
-            ui.label("Live audit");
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Scope:", 12.0, theme.color("ui.text.body"));
-            ui.label("Proxy (all traffic)");
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Configuration:", 12.0, theme.color("ui.text.body"));
-            ui.label("Audit checks - passive");
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Capturing", 12.0, theme.color("ui.text.body"));
-            switch(ui, &mut capturing, theme.color("palette.secondary.core"));
-            ui.end_row();
-        });
-    app.capturing = capturing;
+fn issue_pill(ui: &mut Ui, count: usize, colour: Color32) {
+    let text = count.to_string();
+    let font = FontId::proportional(10.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.clone(), font.clone(), Color32::WHITE);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(galley.size().x + 14.0, 16.0), Sense::hover());
+    ui.painter().rect_filled(rect, 8.0, colour);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        font,
+        Color32::WHITE,
+    );
 }
 
-fn task_progress(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    ui.horizontal(|ui| {
-        let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-        crate::ui::icons::paint(ui.painter(), icon, theme.color("ui.icon.default"), Glyph::Clock);
-        ui.allocate_space(Vec2::new(4.0, 0.0));
-        heading(ui, &theme, "Task progress");
-    });
-    let pages = app.panels.scanner.pages.len();
-    let items = app.panels.scanner.findings.len();
-    egui::Grid::new("task-progress")
-        .num_columns(4)
-        .spacing([16.0, 6.0])
-        .show(ui, |ui| {
-            crate::ui::app::bold_text(ui, "Total audit items:", 12.0, theme.color("ui.text.body"));
-            ui.label(pages.to_string());
-            crate::ui::app::bold_text(ui, "Requests:", 12.0, theme.color("ui.text.body"));
-            ui.label(app.log.len().to_string());
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Audit items pending:", 12.0, theme.color("ui.text.body"));
-            ui.label("0");
-            crate::ui::app::bold_text(ui, "Network errors:", 12.0, theme.color("ui.text.body"));
-            ui.label("0");
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Audit items in progress:", 12.0, theme.color("ui.text.body"));
-            ui.label("0");
-            ui.end_row();
-            crate::ui::app::bold_text(ui, "Audit items completed:", 12.0, theme.color("ui.text.body"));
-            ui.label(items.to_string());
-            ui.end_row();
-        });
+fn state_name(state: TaskState) -> &'static str {
+    match state {
+        TaskState::Queued => "Queued",
+        TaskState::Running => "Running",
+        TaskState::Paused => "Paused",
+        TaskState::Completed => "Completed",
+        TaskState::Failed => "Failed",
+        TaskState::Cancelled => "Cancelled",
+        TaskState::Interrupted => "Interrupted",
+    }
 }
 
-fn task_log(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    ui.horizontal(|ui| {
-        let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-        crate::ui::icons::paint(ui.painter(), icon, theme.color("ui.icon.default"), Glyph::Clock);
-        ui.allocate_space(Vec2::new(4.0, 0.0));
-        heading(ui, &theme, "Task log");
-    });
+fn kind_name(kind: TaskKind) -> &'static str {
+    match kind {
+        TaskKind::PassiveCrawl => "Passive crawl",
+        TaskKind::LiveAudit => "Live audit",
+        TaskKind::Scan => "Scan",
+        TaskKind::Intruder => "Intruder",
+        TaskKind::Discover => "Discover",
+        TaskKind::Other => "Other",
+    }
+}
+
+fn severity_name(severity: IssueSeverity) -> &'static str {
+    match severity {
+        IssueSeverity::Info => "Info",
+        IssueSeverity::Low => "Low",
+        IssueSeverity::Medium => "Medium",
+        IssueSeverity::High => "High",
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::{IssueRecord, TaskManager};
+
+    fn seeded() -> Workspace {
+        Workspace {
+            tasks: TaskManager::seed_proxy_tasks(),
+            ..Workspace::default()
+        }
+    }
+
+    #[test]
+    fn seeded_ordering_is_live_audit_then_passive_crawl() {
+        let workspace = seeded();
+        let state = DashboardState::default();
+        assert_eq!(
+            state.visible_task_ids(&workspace),
+            vec![TaskId(2), TaskId(1)]
+        );
+    }
+
+    #[test]
+    fn search_and_filters_are_combined_and_persist() {
+        let workspace = seeded();
+        let mut state = DashboardState::default();
+        state.search = "audit".into();
+        state.kinds.insert(TaskKind::LiveAudit);
+        assert_eq!(state.visible_task_ids(&workspace), vec![TaskId(2)]);
+        assert_eq!(state.search, "audit");
+        assert_eq!(state.visible_task_ids(&workspace), vec![TaskId(2)]);
+        assert_eq!(
+            state.search, "audit",
+            "search must survive another frame/query"
+        );
+    }
+
+    #[test]
+    fn selected_task_details_come_from_workspace() {
+        let workspace = seeded();
+        let state = DashboardState::default();
+        let detail = state.selected_task(&workspace).expect("selected task");
+        assert_eq!(detail.id, TaskId(2));
+        assert_eq!(detail.configuration, "Audit checks - passive");
+    }
+
+    #[test]
+    fn live_issue_counters_are_scoped_to_the_task() {
+        let mut workspace = seeded();
+        for (index, severity) in [IssueSeverity::High, IssueSeverity::High, IssueSeverity::Low]
+            .into_iter()
+            .enumerate()
+        {
+            workspace.issues.upsert(IssueRecord::new(
+                TaskId(2),
+                "issue",
+                severity,
+                "Firm",
+                "https://a.test/",
+                None,
+                format!("{severity:?}-{index}"),
+                1,
+            ));
+        }
+        let counts = issue_counts(&workspace, TaskId(2));
+        assert_eq!(counts.high, 2);
+        assert_eq!(counts.low, 1);
+        assert_eq!(counts.medium, 0);
+    }
+
+    #[test]
+    fn rename_validation_and_controls_follow_task_state() {
+        let mut workspace = seeded();
+        assert!(workspace.tasks.rename(TaskId(2), "   ").is_err());
+        workspace.tasks.rename(TaskId(2), "renamed").unwrap();
+        assert_eq!(workspace.tasks.get(TaskId(2)).unwrap().name, "renamed");
+        let running = controls_for(TaskState::Running);
+        assert!(running.pause && !running.resume && running.cancel);
+        workspace.tasks.pause(TaskId(2)).unwrap();
+        let paused = controls_for(TaskState::Paused);
+        assert!(!paused.pause && paused.resume && paused.cancel);
+        workspace.tasks.complete(TaskId(2)).unwrap();
+        let completed = controls_for(TaskState::Completed);
+        assert!(!completed.pause && !completed.resume && !completed.cancel);
+    }
+
+    #[test]
+    fn empty_states_distinguish_no_tasks_from_zero_results() {
+        let state = DashboardState::default();
+        assert_eq!(
+            state.empty_state(&Workspace::default()),
+            DashboardEmpty::NoTasks
+        );
+        let workspace = seeded();
+        let mut filtered = DashboardState::default();
+        filtered.search = "nothing matches this".into();
+        assert_eq!(filtered.empty_state(&workspace), DashboardEmpty::NoMatches);
+        assert_eq!(state.empty_state(&workspace), DashboardEmpty::Populated);
+    }
 }
