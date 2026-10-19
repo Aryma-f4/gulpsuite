@@ -55,8 +55,8 @@ pub const TOOL_VIEWS: [&[&str]; 13] = [
     &["Site map", "Scope", "Issues"],
     // Proxy, with the sub-view names Burp's own documentation uses.
     &["Intercept", "HTTP history", "WebSockets history", "Match and replace", "Proxy settings"],
-    // Intruder
-    &["Intruder"],
+    // Intruder, the attack editor's side panels.
+    &["Positions", "Payloads", "Options", "Payload generation", "Resource pool"],
     // Repeater
     &["Repeater"],
     // Collaborator

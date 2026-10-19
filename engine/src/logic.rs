@@ -1005,4 +1005,43 @@ mod tests {
         assert_eq!(report.chars.len(), 8);
         assert!(analyse_token("nothing here", "zz").is_none());
     }
+
+    // The Intruder Payloads grid mirrors payload_sets[0].values into
+    // IntruderPanel::payloads, which the results preview splits on newlines and
+    // hands to enumerate(). These pin that contract without a GUI.
+    #[test]
+    fn first_payload_set_drives_marker_expansion() {
+        let template = "GET /?q=§§ HTTP/1.1";
+
+        // Mirrors what the payloads() grid writes back into IntruderPanel::payloads.
+        let payloads = "alpha\nbravo\ncharlie".to_string();
+        let preview: Vec<String> = payloads.lines().map(str::to_string).collect();
+        assert_eq!(preview, vec!["alpha", "bravo", "charlie"]);
+
+        let requests = enumerate(template, &preview, 2000);
+        assert_eq!(requests.len(), 3, "one request per payload line");
+        assert_eq!(requests[0], "GET /?q=al HTTP/1.1", "two markers take two payload chars");
+        assert_eq!(requests[1], "GET /?q=br HTTP/1.1");
+        assert_eq!(requests[2], "GET /?q=ch HTTP/1.1");
+    }
+
+    #[test]
+    fn cluster_marker_consumes_a_whole_payload() {
+        // A cluster expands to one position per character of its name, each
+        // consuming the next payload char; once the payload runs out the
+        // placeholder character itself is the fallback.
+        assert_eq!(apply_payload("id=§abc§", "xyz"), "id=xyz");
+        assert_eq!(apply_payload("id=§abc§", "xy"), "id=xyc");
+        assert_eq!(apply_payload("id=§abc§", "1"), "id=1bc");
+        // An unnamed marker is a single position with no fallback.
+        assert_eq!(apply_payload("id=§§", "ab"), "id=ab");
+    }
+
+    #[test]
+    fn empty_payload_list_yields_no_requests() {
+        // Guards the attack loop: a blank grid row must not spin or panic.
+        let preview: Vec<String> = String::new().lines().map(str::to_string).collect();
+        assert!(preview.is_empty());
+        assert!(enumerate("GET / HTTP/1.1", &preview, 2000).is_empty());
+    }
 }
