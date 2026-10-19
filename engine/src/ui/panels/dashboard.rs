@@ -170,7 +170,7 @@ fn tasks_column(app: &mut App, ui: &mut Ui, width: f32, commands: &mut Vec<Dashb
         });
         ui.add_space(4.0);
         filter_row(app, ui);
-        ui.add_space(6.0);
+        ui.add_space(24.0);
 
         let ids = app.dashboard.visible_task_ids(&app.workspace);
         match app.dashboard.empty_state(&app.workspace) {
@@ -254,11 +254,14 @@ fn filter_row(app: &mut App, ui: &mut Ui) {
             }
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add(
+            let search = ui.add(
                 egui::TextEdit::singleline(&mut app.dashboard.search)
                     .hint_text("Search")
                     .desired_width(150.0),
             );
+            search.widget_info(|| egui::WidgetInfo::labeled(
+                egui::WidgetType::TextEdit, true, "Search tasks",
+            ));
         });
     });
 }
@@ -269,7 +272,11 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
     let accent = theme.color("palette.secondary.core");
     let counts = issue_counts(&app.workspace, task.id);
     let frame = egui::Frame {
-        fill: theme.color("ui.background.1"),
+        fill: if selected {
+            theme.color(if theme.dark { "palette.secondary.1" } else { "palette.secondary.7" })
+        } else {
+            theme.color("ui.background.1")
+        },
         stroke: egui::Stroke::new(1.0, theme.color("ui.border.1")),
         corner_radius: egui::CornerRadius::same(4),
         inner_margin: egui::Margin::symmetric(12, 10),
@@ -310,6 +317,7 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             });
         });
         ui.label(egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")));
+        ui.add_space(20.0);
         ui.horizontal(|ui| {
             ui.label(state_name(task.state));
             let mut active = task.state == TaskState::Running;
@@ -331,6 +339,7 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
         if !task.progress.status.is_empty() {
             muted(ui, &theme, &task.progress.status);
         }
+        ui.add_space(14.0);
     });
     if response.response.clicked() {
         commands.push(DashboardCommand::Select(task.id));
@@ -350,7 +359,7 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
 
 fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<DashboardCommand>) {
     let controls = controls_for(task.state);
-    ui.menu_button("⋯", |ui| {
+    let menu = ui.menu_button("⋯", |ui| {
         if controls.pause && ui.button("Pause").clicked() {
             commands.push(DashboardCommand::Pause(task.id));
             ui.close();
@@ -373,6 +382,9 @@ fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             ui.close();
         }
     });
+    menu.response.widget_info(|| egui::WidgetInfo::labeled(
+        egui::WidgetType::Button, true, format!("Task actions: {}", task.name),
+    ));
 }
 
 fn pane_icons(ui: &mut Ui, theme: &crate::ui::theme::Theme, commands: &mut Vec<DashboardCommand>) {
@@ -419,7 +431,7 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
                 pane_icons(ui, &theme, commands);
             });
         });
-        ui.add_space(8.0);
+        ui.add_space(45.0);
         app.tab_row(
             ui,
             crate::ui::app::TOOL_VIEWS[crate::ui::app::SUITE],
@@ -439,6 +451,7 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
 
 fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
     let theme = app.theme.clone();
+    let available = ui.available_height().max(420.0);
     let card = egui::Frame {
         fill: theme.color("ui.background.1"),
         stroke: egui::Stroke::new(1.0, theme.color("ui.border.1")),
@@ -449,11 +462,13 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
     };
     ui.columns(2, |columns| {
         card.show(&mut columns[0], |ui| {
+            ui.set_min_height((available - 32.0).max(300.0));
             heading(ui, &theme, "Most serious vulnerabilities found (live)");
             ui.add_space(8.0);
             issue_table(app, ui, task.id);
         });
         card.show(&mut columns[1], |ui| {
+            ui.set_min_height((available * 0.60).max(260.0));
             heading(ui, &theme, "Task configuration");
             egui::Grid::new(("task-configuration", task.id.0))
                 .num_columns(2)
@@ -461,6 +476,9 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Task type:").strong());
                     ui.label(kind_name(task.kind));
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Scope:").strong());
+                    ui.label("Proxy (all traffic)");
                     ui.end_row();
                     ui.label(egui::RichText::new("State:").strong());
                     ui.label(state_name(task.state));
@@ -480,7 +498,9 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                     .unwrap_or_default()
             ));
             muted(ui, &theme, &task.progress.status);
-            ui.add_space(10.0);
+        });
+        card.show(&mut columns[1], |ui| {
+            ui.set_min_height((available * 0.34).max(140.0));
             heading(ui, &theme, "Task log");
             let events: Vec<_> = app
                 .workspace
@@ -632,24 +652,15 @@ fn apply_command(app: &mut App, command: DashboardCommand) {
             app.status = "New scan started from the current scanner configuration".into();
         }
         DashboardCommand::NewLiveTask => {
-            let existing = app
-                .workspace
-                .tasks
-                .iter()
-                .find(|task| task.kind == TaskKind::LiveAudit && !task.state.is_terminal())
-                .map(|task| task.id);
-            let id = existing.unwrap_or_else(|| {
-                let id = app.workspace.tasks.create(
-                    TaskKind::LiveAudit,
-                    "Live audit from Proxy (all traffic)",
-                    "Audit checks - passive",
-                    now_ms(),
-                );
-                let _ = app.workspace.tasks.start(id);
-                id
-            });
+            let id = app.workspace.tasks.create(
+                TaskKind::LiveAudit,
+                "Live audit from Proxy (all traffic)",
+                "Audit checks - passive",
+                now_ms(),
+            );
+            let _ = app.workspace.tasks.start(id);
             let _ = app.workspace.tasks.select(id);
-            app.status = "Live audit task selected".into();
+            app.status = "New live audit task created".into();
         }
         DashboardCommand::Select(id) => {
             if let Err(error) = app.workspace.tasks.select(id) {

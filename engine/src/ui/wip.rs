@@ -18,8 +18,12 @@ impl WipFeature {
 
     pub fn purpose(self) -> &'static str {
         match self {
-            Self::Ai => "AI-assisted investigation, explanation, and workflow automation will live here.",
-            Self::BappStore => "Browse, install, update, and manage community extensions from one catalog.",
+            Self::Ai => {
+                "AI-assisted investigation, explanation, and workflow automation will live here."
+            }
+            Self::BappStore => {
+                "Browse, install, update, and manage community extensions from one catalog."
+            }
         }
     }
 

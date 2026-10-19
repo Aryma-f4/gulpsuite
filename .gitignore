@@ -9,3 +9,7 @@ engine/target/
 
 # macOS
 .DS_Store
+
+# Generated visual regression candidates (approved baselines remain tracked)
+**/tests/snapshots/**/*.new.png
+**/tests/snapshots/**/*.diff.png

@@ -206,10 +206,11 @@ impl SuiteShell {
             FontId::proportional(11.0),
             if self.event_log.open { accent } else { idle },
         );
-        if ui
-            .interact(event_rect, ui.id().with("event-log-drawer"), Sense::click())
-            .clicked()
-        {
+        let event_response = ui.interact(event_rect, ui.id().with("event-log-drawer"), Sense::click());
+        event_response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+            eframe::egui::WidgetType::Button, true, &event_text,
+        ));
+        if event_response.clicked() {
             self.toggle_drawer(DrawerKind::EventLog);
             commands.push(ShellCommand::ToggleDrawer(DrawerKind::EventLog));
         }
@@ -228,14 +229,15 @@ impl SuiteShell {
             FontId::proportional(11.0),
             if self.all_issues.open { accent } else { idle },
         );
-        if ui
-            .interact(
+        let issues_response = ui.interact(
                 issues_rect,
                 ui.id().with("all-issues-drawer"),
                 Sense::click(),
-            )
-            .clicked()
-        {
+            );
+        issues_response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+            eframe::egui::WidgetType::Button, true, &issues_text,
+        ));
+        if issues_response.clicked() {
             self.toggle_drawer(DrawerKind::AllIssues);
             commands.push(ShellCommand::ToggleDrawer(DrawerKind::AllIssues));
         }
@@ -269,6 +271,9 @@ impl SuiteShell {
             ui.id().with("status-settings"),
             Sense::click(),
         );
+        settings.widget_info(|| eframe::egui::WidgetInfo::labeled(
+            eframe::egui::WidgetType::Button, true, "Status settings",
+        ));
         painter.text(
             settings_rect.center(),
             eframe::egui::Align2::CENTER_CENTER,
@@ -330,10 +335,13 @@ impl SuiteShell {
                 FontId::proportional(11.5),
                 theme.color("ui.text.body"),
             );
-            if ui
-                .interact(tab, ui.id().with(("shell-tool", index)), Sense::click())
-                .clicked()
-            {
+            let response = ui.interact(tab, ui.id().with(("shell-tool", index)), Sense::click());
+            response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+                eframe::egui::WidgetType::SelectableLabel,
+                true,
+                label,
+            ));
+            if response.clicked() {
                 self.active_tool = index;
                 self.active_view = 0;
                 commands.push(ShellCommand::SelectTool(index));
@@ -398,6 +406,11 @@ impl SuiteShell {
             crate::ui::icons::paint(&painter, area, theme.color("ui.icon.default"), glyph);
             let response =
                 ui.interact(area, ui.id().with(("shell-utility", index)), Sense::click());
+            response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+                eframe::egui::WidgetType::Button,
+                true,
+                tooltip,
+            ));
             if response.clicked() {
                 commands.push(command);
             }
@@ -447,10 +460,13 @@ impl SuiteShell {
                     theme.color("ui.icon.link"),
                 );
             }
-            if ui
-                .interact(tab, ui.id().with(("shell-view", index)), Sense::click())
-                .clicked()
-            {
+            let response = ui.interact(tab, ui.id().with(("shell-view", index)), Sense::click());
+            response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+                eframe::egui::WidgetType::SelectableLabel,
+                true,
+                label,
+            ));
+            if response.clicked() {
                 self.active_view = index;
                 commands.push(ShellCommand::SelectView(index));
             }

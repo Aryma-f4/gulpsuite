@@ -977,6 +977,11 @@ fn bold_label_sense(
     let pos = rect.left_top();
     painter.galley(pos + Vec2::new(0.5, 0.0), galley.clone(), color);
     painter.galley(pos, galley, color);
+    response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+        if sense == Sense::click() { eframe::egui::WidgetType::Button } else { eframe::egui::WidgetType::Label },
+        ui.is_enabled(),
+        text,
+    ));
     response
 }
 
@@ -1009,6 +1014,11 @@ pub(crate) fn primary_button(
         painter.galley(origin + Vec2::new(0.5, 0.0), galley.clone(), text_color);
         painter.galley(origin, galley, text_color);
     }
+    response.widget_info(|| eframe::egui::WidgetInfo::labeled(
+        eframe::egui::WidgetType::Button,
+        ui.is_enabled(),
+        text,
+    ));
     response
 }
 
