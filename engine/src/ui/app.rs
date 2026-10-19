@@ -217,7 +217,7 @@ pub struct App {
     pub theme: Theme,
     pub workspace: crate::workspace::Workspace,
     pub workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter,
-    pub saved_layout: crate::project::SavedLayout,
+    pub shell: crate::ui::shell::SuiteShell,
     pub proxy: Arc<Proxy>,
     events: Receiver<Event>,
     /// One-shot request results, keyed by the id handed back to the caller.
@@ -337,7 +337,7 @@ impl App {
                 ..Default::default()
             },
             workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter::default(),
-            saved_layout: crate::project::SavedLayout::default(),
+            shell: crate::ui::shell::SuiteShell::default(),
             proxy,
             events: rx,
             responses_in: req_rx,
@@ -753,6 +753,8 @@ impl App {
 
     fn select(&mut self, tool: usize) {
         self.tool = tool;
+        self.view = 0;
+        self.shell.sync_selection(tool, 0);
         self.status = TOOLS[tool].to_string();
     }
 }
@@ -847,25 +849,59 @@ impl eframe::App for App {
         eframe::egui::CentralPanel::default()
             .frame(frame)
             .show(ctx, |ui| {
-                // One vertical stack owns the whole window. Every band below allocates sequentially
-                // so the cursor advances and the status bar lands at the bottom instead of on top
-                // of the tab rows.
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
-                // Burp on macOS keeps its menus in the system menu bar, so there is no menu row
-                // inside the window. eframe 0.33 cannot create a native one, so the same actions
-                // live in the status bar and on Alt hotkeys instead of faking a row Burp does
-                // not draw.
-                //
-                // The status bar's height is reserved up front; if the panel were allowed to claim
-                // the last pixels the bar would be allocated with no room and disappear.
-                let status_height = STATUS_BAR_HEIGHT;
-                let for_body = (ui.available_height() - status_height).max(0.0);
-                self.body(ui, for_body);
-                // `body` draws its panel into a rect, so the cursor has to be pushed past it by
-                // hand before the status bar is allocated. The panel height is the difference, so
-                // the tab rows are excluded.
-                ui.allocate_space(Vec2::new(0.0, for_body - self.tab_rows_height));
-                self.status_bar(ctx, ui);
+                self.shell.sync_selection(self.tool, self.view);
+                let views = TOOL_VIEWS[self.tool];
+                let commands = self
+                    .shell
+                    .draw_top(ui, &self.theme, &TOOLS, views);
+                for command in commands {
+                    self.apply_shell_command(command);
+                }
+
+                let status_height = crate::ui::reference::burp_2026_3_3().shell.status_height;
+                let drawer_height = self.shell.drawer_height();
+                let panel_height =
+                    (ui.available_height() - status_height - drawer_height).max(0.0);
+                let rect = Rect::from_min_size(
+                    ui.available_rect_before_wrap().min,
+                    Vec2::new(ui.available_width(), panel_height),
+                );
+                self.panel(ui, rect);
+                ui.allocate_space(Vec2::new(0.0, panel_height));
+
+                let theme = self.theme.clone();
+                if self.shell.event_log.open {
+                    self.shell.draw_drawer(
+                        ui,
+                        crate::ui::drawers::DrawerKind::EventLog,
+                        &self.workspace,
+                        &theme,
+                    );
+                }
+                if self.shell.all_issues.open {
+                    self.shell.draw_drawer(
+                        ui,
+                        crate::ui::drawers::DrawerKind::AllIssues,
+                        &self.workspace,
+                        &theme,
+                    );
+                }
+
+                let memory = self.memory_readout();
+                let memory_ratio = self.memory_used_ratio();
+                let status = self.status.clone();
+                let commands = self.shell.draw_bottom(
+                    ui,
+                    &theme,
+                    &self.workspace,
+                    &status,
+                    &memory,
+                    memory_ratio,
+                );
+                for command in commands {
+                    self.apply_shell_command(command);
+                }
             });
 
         self.windows(ctx);
@@ -1058,9 +1094,8 @@ impl App {
         let mut project = crate::project::Project::new("gulpsuite");
         project.theme_dark = self.theme.dark;
         project.workspace = crate::project::SavedWorkspace::from(&self.workspace);
-        self.saved_layout.active_tool = self.tool;
-        self.saved_layout.active_view = self.view;
-        project.layout = self.saved_layout.clone();
+        self.shell.sync_selection(self.tool, self.view);
+        project.layout = self.shell.layout();
         project.items = self
             .organizer
             .iter()
@@ -1152,12 +1187,12 @@ impl App {
                 self.workspace = restored_workspace;
                 self.workspace_adapter =
                     crate::ui::workspace_adapter::WorkspaceAdapter::default();
-                self.saved_layout = restored_layout;
-                self.tool = self.saved_layout.active_tool.min(TOOLS.len() - 1);
-                self.view = self
-                    .saved_layout
+                self.shell.restore_layout(&restored_layout);
+                self.tool = restored_layout.active_tool.min(TOOLS.len() - 1);
+                self.view = restored_layout
                     .active_view
                     .min(TOOL_VIEWS[self.tool].len().saturating_sub(1));
+                self.shell.sync_selection(self.tool, self.view);
                 self.status = format!(
                     "Opened {} — {} items, {} recordings",
                     path.display(),
@@ -1330,7 +1365,30 @@ impl App {
     fn go(&mut self, tool: usize, view: usize) {
         self.tool = tool;
         self.view = view.min(TOOL_VIEWS[tool].len().saturating_sub(1));
+        self.shell.sync_selection(self.tool, self.view);
         self.status = TOOLS[tool].to_string();
+    }
+
+    fn apply_shell_command(&mut self, command: crate::ui::shell::ShellCommand) {
+        use crate::ui::shell::ShellCommand;
+
+        match command {
+            ShellCommand::SelectTool(tool) => self.go(tool.min(TOOLS.len() - 1), 0),
+            ShellCommand::SelectView(view) => self.go(self.tool, view),
+            ShellCommand::OpenSettings => self.show_settings = true,
+            ShellCommand::OpenSearch => {
+                self.show_search = true;
+                self.search_text.clear();
+            }
+            ShellCommand::OpenConsole => self.show_console = true,
+            ShellCommand::OpenBrowser => self.open_browser(),
+            ShellCommand::ToggleDrawer(kind) => {
+                self.status = match kind {
+                    crate::ui::drawers::DrawerKind::EventLog => "Event log".into(),
+                    crate::ui::drawers::DrawerKind::AllIssues => "All issues".into(),
+                };
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -1379,6 +1437,7 @@ impl App {
     /// Deliberately not wrapped in its own `vertical`: a nested layout owns its own cursor, so the
     /// status bar allocated afterwards would land back at the top of the window. The panel instead
     /// paints into a rect and the cursor is advanced past it explicitly.
+    #[allow(dead_code)]
     fn body(&mut self, ui: &mut Ui, available: f32) {
         let origin = ui.available_rect_before_wrap().min;
         self.tab_row(ui, &TOOLS, true, TOOL_TAB_HEIGHT);
@@ -1743,6 +1802,7 @@ impl App {
 
     /// The bottom bar. Burp shows the event-log selector on the left and instrument controls on the
     /// right; this keeps that shape and carries the actions that would otherwise sit in a menu row.
+    #[allow(dead_code)]
     fn status_bar(&mut self, ctx: &Context, ui: &mut Ui) {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STATUS_BAR_HEIGHT), Sense::hover());
         let painter = ui.painter_at(rect);
