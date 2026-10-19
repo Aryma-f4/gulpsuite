@@ -52,9 +52,9 @@ pub const TOOL_VIEWS: [&[&str]; 13] = [
     // Observed in Burp v2026.3.3: the Dashboard detail pane tabs, left to right.
     &["Summary", "Audit items", "Issues", "Event log", "Logger", "Audit log"],
     // Target
-    &["Site map", "Scope"],
+    &["Site map", "Scope", "Issues"],
     // Proxy, with the sub-view names Burp's own documentation uses.
-    &["Intercept", "HTTP history", "WebSockets history", "Match and replace"],
+    &["Intercept", "HTTP history", "WebSockets history", "Match and replace", "Proxy settings"],
     // Intruder
     &["Intruder"],
     // Repeater

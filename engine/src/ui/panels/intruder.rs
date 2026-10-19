@@ -2,7 +2,6 @@
 
 use eframe::egui::Ui;
 
-use super::heading;
 use crate::logic;
 use crate::proxy::MatchRules;
 use crate::ui::app::App;
@@ -60,8 +59,7 @@ impl IntruderPanel {
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Intruder");
-
+    
     ui.horizontal(|ui| {
         ui.label("Target host");
         ui.add(

@@ -28,14 +28,12 @@ impl Default for ProxyPanel {
 }
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Proxy");
-
     match app.view {
         0 => intercept(app, ui),
         1 => history(app, ui),
         2 => super::websocket::draw(app, ui, "Proxy"),
-        _ => match_and_replace(app, ui),
+        3 => match_and_replace(app, ui),
+        _ => settings(app, ui),
     }
 }
 
@@ -45,7 +43,6 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 /// it is a set of live rules, there it is a script being written.
 fn match_and_replace(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Proxy — Match and replace");
 
     let active = app.proxy.has_rules();
     ui.horizontal(|ui| {
@@ -107,10 +104,9 @@ fn match_and_replace(app: &mut App, ui: &mut Ui) {
 }
 
 /// Burp's Intercept view: listener controls plus the requests parked for a decision.
-fn intercept(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
-    heading(ui, &theme, "Proxy — Intercept");
-
+/// Burp's Proxy settings view: the listener controls live here rather than on Intercept, so the
+/// Intercept toolbar only carries the request/response decisions.
+fn settings(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let listening = app.listening.is_some();
         if ui.add_enabled(!listening, eframe::egui::Button::new("Start")).clicked() {
@@ -145,6 +141,11 @@ fn intercept(app: &mut App, ui: &mut Ui) {
             app.proxy.set_tls_interception(tls);
         }
     });
+}
+
+/// Burp's Intercept view: the requests and responses parked for a decision.
+fn intercept(app: &mut App, ui: &mut Ui) {
+    let theme = app.theme.clone();
 
     if app.held.is_empty() {
         muted(ui, &theme, "Nothing held. Traffic passes straight through.");
@@ -328,7 +329,6 @@ fn cookie_jar(app: &mut App, ui: &mut Ui) {
 /// Burp's History view: everything the proxy has forwarded.
 fn history(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Proxy — HTTP history");
     if app.log.is_empty() {
         muted(ui, &theme, "Nothing captured yet.");
         cookie_jar(app, ui);

@@ -64,8 +64,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 /// lets a script be saved, loaded, or removed, which is the part that works offline.
 fn updates(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Extensions — Scripts");
-
+    
     ui.horizontal(|ui| {
         label(ui, &theme, "Folder");
         ui.text_edit_singleline(&mut app.panels.extender_folder);
@@ -284,8 +283,7 @@ fn bambda(app: &mut App, ui: &mut Ui) {
 /// Burp's Installed extensions view.
 fn installed(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Extensions — Installed");
-
+    
     ui.horizontal(|ui| {
         if ui.button("Load script into editor").clicked() {
             let path = app.panels.extender_path.clone();

@@ -145,8 +145,8 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         automaton(app, ui);
         return;
     }
-    heading(ui, &theme, "Sequencer — Manual");
-    heading(ui, &theme, "Sequencer");
+    // Burp's Sequencer shows the sub-tab name and then the live-capture form directly;
+    // it carries no extra panel heading.
 
     ui.horizontal(|ui| {
         ui.label("Token");

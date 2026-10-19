@@ -59,6 +59,12 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     match app.view {
         0 => {}
+        // Burp's Target views sit side by side: the scope editor and the issues the crawler raised
+        // for the in-scope hosts.
+        2 => {
+            muted(ui, &theme, "No issues yet.");
+            return;
+        }
         _ => {
             // Burp's second Target view, backed by scope/Scope in the shipped API.
             heading(ui, &theme, "Scope");
@@ -79,7 +85,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
             return;
         }
     }
-    heading(ui, &theme, "Target — Site map");
+    // The sub-tab row already says "Site map", so a heading here would only repeat it.
 
     let tree = tree(app);
     if tree.is_empty() {

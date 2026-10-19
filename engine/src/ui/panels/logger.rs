@@ -52,7 +52,9 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
 fn http(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Logger — HTTP");
+    // Burp names the tool in its tab and the sub-tab below it, so a panel heading would repeat
+    // it; the sub-tab row already says which log this is.
+
     ui.horizontal(|ui| {
         ui.label("Filter");
         ui.text_edit_singleline(&mut app.panels.logger.filter);
@@ -145,7 +147,7 @@ fn http(app: &mut App, ui: &mut Ui) {
 
 fn dns(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Logger — DNS");
+    heading(ui, &theme, "DNS");
     ui.horizontal(|ui| {
         if app.panels.logger.dns_port.is_none() {
             if ui.button("Start capture").clicked() {
@@ -192,7 +194,7 @@ fn dns(app: &mut App, ui: &mut Ui) {
 
 fn email(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Logger — Email");
+    heading(ui, &theme, "SMTP");
     ui.horizontal(|ui| {
         if app.panels.logger.smtp_port.is_none() {
             if ui.button("Start capture").clicked() {

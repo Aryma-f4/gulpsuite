@@ -2,7 +2,6 @@
 
 use eframe::egui::Ui;
 
-use super::heading;
 use crate::ui::app::App;
 
 /// One request in the Repeater. Burp keeps several open at once, each in its own tab.
@@ -119,8 +118,7 @@ fn name_for(host: &str, fallback: usize) -> String {
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Repeater");
-
+    
     tabs(app, ui, &theme);
 
     // Collect anything that came back since the last frame.

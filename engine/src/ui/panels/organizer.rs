@@ -39,7 +39,7 @@ pub struct OrganizerPanel {
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme: Theme = app.theme.clone();
-    heading(ui, &theme, "Organizer");
+    heading(ui, &theme, "Collections");
 
     ui.horizontal(|ui| {
         if ui.button("Save Repeater request").clicked() {

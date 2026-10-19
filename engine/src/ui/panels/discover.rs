@@ -6,7 +6,7 @@
 
 use eframe::egui::Ui;
 
-use super::{heading, label, muted};
+use super::{label, muted};
 use crate::ui::app::App;
 
 /// Paths probed per host. Kept small and fixed so a scan cannot fan out without bound.
@@ -21,8 +21,7 @@ pub const PATHS: &[&str] = &[
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Discover — Content discovery");
-
+    
     ui.horizontal(|ui| {
         label(ui, &theme, "Paths");
         ui.text_edit_singleline(&mut app.panels.discover_paths);

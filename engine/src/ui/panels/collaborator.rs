@@ -7,7 +7,7 @@
 
 use eframe::egui::Ui;
 
-use super::{heading, label, muted};
+use super::{label, muted};
 use crate::ui::app::App;
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
@@ -23,8 +23,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
 fn server(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Collaborator — Server");
-
+    
     label(ui, &theme, "Server");
     ui.horizontal(|ui| {
         ui.selectable_value(&mut app.panels.collaborator_local, true, "Local");
@@ -136,8 +135,7 @@ fn server(app: &mut App, ui: &mut Ui) {
 
 fn project(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    heading(ui, &theme, "Collaborator — Project");
-    muted(
+        muted(
         ui,
         &theme,
         "Burp groups Collaborator servers into projects with shared secret keys. This build runs a \\
