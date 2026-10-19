@@ -1,0 +1,35 @@
+{
+  "version": "2026.3.3",
+  "shell": {
+    "tools": [
+      "Dashboard",
+      "Target",
+      "Proxy",
+      "Intruder",
+      "Repeater",
+      "Collaborator",
+      "Sequencer",
+      "Decoder",
+      "Comparer",
+      "Logger",
+      "Organizer",
+      "Extensions",
+      "Discover"
+    ],
+    "tool_row_height": 31.0,
+    "sub_row_height": 30.0,
+    "status_height": 36.0
+  },
+  "dashboard": {
+    "split_ratio": 0.3472222222222222
+  },
+  "drawer": {
+    "minimum_height": 120.0,
+    "maximum_height": 600.0,
+    "default_height": 280.0
+  },
+  "evidence": {
+    "archive_inventory": "ev_cd380653b98d0d56dd3f20aaf03de9812c408900b14c1f25ce97d65c94c8686e",
+    "feature_classes": "ev_38fe9a1e458d96cb786342eac0213bde35276dc123157ed9804122d45650eae4"
+  }
+}
