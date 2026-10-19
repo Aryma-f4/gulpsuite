@@ -80,6 +80,8 @@ fn start(app: &mut App) {
     app.panels.discover_running = true;
     app.panels.discover_progress = String::new();
     app.status = format!("Discover probing {} url(s)", urls.len());
+    app.workspace_adapter
+        .begin_discover(&mut app.workspace, urls.len());
 
     let proxy = app.proxy.clone();
     let runtime = app.runtime_handle();

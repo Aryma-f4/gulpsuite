@@ -216,6 +216,7 @@ impl Transaction {
 pub struct App {
     pub theme: Theme,
     pub workspace: crate::workspace::Workspace,
+    pub workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter,
     pub saved_layout: crate::project::SavedLayout,
     pub proxy: Arc<Proxy>,
     events: Receiver<Event>,
@@ -335,6 +336,7 @@ impl App {
                 tasks: crate::workspace::TaskManager::seed_proxy_tasks(),
                 ..Default::default()
             },
+            workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter::default(),
             saved_layout: crate::project::SavedLayout::default(),
             proxy,
             events: rx,
@@ -532,6 +534,8 @@ impl App {
         if let Some(updates) = &self.discover_updates {
             let mut finished = false;
             while let Ok(update) = updates.try_recv() {
+                self.workspace_adapter
+                    .apply_discover(&mut self.workspace, &update);
                 match update {
                     crate::discover::Update::Probing { host, done, total } => {
                         self.panels.discover_progress = format!("{done}/{total} {host}");
@@ -562,6 +566,8 @@ impl App {
         if let Some(updates) = &self.scanner_updates {
             let mut done = None;
             while let Ok(update) = updates.try_recv() {
+                self.workspace_adapter
+                    .apply_scan(&mut self.workspace, &update);
                 match update {
                     panels::scanner::ScanUpdate::Progress(text) => {
                         self.panels.scanner.progress = text.clone();
@@ -616,6 +622,7 @@ impl App {
     }
 
     fn apply(&mut self, event: Event) {
+        self.workspace_adapter.apply_proxy(&mut self.workspace, &event);
         // The console window shows the same trail the proxy reports.
         self.note(&format!("{event:?}"));
         match event {
@@ -1143,6 +1150,8 @@ impl App {
                 self.panels.organizer.selected = None;
                 self.theme = crate::ui::theme::Theme::load(project.theme_dark);
                 self.workspace = restored_workspace;
+                self.workspace_adapter =
+                    crate::ui::workspace_adapter::WorkspaceAdapter::default();
                 self.saved_layout = restored_layout;
                 self.tool = self.saved_layout.active_tool.min(TOOLS.len() - 1);
                 self.view = self

@@ -386,6 +386,8 @@ pub(crate) fn start(app: &mut App) {
     app.panels.intruder.matches = 0;
     app.panels.intruder.running = true;
     app.status = format!("Sending {} requests…", requests.len());
+    app.workspace_adapter
+        .begin_attack(&mut app.workspace, &host, requests.len());
 
     let proxy = app.proxy.clone();
     let runtime = app.runtime_handle();

@@ -214,6 +214,7 @@ pub(crate) fn start(app: &mut App) {
     app.panels.scanner.running = true;
     app.panels.scanner.progress = "Crawling…".into();
     app.status = format!("Scanning {seed}");
+    app.workspace_adapter.begin_scan(&mut app.workspace, &seed);
 
     // The Target panel's include/exclude fields own the scope; the seed host is only the fallback
     // when the operator has not written anything down yet.
