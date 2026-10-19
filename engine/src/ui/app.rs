@@ -1131,6 +1131,11 @@ impl App {
         project.workspace = crate::project::SavedWorkspace::from(&self.workspace);
         self.shell.sync_selection(self.tool, self.view);
         project.layout = self.shell.layout();
+        project.layout.dashboard = crate::project::DashboardLayout {
+            search: self.dashboard.search.clone(),
+            states: self.dashboard.states.clone(),
+            kinds: self.dashboard.kinds.clone(),
+        };
         project.items = self
             .organizer
             .iter()
@@ -1223,6 +1228,9 @@ impl App {
                 self.workspace_adapter =
                     crate::ui::workspace_adapter::WorkspaceAdapter::default();
                 self.shell.restore_layout(&restored_layout);
+                self.dashboard.search = restored_layout.dashboard.search;
+                self.dashboard.states = restored_layout.dashboard.states;
+                self.dashboard.kinds = restored_layout.dashboard.kinds;
                 self.tool = restored_layout.active_tool.min(TOOLS.len() - 1);
                 self.view = restored_layout
                     .active_view

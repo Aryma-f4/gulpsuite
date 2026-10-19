@@ -68,6 +68,7 @@ impl SuiteShell {
             event_log: self.event_log.layout(),
             all_issues: self.all_issues.layout(),
             detail_detached: self.detail_location == DetailLocation::Detached,
+            dashboard: crate::project::DashboardLayout::default(),
         }
     }
 
@@ -574,8 +575,7 @@ mod tests {
 
     #[test]
     fn restored_detached_layout_reattaches_without_a_stale_window() {
-        let mut saved = SavedLayout::default();
-        saved.detail_detached = true;
+        let saved = SavedLayout { detail_detached: true, ..SavedLayout::default() };
         let mut shell = SuiteShell::default();
         shell.restore_layout(&saved);
         assert_eq!(shell.detail_location, DetailLocation::Reattaching);

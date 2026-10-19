@@ -172,6 +172,28 @@ fn task_selection_and_pause_resume_work() {
 }
 
 #[test]
+fn detach_opens_detail_without_losing_task_identity() {
+    let mut harness = harness(true, 1440.0);
+    let selected = harness.state().workspace.tasks.selected();
+    harness.get_by_label("Detach").click();
+    harness.run();
+    assert_eq!(
+        harness.state().shell.detail_location,
+        gulpsuite::ui::shell::DetailLocation::Detached
+    );
+    assert_eq!(harness.state().shell.detached_task(), selected);
+    assert_eq!(harness.state().workspace.tasks.selected(), selected);
+    if let Some(close) = harness.query_by_label("Close window") {
+        close.click();
+        harness.run();
+        assert_eq!(
+            harness.state().shell.detail_location,
+            gulpsuite::ui::shell::DetailLocation::Attached
+        );
+    }
+}
+
+#[test]
 fn shell_dashboard_snapshot_light() {
     snapshot(false, "shell-dashboard-light");
 }

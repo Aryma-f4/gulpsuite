@@ -321,7 +321,10 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
         ui.horizontal(|ui| {
             ui.label(state_name(task.state));
             let mut active = task.state == TaskState::Running;
-            if switch(ui, &mut active, accent).clicked() {
+            let toggle = ui.add_enabled_ui(!task.state.is_terminal(), |ui| {
+                switch(ui, &mut active, accent)
+            }).inner;
+            if toggle.clicked() {
                 if active {
                     commands.push(DashboardCommand::Resume(task.id));
                 } else {

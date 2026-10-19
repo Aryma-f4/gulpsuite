@@ -85,6 +85,18 @@ pub struct SavedLayout {
     pub all_issues: DrawerLayout,
     #[serde(default)]
     pub detail_detached: bool,
+    #[serde(default)]
+    pub dashboard: DashboardLayout,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashboardLayout {
+    #[serde(default)]
+    pub search: String,
+    #[serde(default)]
+    pub states: std::collections::BTreeSet<crate::workspace::TaskState>,
+    #[serde(default)]
+    pub kinds: std::collections::BTreeSet<crate::workspace::TaskKind>,
 }
 
 impl SavedLayout {
@@ -301,6 +313,18 @@ mod tests {
         });
         project.settings.insert("intercept".into(), "on".into());
         project
+    }
+
+    #[test]
+    fn dashboard_search_and_filters_round_trip_with_layout() {
+        let mut layout = SavedLayout::default();
+        layout.dashboard.search = "example.test".into();
+        layout.dashboard.states.insert(TaskState::Running);
+        layout.dashboard.kinds.insert(TaskKind::Scan);
+        let restored: SavedLayout = serde_json::from_str(&serde_json::to_string(&layout).unwrap()).unwrap();
+        assert_eq!(restored.dashboard, layout.dashboard);
+        let old: SavedLayout = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.dashboard, DashboardLayout::default());
     }
 
     #[test]

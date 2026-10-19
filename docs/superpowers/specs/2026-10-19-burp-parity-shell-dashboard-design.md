@@ -206,6 +206,10 @@ The shell and Dashboard slice is complete when:
 9. New tests and existing tests pass.
 10. Light and dark screenshot fixtures are reviewed against the canonical reference captures.
 
+## Implementation audit (2026-10-19)
+
+The first shell/Dashboard implementation is in place and tested, but this design's full acceptance bar has not been met. Criteria 3, 6, 7, and 9 have direct automated evidence; criteria 1, 2, 4, 5, 8, and 10 are partial. In particular, the Burp comparison reveals remaining visual drift, scanner cancellation is not yet guaranteed to interrupt an in-flight network request, and native detach/reattach has not received a cross-platform manual pass. The evidence and precise test results are recorded in `docs/reverse-engineering/burp-v2026.3.3-shell-dashboard-evidence.md`. Remaining tool-by-tool parity is still deferred; this status does not represent a claim that Gulpsuite matches the entire Burp application.
+
 ## Deferred work
 
 The following are outside this first slice:
