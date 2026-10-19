@@ -266,6 +266,7 @@ pub struct App {
     pub memory_text: String,
     pub memory_checked: std::time::Instant,
     pub dashboard: panels::DashboardState,
+    pub wip: crate::ui::wip::WipState,
     /// Whether the settings popup is open.
     pub show_settings: bool,
     /// Whether the search window is open.
@@ -362,6 +363,7 @@ impl App {
             scanner_updates: None,
             memory_text: "Memory: —".to_string(),
             dashboard: panels::DashboardState::default(),
+            wip: crate::ui::wip::WipState::default(),
             show_search: false,
             show_console: false,
             search_text: String::new(),
@@ -837,6 +839,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.pump();
         self.hotkeys(ctx);
+        self.shell.resolve_restored_viewport();
         apply_visuals(ctx, &self.theme);
 
         let frame = Frame::NONE
@@ -901,6 +904,32 @@ impl eframe::App for App {
             });
 
         self.windows(ctx);
+        if self.shell.detail_location == crate::ui::shell::DetailLocation::Detached {
+            if let Some(task) = self.shell.detached_task() {
+                let viewport = eframe::egui::ViewportId::from_hash_of(("task-detail", task.0));
+                let title = self.workspace.tasks.get(task)
+                    .map(|task| format!("{} — GulpSuite", task.name))
+                    .unwrap_or_else(|| "Task details — GulpSuite".into());
+                let builder = eframe::egui::ViewportBuilder::default()
+                    .with_title(title)
+                    .with_inner_size([820.0, 620.0]);
+                let mut close_requested = false;
+                ctx.show_viewport_immediate(viewport, builder, |child_ctx, _class| {
+                    close_requested = child_ctx.input(|input| input.viewport().close_requested());
+                    if !close_requested {
+                        eframe::egui::CentralPanel::default().show(child_ctx, |ui| {
+                            crate::ui::panels::dashboard::draw_detached(self, ui);
+                        });
+                    }
+                });
+                if close_requested {
+                    self.shell.close_detached();
+                    self.status = "Task details reattached".into();
+                }
+            } else {
+                self.shell.viewport_failed(&mut self.workspace, "task is no longer available");
+            }
+        }
     }
 }
 
@@ -1230,6 +1259,9 @@ impl App {
                 self.go(DECODER, 0);
                 panels::decoder::apply(self);
             }
+            ("Extensions", "Installed" | "Updates") => {
+                self.wip.open(crate::ui::wip::WipFeature::BappStore);
+            }
             _ => self.status = format!("{menu} > {item} is not available"),
         }
     }
@@ -1359,6 +1391,7 @@ impl App {
 
     /// Switches tool and view together, matching how a Burp menu item behaves.
     fn go(&mut self, tool: usize, view: usize) {
+        self.wip.close();
         self.tool = tool;
         self.view = view.min(TOOL_VIEWS[tool].len().saturating_sub(1));
         self.shell.sync_selection(self.tool, self.view);
@@ -1793,7 +1826,13 @@ impl App {
                 .id_salt("panel"),
         );
         inner.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-        panels::draw(self, &mut inner);
+        if let Some(feature) = self.wip.active() {
+            if crate::ui::wip::draw_panel(&mut inner, feature, &self.theme) {
+                self.wip.close();
+            }
+        } else {
+            panels::draw(self, &mut inner);
+        }
     }
 
     /// The bottom bar. Burp shows the event-log selector on the left and instrument controls on the
@@ -2222,6 +2261,18 @@ mod theme_switch_tests {
 #[cfg(test)]
 mod menu_tests {
     use super::*;
+
+    #[test]
+    fn extension_catalog_actions_open_labeled_wip_view() {
+        let ctx = Context::default();
+        let mut app = App::with_context(&ctx);
+        app.menu_action(&ctx, "Extensions", "Installed");
+        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::BappStore));
+        app.go(SUITE, 0);
+        assert_eq!(app.wip.active(), None);
+        app.menu_action(&ctx, "Extensions", "Updates");
+        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::BappStore));
+    }
 
     /// Every menu entry must resolve to a real action. A dangling entry that only updates the status
     /// line is the exact thing that made these menus look wired but do nothing.

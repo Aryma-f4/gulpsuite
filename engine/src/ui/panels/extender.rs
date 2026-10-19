@@ -50,6 +50,15 @@ impl ExtenderPanel {
 }
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
+    if app.view != 0 {
+        ui.horizontal(|ui| {
+            ui.label("BApp Store catalog and updates are work in progress.");
+            if ui.button("Open BApp Store (WIP)").clicked() {
+                app.wip.open(crate::ui::wip::WipFeature::BappStore);
+            }
+        });
+        ui.separator();
+    }
     match app.view {
         0 => bambda(app, ui),
         1 => installed(app, ui),

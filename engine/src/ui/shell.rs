@@ -5,6 +5,7 @@ use crate::ui::drawers::{self, DrawerState};
 use crate::ui::reference::{burp_2026_3_3, ReferenceSpec};
 use crate::ui::theme::Theme;
 use crate::workspace::Workspace;
+use crate::workspace::{EventLevel, TaskId};
 
 pub use crate::ui::drawers::DrawerKind;
 
@@ -26,13 +27,22 @@ pub struct ToolOverflow {
     pub overflowed: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DetailLocation {
+    #[default]
+    Attached,
+    Detached,
+    Reattaching,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SuiteShell {
     pub active_tool: usize,
     pub active_view: usize,
     pub event_log: DrawerState,
     pub all_issues: DrawerState,
-    pub detail_detached: bool,
+    pub detail_location: DetailLocation,
+    detached_task: Option<TaskId>,
 }
 
 impl Default for SuiteShell {
@@ -42,7 +52,8 @@ impl Default for SuiteShell {
             active_view: 0,
             event_log: DrawerState::default(),
             all_issues: DrawerState::default(),
-            detail_detached: false,
+            detail_location: DetailLocation::Attached,
+            detached_task: None,
         };
         shell.restore_layout(&SavedLayout::default());
         shell
@@ -56,7 +67,7 @@ impl SuiteShell {
             active_view: self.active_view,
             event_log: self.event_log.layout(),
             all_issues: self.all_issues.layout(),
-            detail_detached: self.detail_detached,
+            detail_detached: self.detail_location == DetailLocation::Detached,
         }
     }
 
@@ -65,12 +76,51 @@ impl SuiteShell {
         self.active_view = layout.active_view;
         self.event_log = DrawerState::from_layout(&layout.event_log);
         self.all_issues = DrawerState::from_layout(&layout.all_issues);
-        self.detail_detached = layout.detail_detached;
+        self.detail_location = if layout.detail_detached {
+            DetailLocation::Reattaching
+        } else {
+            DetailLocation::Attached
+        };
     }
 
     pub fn sync_selection(&mut self, tool: usize, view: usize) {
         self.active_tool = tool;
         self.active_view = view;
+    }
+
+    pub fn detach(&mut self, task: TaskId) {
+        self.detached_task = Some(task);
+        self.detail_location = DetailLocation::Detached;
+    }
+
+    pub fn detached_task(&self) -> Option<TaskId> {
+        self.detached_task
+    }
+
+    pub fn is_detached(&self, task: TaskId) -> bool {
+        self.detail_location == DetailLocation::Detached && self.detached_task == Some(task)
+    }
+
+    pub fn close_detached(&mut self) {
+        self.detail_location = DetailLocation::Attached;
+    }
+
+    pub fn resolve_restored_viewport(&mut self) {
+        if self.detail_location == DetailLocation::Reattaching {
+            self.close_detached();
+        }
+    }
+
+    pub fn viewport_failed(&mut self, workspace: &mut Workspace, reason: &str) {
+        let task = self.detached_task;
+        workspace.events.push(
+            0,
+            EventLevel::Warning,
+            "Dashboard",
+            format!("Detached task detail returned to the workspace: {reason}"),
+            task,
+        );
+        self.detail_location = DetailLocation::Attached;
     }
 
     pub fn toggle_drawer(&mut self, kind: DrawerKind) {
@@ -492,6 +542,43 @@ mod tests {
         assert!(shell.event_log.open);
         assert_eq!(shell.event_log.selected, Some(8));
         assert_eq!(shell.layout(), layout);
+    }
+
+    #[test]
+    fn detach_preserves_task_and_close_reattaches() {
+        let mut shell = SuiteShell::default();
+        let task = crate::workspace::TaskId(7);
+        shell.detach(task);
+        assert_eq!(shell.detached_task(), Some(task));
+        assert_eq!(shell.detail_location, DetailLocation::Detached);
+        shell.close_detached();
+        assert_eq!(shell.detail_location, DetailLocation::Attached);
+        assert_eq!(shell.detached_task(), Some(task));
+    }
+
+    #[test]
+    fn restored_detached_layout_reattaches_without_a_stale_window() {
+        let mut saved = SavedLayout::default();
+        saved.detail_detached = true;
+        let mut shell = SuiteShell::default();
+        shell.restore_layout(&saved);
+        assert_eq!(shell.detail_location, DetailLocation::Reattaching);
+        assert!(!shell.layout().detail_detached);
+        shell.resolve_restored_viewport();
+        assert_eq!(shell.detail_location, DetailLocation::Attached);
+    }
+
+    #[test]
+    fn viewport_failure_logs_warning_and_reattaches() {
+        let mut shell = SuiteShell::default();
+        let task = crate::workspace::TaskId(9);
+        shell.detach(task);
+        let mut workspace = crate::workspace::Workspace::default();
+        shell.viewport_failed(&mut workspace, "native viewport unavailable");
+        assert_eq!(shell.detail_location, DetailLocation::Attached);
+        let event = workspace.events.iter().last().expect("warning event");
+        assert_eq!(event.level, crate::workspace::EventLevel::Warning);
+        assert_eq!(event.task_id, Some(task));
     }
 
     #[test]

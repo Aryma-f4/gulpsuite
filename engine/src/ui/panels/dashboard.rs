@@ -127,8 +127,23 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     ui.horizontal_top(|ui| {
         tasks_column(app, ui, left, &mut commands);
         ui.separator();
-        detail_pane(app, ui, &mut commands);
+        if app.shell.detail_location == crate::ui::shell::DetailLocation::Detached {
+            dashboard_empty(ui, &app.theme, "Task details detached", "Details are open in another window.");
+        } else {
+            detail_pane(app, ui, &mut commands);
+        }
     });
+    for command in commands {
+        apply_command(app, command);
+    }
+}
+
+pub fn draw_detached(app: &mut App, ui: &mut Ui) {
+    if let Some(id) = app.shell.detached_task() {
+        let _ = app.workspace.tasks.select(id);
+    }
+    let mut commands = Vec::new();
+    detail_pane(app, ui, &mut commands);
     for command in commands {
         apply_command(app, command);
     }
@@ -147,6 +162,9 @@ fn tasks_column(app: &mut App, ui: &mut Ui, width: f32, commands: &mut Vec<Dashb
                 }
                 if crate::ui::app::primary_button(ui, &theme, "New scan").clicked() {
                     commands.push(DashboardCommand::NewScan);
+                }
+                if ui.button("AI (WIP)").clicked() {
+                    app.wip.open(crate::ui::wip::WipFeature::Ai);
                 }
             });
         });
@@ -394,7 +412,8 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
             );
             heading(ui, &theme, &task.name);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Detach").clicked() {
+                if app.shell.detail_location != crate::ui::shell::DetailLocation::Detached
+                    && ui.button("Detach").clicked() {
                     commands.push(DashboardCommand::Detach(task.id));
                 }
                 pane_icons(ui, &theme, commands);
@@ -661,7 +680,7 @@ fn apply_command(app: &mut App, command: DashboardCommand) {
         },
         DashboardCommand::Detach(id) => {
             let _ = app.workspace.tasks.select(id);
-            app.shell.detail_detached = true;
+            app.shell.detach(id);
             app.status = "Task details detached".into();
         }
         DashboardCommand::ShowSettings => app.show_settings = true,
