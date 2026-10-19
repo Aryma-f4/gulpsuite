@@ -215,6 +215,8 @@ impl Transaction {
 
 pub struct App {
     pub theme: Theme,
+    pub workspace: crate::workspace::Workspace,
+    pub saved_layout: crate::project::SavedLayout,
     pub proxy: Arc<Proxy>,
     events: Receiver<Event>,
     /// One-shot request results, keyed by the id handed back to the caller.
@@ -329,6 +331,11 @@ impl App {
 
         App {
             theme,
+            workspace: crate::workspace::Workspace {
+                tasks: crate::workspace::TaskManager::seed_proxy_tasks(),
+                ..Default::default()
+            },
+            saved_layout: crate::project::SavedLayout::default(),
             proxy,
             events: rx,
             responses_in: req_rx,
@@ -1043,6 +1050,10 @@ impl App {
         }
         let mut project = crate::project::Project::new("gulpsuite");
         project.theme_dark = self.theme.dark;
+        project.workspace = crate::project::SavedWorkspace::from(&self.workspace);
+        self.saved_layout.active_tool = self.tool;
+        self.saved_layout.active_view = self.view;
+        project.layout = self.saved_layout.clone();
         project.items = self
             .organizer
             .iter()
@@ -1098,6 +1109,8 @@ impl App {
         let path = std::path::PathBuf::from(&self.panels.project_path);
         match crate::project::Project::load(&path) {
             Ok(project) => {
+                let restored_workspace = project.workspace.clone().restore();
+                let restored_layout = project.layout.clone();
                 self.organizer = project
                     .items
                     .iter()
@@ -1129,6 +1142,13 @@ impl App {
                 // The restored item list may be shorter than the selected index.
                 self.panels.organizer.selected = None;
                 self.theme = crate::ui::theme::Theme::load(project.theme_dark);
+                self.workspace = restored_workspace;
+                self.saved_layout = restored_layout;
+                self.tool = self.saved_layout.active_tool.min(TOOLS.len() - 1);
+                self.view = self
+                    .saved_layout
+                    .active_view
+                    .min(TOOL_VIEWS[self.tool].len().saturating_sub(1));
                 self.status = format!(
                     "Opened {} — {} items, {} recordings",
                     path.display(),
