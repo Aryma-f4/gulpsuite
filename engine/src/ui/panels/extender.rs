@@ -72,8 +72,11 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 /// and credentials. Rather than fake that, this lists the scripts in the local extension folder and
 /// lets a script be saved, loaded, or removed, which is the part that works offline.
 fn updates(app: &mut App, ui: &mut Ui) {
+    app.draw_update_ui(ui);
+    ui.add_space(8.0);
+    ui.separator();
     let theme = app.theme.clone();
-    
+    heading(ui, &theme, "Local Extension Scripts");
     ui.horizontal(|ui| {
         label(ui, &theme, "Folder");
         ui.text_edit_singleline(&mut app.panels.extender_folder);

@@ -546,6 +546,20 @@ pub struct App {
     pub settings_search: String,
     /// 0 = All, 1 = User, 2 = Project in the Settings dialog.
     pub settings_scope_filter: usize,
+    /// Shows the in-app Software Update dialog.
+    pub show_update_modal: bool,
+    /// Automatically checks GitHub Releases for a newer version on startup.
+    pub auto_check_updates: bool,
+    /// GitHub repository slug (`owner/repo`) or custom release API URL.
+    pub update_repo: String,
+    pub update_checking: bool,
+    pub update_downloading: bool,
+    pub update_progress: Option<(u64, u64)>,
+    pub update_available: Option<crate::updater::ReleaseInfo>,
+    pub update_downloaded_path: Option<(std::path::PathBuf, bool)>,
+    pub update_status_message: String,
+    update_rx: Option<Receiver<crate::updater::UpdateEvent>>,
+    update_open_modal_on_check: bool,
 }
 
 impl App {
@@ -566,6 +580,9 @@ impl App {
         app.use_native_macos_menu = cfg!(target_os = "macos");
         app.show_menu_bar = !cfg!(target_os = "macos");
         app.start_proxy(port);
+        if app.auto_check_updates {
+            app.check_for_updates(false);
+        }
         app
     }
 
@@ -666,9 +683,98 @@ impl App {
             settings_category: 0,
             settings_search: String::new(),
             settings_scope_filter: 0,
+            show_update_modal: false,
+            auto_check_updates: true,
+            update_repo: std::env::var("GULPSUITE_UPDATE_REPO")
+                .unwrap_or_else(|_| crate::updater::DEFAULT_REPO.to_string()),
+            update_checking: false,
+            update_downloading: false,
+            update_progress: None,
+            update_available: None,
+            update_downloaded_path: None,
+            update_status_message: format!(
+                "Current version: v{} ({})",
+                crate::updater::CURRENT_VERSION,
+                crate::updater::current_platform_tag()
+            ),
+            update_rx: None,
+            update_open_modal_on_check: false,
             runtime,
         }
         .tuned()
+    }
+
+    /// Checks GitHub Releases (or `self.update_repo`) in the background for a newer version.
+    pub fn check_for_updates(&mut self, open_modal_when_done: bool) {
+        if self.update_checking || self.update_downloading {
+            return;
+        }
+        self.update_checking = true;
+        self.update_open_modal_on_check = open_modal_when_done;
+        if open_modal_when_done {
+            self.show_update_modal = true;
+        }
+        self.update_status_message = format!("Checking {} for updates…", self.update_repo);
+        let repo = self.update_repo.clone();
+        let (tx, rx) = channel();
+        self.update_rx = Some(rx);
+        self.runtime.handle().spawn(async move {
+            let res =
+                crate::updater::check_latest_release(&repo, crate::updater::CURRENT_VERSION).await;
+            let _ = tx.send(crate::updater::UpdateEvent::Checked(res));
+        });
+    }
+
+    /// Downloads the latest release installer for this platform, verifies its SHA-256 digest,
+    /// and launches the installer.
+    pub fn download_and_install_update(&mut self) {
+        let Some(release) = self.update_available.clone() else {
+            return;
+        };
+        if self.update_downloading {
+            return;
+        }
+        self.update_downloading = true;
+        self.update_progress = Some((0, 0));
+        self.update_status_message = format!("Downloading {}…", release.tag_name);
+        let platform = crate::updater::current_platform_tag().to_string();
+        let dest_dir = std::env::temp_dir().join("gulpsuite-updates");
+        let (tx, rx) = channel();
+        self.update_rx = Some(rx);
+        self.runtime.handle().spawn(async move {
+            let tx_prog = tx.clone();
+            let res = crate::updater::download_and_verify_release(
+                &release,
+                &platform,
+                &dest_dir,
+                &move |done, total| {
+                    let _ = tx_prog.send(crate::updater::UpdateEvent::DownloadProgress {
+                        downloaded_bytes: done,
+                        total_bytes: total,
+                    });
+                },
+            )
+            .await;
+            match res {
+                Ok((path, sha256_verified)) => {
+                    let _ = tx.send(crate::updater::UpdateEvent::Downloaded {
+                        path: path.clone(),
+                        sha256_verified,
+                    });
+                    match crate::updater::launch_installer(&path) {
+                        Ok(msg) => {
+                            let _ = tx.send(crate::updater::UpdateEvent::InstallLaunched(msg));
+                        }
+                        Err(err) => {
+                            let _ = tx.send(crate::updater::UpdateEvent::Error(err));
+                        }
+                    }
+                }
+                Err(err) => {
+                    let _ = tx.send(crate::updater::UpdateEvent::Error(err));
+                }
+            }
+        });
     }
 
     // ---- proxy control, kept off the UI thread -------------------------------------------
@@ -1002,6 +1108,93 @@ impl App {
             };
             if !self.panels.repeater.complete(id, status.0, status.1.clone()) {
                 self.responses.insert(id, status);
+            }
+        }
+        if let Some(rx) = &self.update_rx {
+            let mut finished_channel = false;
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    crate::updater::UpdateEvent::Checked(Ok(
+                        crate::updater::UpdateCheckOutcome::UpdateAvailable {
+                            current_version,
+                            release,
+                            ..
+                        },
+                    )) => {
+                        self.update_checking = false;
+                        let ver = release.clean_version();
+                        self.update_status_message = format!(
+                            "Update available: v{ver} (current: v{current_version})"
+                        );
+                        self.status = format!("New update available: Gulpsuite v{ver}");
+                        self.update_available = Some(release);
+                        self.show_update_modal = true;
+                        finished_channel = true;
+                    }
+                    crate::updater::UpdateEvent::Checked(Ok(
+                        crate::updater::UpdateCheckOutcome::UpToDate {
+                            current_version,
+                            latest_version,
+                        },
+                    )) => {
+                        self.update_checking = false;
+                        self.update_available = None;
+                        self.update_status_message = format!(
+                            "Gulpsuite v{current_version} is up to date (latest: v{latest_version})."
+                        );
+                        if self.update_open_modal_on_check {
+                            self.status = self.update_status_message.clone();
+                        }
+                        finished_channel = true;
+                    }
+                    crate::updater::UpdateEvent::Checked(Err(err)) => {
+                        self.update_checking = false;
+                        self.update_status_message = format!("Update check failed: {err}");
+                        if self.update_open_modal_on_check {
+                            self.status = self.update_status_message.clone();
+                        }
+                        finished_channel = true;
+                    }
+                    crate::updater::UpdateEvent::DownloadProgress {
+                        downloaded_bytes,
+                        total_bytes,
+                    } => {
+                        self.update_progress = Some((downloaded_bytes, total_bytes));
+                    }
+                    crate::updater::UpdateEvent::Downloaded {
+                        path,
+                        sha256_verified,
+                    } => {
+                        self.update_downloading = false;
+                        let verified_tag = if sha256_verified {
+                            " (SHA-256 verified)"
+                        } else {
+                            ""
+                        };
+                        self.update_status_message = format!(
+                            "Downloaded installer to {}{}",
+                            path.display(),
+                            verified_tag
+                        );
+                        self.update_downloaded_path = Some((path, sha256_verified));
+                    }
+                    crate::updater::UpdateEvent::InstallLaunched(msg) => {
+                        self.update_downloading = false;
+                        self.update_status_message = msg.clone();
+                        self.status = msg;
+                        finished_channel = true;
+                    }
+                    crate::updater::UpdateEvent::Error(err) => {
+                        self.update_checking = false;
+                        self.update_downloading = false;
+                        self.update_status_message = format!("Update error: {err}");
+                        self.status = self.update_status_message.clone();
+                        finished_channel = true;
+                    }
+                }
+            }
+            if finished_channel {
+                self.update_rx = None;
             }
         }
     }
@@ -2344,6 +2537,11 @@ impl App {
                 }
             });
             ui.menu_button("Help", |ui| {
+                if ui.button("Check for updates…").clicked() {
+                    self.check_for_updates(true);
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button("Command palette & Search (Cmd+K)").clicked() {
                     self.show_search = true;
                     ui.close();
@@ -2570,6 +2768,17 @@ impl App {
                 .default_size([860.0, 560.0])
                 .show(ctx, |ui| self.settings(ui));
             self.show_settings = open;
+        }
+        if self.show_update_modal {
+            let mut open = true;
+            eframe::egui::Window::new("Software Update")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([520.0, 340.0])
+                .show(ctx, |ui| self.draw_update_ui(ui));
+            if !open {
+                self.show_update_modal = false;
+            }
         }
         if self.show_search {
             let mut open = true;
@@ -2810,6 +3019,9 @@ impl App {
                         ui.label(format!("• Memory usage: {}", self.memory_text));
                         ui.label(format!("• Proxy history ring capacity: {} entries ({} KB per body)", LOG_CAPACITY, LOG_BODY_LIMIT / 1024));
                         ui.label(format!("• Organizer store capacity: {} items", ORGANIZER_CAPACITY));
+                        ui.add_space(10.0);
+                        ui.separator();
+                        self.draw_update_ui(ui);
                     }
                     1 => {
                         super::panels::heading(ui, &theme, "User interface — Display, Inspector & Hotkeys");
@@ -3083,6 +3295,139 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Renders the in-app Software Update panel (used by the Software Update modal,
+    /// `Settings -> Suite`, and `Extensions -> Updates`).
+    pub fn draw_update_ui(&mut self, ui: &mut Ui) {
+        let theme = self.theme.clone();
+        super::panels::heading(ui, &theme, "Software Updates");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "Installed version: v{} ({})",
+                crate::updater::CURRENT_VERSION,
+                crate::updater::current_platform_tag()
+            ));
+            ui.separator();
+            ui.checkbox(
+                &mut self.auto_check_updates,
+                "Automatically check for updates on startup",
+            );
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Update repository / URL:");
+            ui.add(
+                eframe::egui::TextEdit::singleline(&mut self.update_repo)
+                    .desired_width(240.0)
+                    .hint_text(crate::updater::DEFAULT_REPO),
+            );
+            if ui
+                .add_enabled(
+                    !self.update_checking && !self.update_downloading,
+                    eframe::egui::Button::new(if self.update_checking {
+                        "Checking…"
+                    } else {
+                        "Check for updates"
+                    }),
+                )
+                .clicked()
+            {
+                self.check_for_updates(false);
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(
+            eframe::egui::RichText::new(&self.update_status_message)
+                .color(theme.color("ui.text.body")),
+        );
+
+        if let Some(release) = self.update_available.clone() {
+            let platform = crate::updater::current_platform_tag();
+            let matched_asset =
+                crate::updater::select_installer_asset(&release.assets, platform);
+            ui.add_space(6.0);
+            eframe::egui::Frame::new()
+                .fill(theme.color("ui.background.1"))
+                .stroke(Stroke::new(1.0_f32, theme.color("ui.border.1")))
+                .corner_radius(4.0)
+                .inner_margin(10.0)
+                .show(ui, |ui| {
+                    ui.label(
+                        eframe::egui::RichText::new(format!(
+                            "New release available: {} ({})",
+                            if release.name.is_empty() {
+                                &release.tag_name
+                            } else {
+                                &release.name
+                            },
+                            release.tag_name
+                        ))
+                        .strong()
+                        .color(theme.color("ui.icon.accent")),
+                    );
+                    if let Some(asset) = &matched_asset {
+                        let mb = (asset.size as f64) / (1024.0 * 1024.0);
+                        ui.label(format!(
+                            "Platform installer: {} ({:.1} MB)",
+                            asset.name,
+                            mb.max(0.1)
+                        ));
+                    } else {
+                        ui.label(format!("No prebuilt installer found for {platform}"));
+                    }
+                    if !release.body.trim().is_empty() {
+                        ui.add_space(4.0);
+                        eframe::egui::ScrollArea::vertical()
+                            .id_salt("update-release-notes-scroll")
+                            .max_height(110.0)
+                            .show(ui, |ui| {
+                                ui.label(&release.body);
+                            });
+                    }
+                    ui.add_space(6.0);
+                    if self.update_downloading {
+                        if let Some((done, total)) = self.update_progress {
+                            let frac = if total > 0 {
+                                (done as f32 / total as f32).clamp(0.0, 1.0)
+                            } else {
+                                0.5
+                            };
+                            let pct = (frac * 100.0).round() as u32;
+                            ui.label(format!(
+                                "Downloading update: {:.1} MB / {:.1} MB ({pct}%)",
+                                done as f64 / (1024.0 * 1024.0),
+                                total as f64 / (1024.0 * 1024.0)
+                            ));
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        let can_dl = matched_asset.is_some() && !self.update_downloading;
+                        ui.add_enabled_ui(can_dl, |ui| {
+                            if primary_button(ui, &theme, "Download & Install Update").clicked() {
+                                self.download_and_install_update();
+                            }
+                        });
+                        if let Some((path, verified)) = self.update_downloaded_path.clone() {
+                            let lbl = if verified {
+                                "Run Verified Installer"
+                            } else {
+                                "Run Installer"
+                            };
+                            if ui.button(lbl).clicked() {
+                                match crate::updater::launch_installer(&path) {
+                                    Ok(msg) => {
+                                        self.update_status_message = msg.clone();
+                                        self.status = msg;
+                                    }
+                                    Err(err) => {
+                                        self.update_status_message = err;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+        }
     }
 
     /// Burp's Command Palette (`Cmd+K`) + Project-wide Search window.

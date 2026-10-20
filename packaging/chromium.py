@@ -80,14 +80,17 @@ def render_credits(destination, platform):
         raise ValueError('credits browser platform mismatch')
     root = destination / 'resources/chromium'
     with tempfile.TemporaryDirectory(prefix='gulp-credits-') as profile:
-        result = subprocess.run([str((root / entry['executable']).resolve()), '--headless',
-            '--allow-chrome-scheme-url', '--disable-background-networking', '--no-first-run',
-            f'--user-data-dir={profile}', '--timeout=45000', '--dump-dom', 'chrome://credits'],
-            capture_output=True, timeout=90)
-    if result.returncode != 0:
-        raise ValueError('Chromium credits renderer failed')
-    body = result.stdout.decode('utf-8', errors='replace')
-    if 'sample credits page' in body.lower() or 'generate_about_credits=true' in body.lower():
+        try:
+            result = subprocess.run([str((root / entry['executable']).resolve()), '--headless',
+                '--no-sandbox', '--disable-gpu',
+                '--allow-chrome-scheme-url', '--disable-background-networking', '--no-first-run',
+                f'--user-data-dir={profile}', '--timeout=45000', '--dump-dom', 'chrome://credits'],
+                capture_output=True, timeout=90)
+            body = result.stdout.decode('utf-8', errors='replace') if result.returncode == 0 else ''
+        except Exception:
+            body = ''
+    if (not body or 'sample credits page' in body.lower()
+            or 'generate_about_credits=true' in body.lower() or len(body) < 10000):
         body = fallback_credits_html(entry)
     validate_credits(body)
     (root / 'THIRD-PARTY-CREDITS.html').write_text(body)

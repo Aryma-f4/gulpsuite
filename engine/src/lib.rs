@@ -23,4 +23,5 @@ pub mod replay;
 pub mod scanner;
 pub mod tls;
 pub mod ui;
+pub mod updater;
 pub mod workspace;

@@ -66,6 +66,7 @@ Interactive HTTP request manipulation and replay across multiple grouped tabs, f
 - **Organizer**: Long-term request/response storage with collections, notes, and search.
 - **Extensions (Bambda)**: Live HTTP traffic filter and transformation scripting engine.
 - **Discover**: Threaded directory and content discovery scanner.
+- **In-App Auto-Updater**: Automatic startup & on-demand (`Help -> Check for updates…`, `Settings -> Suite -> Software Updates`, `Extensions -> Updates`) GitHub Releases checker with SHA-256 verification and 1-click native installer launch across macOS, Windows, and Linux.
 
 ![Decoder — Smart Decode](docs/screenshots/09-decoder-smart-decode.png)
 
