@@ -546,11 +546,47 @@ fn secrets(url: &str, body: &str) -> Vec<Finding> {
         ("secret=", Severity::High),
     ];
     let mut found = Vec::new();
+    let lower_body = body.to_ascii_lowercase();
     for (needle, severity) in PATTERNS {
-        let mut at = body.to_ascii_lowercase().find(&needle.to_ascii_lowercase());
-        while let Some(index) = at {
-            let evidence = body
-                [index..]
+        let needle_low = needle.to_ascii_lowercase();
+        let mut search_from = 0usize;
+        while let Some(rel) = lower_body[search_from..].find(&needle_low) {
+            let index = search_from + rel;
+            let after_eq = index + needle.len();
+            search_from = after_eq;
+
+            // Ignore HTML attributes (`name="password="`, `<input`) or URL query links (`?password=&`)
+            let prefix = &lower_body[index.saturating_sub(16)..index];
+            if prefix.contains("name=")
+                || prefix.contains("type=")
+                || prefix.contains("placeholder=")
+                || prefix.contains("href=")
+                || prefix.contains("action=")
+            {
+                continue;
+            }
+            let rest = &body[after_eq..];
+            let candidate: String = rest
+                .trim_start_matches(['"', '\''])
+                .chars()
+                .take_while(|c| {
+                    !c.is_whitespace() && !matches!(c, '"' | '\'' | '&' | '<' | '>' | ';' | ',' | ')')
+                })
+                .collect();
+            let cand_low = candidate.to_ascii_lowercase();
+            let alnum_count = candidate.chars().filter(|c| c.is_ascii_alphanumeric()).count();
+            if alnum_count < 4
+                || matches!(
+                    cand_low.as_str(),
+                    "null" | "undefined" | "true" | "false" | "none" | "password" | "secret"
+                )
+                || cand_low.starts_with("your_")
+                || cand_low.starts_with("example")
+            {
+                continue;
+            }
+
+            let evidence = body[index..]
                 .lines()
                 .next()
                 .unwrap_or("")
@@ -566,37 +602,50 @@ fn secrets(url: &str, body: &str) -> Vec<Finding> {
                 &evidence,
                 "A credential-looking value is present in the response body.",
             ));
-            at = body.to_ascii_lowercase()[index + needle.len()..].find(&needle.to_ascii_lowercase())
-                .map(|next| next + index + needle.len());
+            break;
         }
     }
-    // AWS access key ids are distinctive enough to look for on their own.
-    if body.contains("AKIA") {
-        found.push(Finding::new(
-            "AWS access key id in response",
-            Severity::High,
-            url,
-            None,
-            &body
-                .lines()
-                .find(|line| line.contains("AKIA"))
-                .unwrap_or("AKIA...")
-                .trim()
-                .chars()
-                .take(120)
-                .collect::<String>(),
-            "An AKIA-prefixed identifier is an AWS access key id and should not be client-visible.",
-        ));
+    // AWS access key ids (`AKIA` followed by 16 uppercase alphanumeric characters).
+    if let Some(pos) = body.find("AKIA") {
+        let token: String = body[pos..]
+            .chars()
+            .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+            .collect();
+        if token.len() >= 16 {
+            found.push(Finding::new(
+                "AWS access key id in response",
+                Severity::High,
+                url,
+                None,
+                &body
+                    .lines()
+                    .find(|line| line.contains("AKIA"))
+                    .unwrap_or("AKIA...")
+                    .trim()
+                    .chars()
+                    .take(120)
+                    .collect::<String>(),
+                "An AKIA-prefixed identifier is an AWS access key id and should not be client-visible.",
+            ));
+        }
     }
     found
 }
 
 /// Absolute filesystem paths leaking build layout.
 fn paths_disclosed(url: &str, body: &str) -> Vec<Finding> {
-    const MARKERS: [&str; 5] = ["/home/", "/Users/", "C:\\Windows", "/var/www", "/usr/lib/"]; // code
+    const MARKERS: [&str; 5] = ["/home/", "/Users/", "C:\\Windows", "/var/www", "/usr/lib/"];
     let mut found = Vec::new();
     for marker in MARKERS {
         if let Some(index) = body.find(marker) {
+            let prefix = &body[index.saturating_sub(8)..index].to_ascii_lowercase();
+            if prefix.ends_with("href=\"")
+                || prefix.ends_with("href='")
+                || prefix.ends_with("src=\"")
+                || prefix.ends_with("src='")
+            {
+                continue;
+            }
             let evidence = body[index..]
                 .lines()
                 .next()

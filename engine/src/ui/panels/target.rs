@@ -469,546 +469,902 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
 /// Renders `Target -> Issues` & `Issue definitions` (and the `Issues` sub-tab inside `Site map`),
 /// including the complete 183-entry Knowledge Base (`crate::issue_definitions::all()`) and
 /// the discovered `Issues` table & `Advisory | Request | Response` viewer (`Pro-QSG-6-view-issues.png`).
-fn draw_issues_view(app: &mut App, ui: &mut Ui) {
+pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     let all_defs = crate::issue_definitions::all();
+    let card_bg = if theme.dark {
+        Color32::from_rgb(0x1E, 0x20, 0x24)
+    } else {
+        Color32::WHITE
+    };
+    let heading_fg = if theme.dark {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(0x11, 0x11, 0x11)
+    };
+    let body_fg = if theme.dark {
+        Color32::from_rgb(0xE8, 0xEC, 0xF2)
+    } else {
+        Color32::from_rgb(0x1F, 0x23, 0x28)
+    };
+    let code_bg = if theme.dark {
+        Color32::from_rgb(0x26, 0x2A, 0x32)
+    } else {
+        Color32::from_rgb(0xF6, 0xF8, 0xFA)
+    };
+    let border_col = theme.color("ui.border.1");
 
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Scan URL:");
-        ui.add(
-            eframe::egui::TextEdit::singleline(&mut app.panels.scanner.seed)
-                .desired_width(220.0)
-                .font(eframe::egui::TextStyle::Monospace),
-        );
-        ui.checkbox(&mut app.panels.scanner.active_checks, "Active checks");
-        if ui
-            .add_enabled(
-                !app.panels.scanner.running,
-                eframe::egui::Button::new("Start scan"),
-            )
-            .clicked()
-        {
-            super::scanner::start(app);
-        }
-        if ui.button("Report issues…").clicked() {
-            app.panels.scanner.report_host_filter.clear();
-            app.panels.scanner.show_report_wizard = true;
-        }
-        if ui.button("Create manual issue…").clicked() {
-            app.panels.scanner.show_manual_issue_modal = true;
-        }
-        ui.separator();
-        for (s_idx, lbl) in ["High", "Medium", "Low", "Info"].iter().enumerate() {
-            let active = app.panels.target_panel.issue_sev_filter[s_idx];
-            if ui.selectable_label(active, *lbl).clicked() {
-                app.panels.target_panel.issue_sev_filter[s_idx] = !active;
-            }
-        }
-        ui.separator();
-        for (c_idx, lbl) in ["Certain", "Firm", "Tentative"].iter().enumerate() {
-            let active = app.panels.target_panel.issue_conf_filter[c_idx];
-            if ui.selectable_label(active, *lbl).clicked() {
-                app.panels.target_panel.issue_conf_filter[c_idx] = !active;
-            }
-        }
-        ui.separator();
-        ui.label("Filter issues:");
-        ui.add(
-            eframe::egui::TextEdit::singleline(&mut app.panels.target_panel.issue_filter)
-                .hint_text("Search issue name, URL, evidence")
-                .desired_width(160.0),
-        );
-    });
-    ui.add_space(4.0);
-
-    // Complete 183-entry Issue Definitions Knowledge Base (`target/issue-definitions.html`)
-    egui::CollapsingHeader::new(
-        RichText::new(format!(
-            "Issue definitions Knowledge Base ({} types)",
-            all_defs.len()
-        ))
-        .strong(),
-    )
-    .default_open(false)
-    .show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Search definitions:");
-            ui.add(
-                egui::TextEdit::singleline(&mut app.panels.target_panel.kb_search)
-                    .hint_text("Search 183 vulnerability definitions by name, CWE, or hex index…")
-                    .desired_width(280.0),
-            );
-            ui.separator();
-            for (f_idx, f_lbl) in ["All", "High", "Medium", "Low", "Information"]
-                .iter()
-                .enumerate()
-            {
-                ui.selectable_value(
-                    &mut app.panels.target_panel.kb_severity_filter,
-                    f_idx,
-                    *f_lbl,
-                );
-            }
-        });
-        ui.add_space(4.0);
-
-        let kb_needle = app.panels.target_panel.kb_search.trim().to_ascii_lowercase();
-        let sev_filter = match app.panels.target_panel.kb_severity_filter {
-            1 => Some("High"),
-            2 => Some("Medium"),
-            3 => Some("Low"),
-            4 => Some("Information"),
-            _ => None,
-        };
-        let filtered_defs: Vec<(usize, &crate::issue_definitions::IssueDefinition)> = all_defs
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| {
-                sev_filter.map_or(true, |sf| d.severity.eq_ignore_ascii_case(sf))
-                    && (kb_needle.is_empty()
-                        || d.name.to_ascii_lowercase().contains(&kb_needle)
-                        || d.type_hex.to_ascii_lowercase().contains(&kb_needle)
-                        || d.cwe_summary().to_ascii_lowercase().contains(&kb_needle))
-            })
-            .collect();
-
-        ui.columns(2, |cols| {
-            // Left column: scrollable table of all 183 Issue Definitions
-            egui::ScrollArea::vertical()
-                .id_salt("target-kb-defs-scroll")
-                .max_height(260.0)
-                .show(&mut cols[0], |ui| {
-                    egui::Grid::new("target-issue-definitions-kb")
-                        .num_columns(4)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for h in ["Name", "Typical severity", "Type index", "CWE"] {
-                                ui.strong(h);
-                            }
-                            ui.end_row();
-                            for (orig_idx, def) in &filtered_defs {
-                                let is_sel =
-                                    app.panels.target_panel.selected_kb_def == *orig_idx;
-                                let (sev_col, sev_icon) = match def.severity.as_str() {
-                                    "High" => (
-                                        theme.color("ui.issue.high"),
-                                        super::scanner::LauncherIcon::IssueHigh,
-                                    ),
-                                    "Medium" => (
-                                        theme.color("ui.issue.medium"),
-                                        super::scanner::LauncherIcon::IssueMedium,
-                                    ),
-                                    "Low" => (
-                                        theme.color("ui.issue.low"),
-                                        super::scanner::LauncherIcon::IssueLow,
-                                    ),
-                                    _ => (
-                                        theme.color("ui.icon.information"),
-                                        super::scanner::LauncherIcon::IssueInfo,
-                                    ),
-                                };
-                                let c_name = ui
-                                    .horizontal(|ui| {
-                                        super::scanner::paint_launcher_icon(
-                                            ui,
-                                            Vec2::new(14.0, 14.0),
-                                            sev_col,
-                                            sev_icon,
-                                        );
-                                        ui.selectable_label(is_sel, &def.name)
-                                    })
-                                    .inner;
-                                let c_sev = ui.selectable_label(
-                                    is_sel,
-                                    RichText::new(&def.severity).color(sev_col),
-                                );
-                                let c_idx = ui.selectable_label(
-                                    is_sel,
-                                    RichText::new(&def.type_hex).monospace(),
-                                );
-                                let c_cwe = ui.selectable_label(
-                                    is_sel,
-                                    RichText::new(def.cwe_summary()).monospace(),
-                                );
-                                if c_name.clicked()
-                                    || c_sev.clicked()
-                                    || c_idx.clicked()
-                                    || c_cwe.clicked()
-                                {
-                                    app.panels.target_panel.selected_kb_def = *orig_idx;
-                                }
-                                ui.end_row();
-                            }
-                        });
-                });
-
-            // Right column: Full Advisory Details for the selected IssueDefinition
-            if let Some(def) = all_defs
-                .get(app.panels.target_panel.selected_kb_def)
-                .or_else(|| filtered_defs.first().map(|(_, d)| *d))
-            {
-                egui::ScrollArea::vertical()
-                    .id_salt("target-kb-detail-scroll")
-                    .max_height(260.0)
-                    .show(&mut cols[1], |ui| {
-                        let sev_icon = match def.severity.as_str() {
-                            "High" => super::scanner::LauncherIcon::IssueHigh,
-                            "Medium" => super::scanner::LauncherIcon::IssueMedium,
-                            "Low" => super::scanner::LauncherIcon::IssueLow,
-                            _ => super::scanner::LauncherIcon::IssueInfo,
-                        };
-                        ui.horizontal(|ui| {
-                            super::scanner::paint_launcher_icon(
-                                ui,
-                                Vec2::new(24.0, 24.0),
-                                Color32::WHITE,
-                                sev_icon,
-                            );
-                            ui.label(RichText::new(&def.name).size(15.0).strong());
-                        });
-                        ui.label(
-                            RichText::new(format!(
-                                "Typical severity: {}   ·   Type index: {}",
-                                def.severity, def.type_hex
-                            ))
-                            .strong(),
-                        );
-                        ui.separator();
-                        if !def.description.is_empty() {
-                            ui.label(RichText::new("Issue description").strong());
-                            ui.label(&def.description);
-                            ui.add_space(6.0);
-                        }
-                        if !def.remediation.is_empty() {
-                            ui.label(RichText::new("Issue remediation").strong());
-                            ui.label(&def.remediation);
-                            ui.add_space(6.0);
-                        }
-                        if !def.references.is_empty() {
-                            ui.label(RichText::new("References").strong());
-                            for r in &def.references {
-                                ui.label(format!("• {} ({})", r.title, r.url));
-                            }
-                            ui.add_space(6.0);
-                        }
-                        if !def.classifications.is_empty() {
-                            ui.label(RichText::new("Vulnerability classifications").strong());
-                            for c in &def.classifications {
-                                ui.label(format!("• {} ({})", c.title, c.url));
-                            }
-                        }
-                    });
-            }
-        });
-    });
-    ui.add_space(4.0);
-    if app.workspace.issues.is_empty() {
-        let (learn, _) = empty_state(
-            ui,
-            &theme,
-            "No issues to show",
-            "Any issues discovered on your target applications will be displayed here.",
-            true,
-            None,
-        );
-        if learn {
-            app.status =
-                "Target issues: run an audit or passive crawl to populate target findings".into();
-        }
-        return;
-    }
-    let needle = app.panels.target_panel.issue_filter.trim().to_lowercase();
-    let sev_mask = app.panels.target_panel.issue_sev_filter;
-    let conf_mask = app.panels.target_panel.issue_conf_filter;
-    let issues: Vec<_> = app
-        .workspace
-        .issues
-        .iter()
-        .cloned()
-        .enumerate()
-        .filter(|(_, issue)| {
-            let sev_ok = match issue.severity {
-                crate::workspace::IssueSeverity::High => sev_mask[0],
-                crate::workspace::IssueSeverity::Medium => sev_mask[1],
-                crate::workspace::IssueSeverity::Low => sev_mask[2],
-                crate::workspace::IssueSeverity::Info => sev_mask[3],
-            };
-            let conf_ok = match issue.confidence.to_ascii_lowercase().as_str() {
-                "certain" => conf_mask[0],
-                "firm" => conf_mask[1],
-                "tentative" => conf_mask[2],
-                _ => true,
-            };
-            sev_ok
-                && conf_ok
-                && (needle.is_empty()
-                    || issue.name.to_lowercase().contains(&needle)
-                    || issue.url.to_lowercase().contains(&needle)
-                    || issue.evidence.to_lowercase().contains(&needle))
-        })
-        .collect();
-    eframe::egui::ScrollArea::vertical()
-        .id_salt("target-issues-scroll")
-        .max_height(220.0)
+    egui::Frame::new()
+        .fill(card_bg)
+        .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
-            eframe::egui::Grid::new("target-issues-grid")
-                .num_columns(6)
-                .striped(true)
-                .show(ui, |ui| {
-                    for col in [
-                        "Severity",
-                        "Issue type",
-                        "Host / URL",
-                        "Parameter",
-                        "Confidence",
-                        "CWE",
-                    ] {
-                        ui.label(
-                            eframe::egui::RichText::new(col)
-                                .strong()
-                                .color(theme.color("ui.text.body")),
-                        );
-                    }
-                    ui.end_row();
-                    for (idx, issue) in &issues {
-                        ui.push_id(("target-issue-row", *idx), |ui| {
-                            let selected = app.panels.target_panel.selected_issue == Some(*idx);
-                            let (sev_col, sev_icon) = match issue.severity {
-                                crate::workspace::IssueSeverity::High => (
-                                    theme.color("ui.issue.high"),
-                                    super::scanner::LauncherIcon::IssueHigh,
-                                ),
-                                crate::workspace::IssueSeverity::Medium => (
-                                    theme.color("ui.issue.medium"),
-                                    super::scanner::LauncherIcon::IssueMedium,
-                                ),
-                                crate::workspace::IssueSeverity::Low => (
-                                    theme.color("ui.issue.low"),
-                                    super::scanner::LauncherIcon::IssueLow,
-                                ),
-                                crate::workspace::IssueSeverity::Info => (
-                                    theme.color("ui.icon.information"),
-                                    super::scanner::LauncherIcon::IssueInfo,
-                                ),
-                            };
-                            let kb_def = crate::issue_definitions::find_by_name(&issue.name);
-                            let cwe_txt = kb_def
-                                .map(|d| d.cwe_summary())
-                                .unwrap_or_else(|| "—".into());
-                            let c1 = ui
-                                .horizontal(|ui| {
-                                    super::scanner::paint_launcher_icon(
-                                        ui,
-                                        Vec2::new(14.0, 14.0),
-                                        sev_col,
-                                        sev_icon,
-                                    );
-                                    ui.selectable_label(
-                                        selected,
-                                        eframe::egui::RichText::new(format!("{:?}", issue.severity))
-                                            .color(sev_col),
-                                    )
-                                })
-                                .inner;
-                            let c2 = ui.selectable_label(selected, &issue.name);
-                            let c3 = ui.selectable_label(
-                                selected,
-                                eframe::egui::RichText::new(&issue.url).monospace(),
-                            );
-                            let c4 = ui.selectable_label(
-                                selected,
-                                issue.parameter.as_deref().unwrap_or("-"),
-                            );
-                            let c5 = ui.selectable_label(selected, &issue.confidence);
-                            let c6 = ui.selectable_label(
-                                selected,
-                                RichText::new(cwe_txt).monospace(),
-                            );
-                            for cell in [&c1, &c2, &c3, &c4, &c5, &c6] {
-                                if cell.clicked() || cell.secondary_clicked() {
-                                    app.panels.target_panel.selected_issue = Some(*idx);
-                                }
-                                super::attach_message_context_menu(
-                                    app,
-                                    cell,
-                                    &issue.url,
-                                    "",
-                                    &issue.evidence,
-                                );
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-        });
-
-    if let Some(sel) = app.panels.target_panel.selected_issue {
-        if let Some((_, issue)) = issues.iter().find(|(i, _)| *i == sel) {
-            let kb_def = crate::issue_definitions::find_by_name(&issue.name);
-            ui.separator();
-            // `Advisory | Request | Response` sub-tabs (`Pro-QSG-6-view-issues.png`)
+            ui.set_min_width(ui.available_width());
+            // Top Filter & Action Bar (`Pro-QSG-6-view-issues.png`)
             ui.horizontal(|ui| {
-                for (t_idx, lbl) in ["Advisory", "Request", "Response"].iter().enumerate() {
-                    let active = app.panels.target_panel.issue_detail_tab == t_idx;
-                    let r = ui.selectable_label(active, RichText::new(*lbl).strong());
-                    if active {
-                        let rect = r.rect;
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_max(
-                                egui::pos2(rect.min.x, rect.max.y - 2.5),
-                                egui::pos2(rect.max.x, rect.max.y),
-                            ),
-                            0.0,
-                            theme.color("ui.icon.accent"),
-                        );
-                    }
-                    if r.clicked() {
-                        app.panels.target_panel.issue_detail_tab = t_idx;
+                ui.label(RichText::new("Scan URL:").color(body_fg));
+                ui.add(
+                    eframe::egui::TextEdit::singleline(&mut app.panels.scanner.seed)
+                        .desired_width(120.0)
+                        .font(eframe::egui::TextStyle::Monospace),
+                );
+                ui.checkbox(&mut app.panels.scanner.active_checks, "Active checks");
+                if ui
+                    .add_enabled(
+                        !app.panels.scanner.running,
+                        eframe::egui::Button::new("Start scan"),
+                    )
+                    .clicked()
+                {
+                    super::scanner::start(app);
+                }
+                if ui.button("Report issues…").clicked() {
+                    app.panels.scanner.report_host_filter.clear();
+                    app.panels.scanner.show_report_wizard = true;
+                }
+                if ui.button("Create manual issue…").clicked() {
+                    app.panels.scanner.show_manual_issue_modal = true;
+                }
+                ui.separator();
+                for (s_idx, lbl) in ["High", "Medium", "Low", "Info"].iter().enumerate() {
+                    let active = app.panels.target_panel.issue_sev_filter[s_idx];
+                    if ui.selectable_label(active, *lbl).clicked() {
+                        app.panels.target_panel.issue_sev_filter[s_idx] = !active;
                     }
                 }
                 ui.separator();
-                if ui.button("Send URL to Repeater").clicked() {
-                    if let Ok(parsed) = crate::http_target::HttpTarget::parse(&issue.url) {
-                        let req = format!(
-                            "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                            parsed.authority()
-                        );
-                        app.panels.repeater.open(&issue.url, &req);
-                        app.tool = crate::ui::app::REPEATER;
-                        app.view = 0;
+                for (c_idx, lbl) in ["Certain", "Firm", "Tentative"].iter().enumerate() {
+                    let active = app.panels.target_panel.issue_conf_filter[c_idx];
+                    if ui.selectable_label(active, *lbl).clicked() {
+                        app.panels.target_panel.issue_conf_filter[c_idx] = !active;
                     }
                 }
+                ui.separator();
+                ui.add(
+                    eframe::egui::TextEdit::singleline(&mut app.panels.target_panel.issue_filter)
+                        .hint_text("Filter issues…")
+                        .desired_width(110.0),
+                );
             });
-            ui.separator();
+            ui.add_space(6.0);
 
-            let sample_tx = app
-                .log
-                .iter()
-                .rev()
-                .find(|tx| tx.target == issue.url || issue.url.starts_with(&tx.host_url()))
-                .cloned();
-            match app.panels.target_panel.issue_detail_tab {
-                1 => {
-                    let req = sample_tx
-                        .map(|t| t.request)
-                        .unwrap_or_else(|| format!("GET {} HTTP/1.1\r\n\r\n", issue.url));
-                    let r = super::burp_numbered_message_view(
-                        ui,
-                        &theme,
-                        "target-issue-req",
-                        200.0,
-                        &req,
-                        0,
-                        false,
+            // Complete 183-entry Issue Definitions Knowledge Base (`target/issue-definitions.html`)
+            egui::CollapsingHeader::new(
+                RichText::new(format!(
+                    "Issue definitions Knowledge Base ({} types)",
+                    all_defs.len()
+                ))
+                .color(heading_fg)
+                .strong(),
+            )
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Search definitions:").color(body_fg));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut app.panels.target_panel.kb_search)
+                            .hint_text("Search 183 vulnerability definitions by name, CWE, or hex index…")
+                            .desired_width(280.0),
                     );
-                    super::attach_message_context_menu(app, &r, &issue.url, &req, "");
-                }
-                2 => {
-                    let resp = sample_tx
-                        .map(|t| t.response)
-                        .unwrap_or_else(|| issue.evidence.clone());
-                    let r = super::burp_numbered_message_view(
-                        ui,
-                        &theme,
-                        "target-issue-resp",
-                        200.0,
-                        &resp,
-                        0,
-                        false,
-                    );
-                    super::attach_message_context_menu(app, &r, &issue.url, "", &resp);
-                }
-                _ => {
-                    let sev_icon = match issue.severity {
-                        crate::workspace::IssueSeverity::High => {
-                            super::scanner::LauncherIcon::IssueHigh
-                        }
-                        crate::workspace::IssueSeverity::Medium => {
-                            super::scanner::LauncherIcon::IssueMedium
-                        }
-                        crate::workspace::IssueSeverity::Low => {
-                            super::scanner::LauncherIcon::IssueLow
-                        }
-                        crate::workspace::IssueSeverity::Info => {
-                            super::scanner::LauncherIcon::IssueInfo
-                        }
-                    };
-                    egui::ScrollArea::vertical()
-                        .id_salt("target-issue-advisory-scroll")
-                        .max_height(240.0)
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                super::scanner::paint_launcher_icon(
-                                    ui,
-                                    Vec2::new(28.0, 28.0),
-                                    Color32::WHITE,
-                                    sev_icon,
-                                );
-                                heading(ui, &theme, &issue.name);
-                            });
-                            ui.separator();
-                            egui::Grid::new("target-issue-advisory-meta")
-                                .num_columns(2)
-                                .spacing([18.0, 4.0])
+                    ui.separator();
+                    for (f_idx, f_lbl) in ["All", "High", "Medium", "Low", "Information"]
+                        .iter()
+                        .enumerate()
+                    {
+                        ui.selectable_value(
+                            &mut app.panels.target_panel.kb_severity_filter,
+                            f_idx,
+                            *f_lbl,
+                        );
+                    }
+                });
+                ui.add_space(6.0);
+
+                let kb_needle = app.panels.target_panel.kb_search.trim().to_ascii_lowercase();
+                let sev_filter = match app.panels.target_panel.kb_severity_filter {
+                    1 => Some("High"),
+                    2 => Some("Medium"),
+                    3 => Some("Low"),
+                    4 => Some("Information"),
+                    _ => None,
+                };
+                let filtered_defs: Vec<(usize, &crate::issue_definitions::IssueDefinition)> =
+                    all_defs
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, d)| {
+                            sev_filter.map_or(true, |sf| d.severity.eq_ignore_ascii_case(sf))
+                                && (kb_needle.is_empty()
+                                    || d.name.to_ascii_lowercase().contains(&kb_needle)
+                                    || d.type_hex.to_ascii_lowercase().contains(&kb_needle)
+                                    || d.cwe_summary().to_ascii_lowercase().contains(&kb_needle))
+                        })
+                        .collect();
+
+                ui.columns(2, |cols| {
+                    // Left column: high-contrast table of all 183 Issue Definitions
+                    egui::Frame::new()
+                        .fill(card_bg)
+                        .stroke(Stroke::new(1.0_f32, border_col))
+                        .inner_margin(6.0)
+                        .show(&mut cols[0], |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("target-kb-defs-scroll")
+                                .max_height(260.0)
                                 .show(ui, |ui| {
-                                    ui.label("Issue:");
-                                    ui.strong(&issue.name);
-                                    ui.end_row();
-                                    ui.label("Severity:");
-                                    ui.strong(format!("{:?}", issue.severity));
-                                    ui.end_row();
-                                    ui.label("Confidence:");
-                                    ui.strong(&issue.confidence);
-                                    ui.end_row();
-                                    ui.label("URL:");
-                                    ui.strong(&issue.url);
-                                    ui.end_row();
-                                    if let Some(param) = &issue.parameter {
-                                        ui.label("Insertion point / Parameter:");
-                                        ui.strong(param);
-                                        ui.end_row();
-                                    }
-                                    if let Some(def) = kb_def {
-                                        ui.label("Type index:");
-                                        ui.monospace(&def.type_hex);
-                                        ui.end_row();
-                                    }
+                                    egui::Grid::new("target-issue-definitions-kb")
+                                        .num_columns(4)
+                                        .striped(true)
+                                        .show(ui, |ui| {
+                                            for h in ["Name", "Typical severity", "Type index", "CWE"]
+                                            {
+                                                ui.label(
+                                                    RichText::new(h).color(heading_fg).strong(),
+                                                );
+                                            }
+                                            ui.end_row();
+                                            for (orig_idx, def) in &filtered_defs {
+                                                let is_sel = app.panels.target_panel.selected_kb_def
+                                                    == *orig_idx;
+                                                let (sev_col, sev_icon) =
+                                                    match def.severity.as_str() {
+                                                        "High" => (
+                                                            Color32::from_rgb(0xE0, 0x20, 0x4F),
+                                                            super::scanner::LauncherIcon::IssueHigh,
+                                                        ),
+                                                        "Medium" => (
+                                                            Color32::from_rgb(0xF5, 0x7B, 0x20),
+                                                            super::scanner::LauncherIcon::IssueMedium,
+                                                        ),
+                                                        "Low" => (
+                                                            Color32::from_rgb(0x00, 0x68, 0xB5),
+                                                            super::scanner::LauncherIcon::IssueLow,
+                                                        ),
+                                                        _ => (
+                                                            Color32::from_rgb(0x6E, 0x76, 0x81),
+                                                            super::scanner::LauncherIcon::IssueInfo,
+                                                        ),
+                                                    };
+                                                let row_txt_col =
+                                                    if is_sel { heading_fg } else { body_fg };
+                                                let c_name = ui
+                                                    .horizontal(|ui| {
+                                                        super::scanner::paint_launcher_icon(
+                                                            ui,
+                                                            Vec2::new(14.0, 14.0),
+                                                            sev_col,
+                                                            sev_icon,
+                                                        );
+                                                        ui.selectable_label(
+                                                            is_sel,
+                                                            RichText::new(&def.name)
+                                                                .color(row_txt_col),
+                                                        )
+                                                    })
+                                                    .inner;
+                                                let c_sev = ui.selectable_label(
+                                                    is_sel,
+                                                    RichText::new(&def.severity)
+                                                        .color(row_txt_col)
+                                                        .strong(),
+                                                );
+                                                let c_idx = ui.selectable_label(
+                                                    is_sel,
+                                                    RichText::new(&def.type_hex)
+                                                        .monospace()
+                                                        .color(row_txt_col),
+                                                );
+                                                let c_cwe = ui.selectable_label(
+                                                    is_sel,
+                                                    RichText::new(def.cwe_summary())
+                                                        .monospace()
+                                                        .color(row_txt_col),
+                                                );
+                                                if c_name.clicked()
+                                                    || c_sev.clicked()
+                                                    || c_idx.clicked()
+                                                    || c_cwe.clicked()
+                                                {
+                                                    app.panels.target_panel.selected_kb_def =
+                                                        *orig_idx;
+                                                }
+                                                ui.end_row();
+                                            }
+                                        });
                                 });
-                            ui.separator();
-                            ui.add_space(4.0);
-                            ui.label(RichText::new("Issue detail").strong());
-                            ui.monospace(&issue.evidence);
-                            if let Some(def) = kb_def {
-                                if !def.description.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.label(RichText::new("Issue background").strong());
-                                    ui.label(&def.description);
-                                }
-                                if !def.remediation.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.label(RichText::new("Issue remediation").strong());
-                                    ui.label(&def.remediation);
-                                }
-                                if !def.references.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.label(RichText::new("References").strong());
-                                    for r in &def.references {
-                                        ui.label(format!("• {} ({})", r.title, r.url));
+                        });
+
+                    // Right column: High-contrast Advisory Card for the selected IssueDefinition
+                    if let Some(def) = all_defs
+                        .get(app.panels.target_panel.selected_kb_def)
+                        .or_else(|| filtered_defs.first().map(|(_, d)| *d))
+                    {
+                        egui::Frame::new()
+                            .fill(card_bg)
+                            .stroke(Stroke::new(1.0_f32, border_col))
+                            .inner_margin(egui::Margin::symmetric(14, 10))
+                            .show(&mut cols[1], |ui| {
+                                egui::ScrollArea::vertical()
+                                    .id_salt("target-kb-detail-scroll")
+                                    .max_height(260.0)
+                                    .show(ui, |ui| {
+                                        let sev_icon = match def.severity.as_str() {
+                                            "High" => super::scanner::LauncherIcon::IssueHigh,
+                                            "Medium" => super::scanner::LauncherIcon::IssueMedium,
+                                            "Low" => super::scanner::LauncherIcon::IssueLow,
+                                            _ => super::scanner::LauncherIcon::IssueInfo,
+                                        };
+                                        ui.horizontal(|ui| {
+                                            super::scanner::paint_launcher_icon(
+                                                ui,
+                                                Vec2::new(24.0, 24.0),
+                                                Color32::WHITE,
+                                                sev_icon,
+                                            );
+                                            ui.label(
+                                                RichText::new(&def.name)
+                                                    .size(15.5)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                        });
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "Typical severity: {}   ·   Type index: {}",
+                                                def.severity, def.type_hex
+                                            ))
+                                            .size(12.0)
+                                            .strong()
+                                            .color(body_fg),
+                                        );
+                                        ui.separator();
+                                        if !def.description.is_empty() {
+                                            ui.label(
+                                                RichText::new("Issue description")
+                                                    .size(13.0)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                            ui.add_space(2.0);
+                                            ui.label(
+                                                RichText::new(&def.description)
+                                                    .size(12.0)
+                                                    .color(body_fg),
+                                            );
+                                            ui.add_space(8.0);
+                                        }
+                                        if !def.remediation.is_empty() {
+                                            ui.label(
+                                                RichText::new("Issue remediation")
+                                                    .size(13.0)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                            ui.add_space(2.0);
+                                            ui.label(
+                                                RichText::new(&def.remediation)
+                                                    .size(12.0)
+                                                    .color(body_fg),
+                                            );
+                                            ui.add_space(8.0);
+                                        }
+                                        if !def.references.is_empty() {
+                                            ui.label(
+                                                RichText::new("References")
+                                                    .size(13.0)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                            for r in &def.references {
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "• {} ({})",
+                                                        r.title, r.url
+                                                    ))
+                                                    .size(12.0)
+                                                    .color(body_fg),
+                                                );
+                                            }
+                                            ui.add_space(8.0);
+                                        }
+                                        if !def.classifications.is_empty() {
+                                            ui.label(
+                                                RichText::new("Vulnerability classifications")
+                                                    .size(13.0)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                            for c in &def.classifications {
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "• {} ({})",
+                                                        c.title, c.url
+                                                    ))
+                                                    .size(12.0)
+                                                    .color(body_fg),
+                                                );
+                                            }
+                                        }
+                                    });
+                            });
+                    }
+                });
+            });
+            ui.add_space(6.0);
+
+            if app.workspace.issues.is_empty() {
+                let (learn, _) = empty_state(
+                    ui,
+                    &theme,
+                    "No issues to show",
+                    "Any issues discovered on your target applications will be displayed here.",
+                    true,
+                    None,
+                );
+                if learn {
+                    app.status =
+                        "Target issues: run an audit or passive crawl to populate target findings"
+                            .into();
+                }
+                return;
+            }
+
+            let needle = app.panels.target_panel.issue_filter.trim().to_lowercase();
+            let sev_mask = app.panels.target_panel.issue_sev_filter;
+            let conf_mask = app.panels.target_panel.issue_conf_filter;
+            let issues: Vec<_> = app
+                .workspace
+                .issues
+                .iter()
+                .cloned()
+                .enumerate()
+                .filter(|(_, issue)| {
+                    let sev_ok = match issue.severity {
+                        crate::workspace::IssueSeverity::High => sev_mask[0],
+                        crate::workspace::IssueSeverity::Medium => sev_mask[1],
+                        crate::workspace::IssueSeverity::Low => sev_mask[2],
+                        crate::workspace::IssueSeverity::Info => sev_mask[3],
+                    };
+                    let conf_ok = match issue.confidence.to_ascii_lowercase().as_str() {
+                        "certain" => conf_mask[0],
+                        "firm" => conf_mask[1],
+                        "tentative" => conf_mask[2],
+                        _ => true,
+                    };
+                    sev_ok
+                        && conf_ok
+                        && (needle.is_empty()
+                            || issue.name.to_lowercase().contains(&needle)
+                            || issue.url.to_lowercase().contains(&needle)
+                            || issue.evidence.to_lowercase().contains(&needle))
+                })
+                .collect();
+
+            if app.panels.target_panel.selected_issue.is_none() {
+                app.panels.target_panel.selected_issue = issues.first().map(|(i, _)| *i);
+            }
+
+            // Flat Bordered Discovered Issues Table (`Pro-QSG-6-view-issues.png`)
+            let cols = [
+                ("Issue type", 240.0f32),
+                ("Host / URL", 260.0),
+                ("Parameter", 110.0),
+                ("Severity", 86.0),
+                ("Confidence", 86.0),
+                ("CWE", 120.0),
+            ];
+            let tbl_w = cols
+                .iter()
+                .map(|(_, w)| *w)
+                .sum::<f32>()
+                .max(ui.available_width());
+
+            egui::Frame::new()
+                .fill(card_bg)
+                .stroke(Stroke::new(1.0_f32, border_col))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let (hdr_r, _) =
+                        ui.allocate_exact_size(Vec2::new(tbl_w, 24.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(hdr_r, 0.0, theme.color("ui.background.2"));
+                    let mut hx = hdr_r.left();
+                    for (col_name, col_w) in cols {
+                        let cr = egui::Rect::from_min_size(
+                            egui::pos2(hx, hdr_r.top()),
+                            Vec2::new(col_w, hdr_r.height()),
+                        );
+                        ui.painter().text(
+                            egui::pos2(cr.left() + 8.0, cr.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            col_name,
+                            egui::FontId::proportional(11.5),
+                            heading_fg,
+                        );
+                        ui.painter().vline(
+                            cr.right(),
+                            hdr_r.y_range(),
+                            Stroke::new(1.0_f32, border_col),
+                        );
+                        hx = cr.right();
+                    }
+                    ui.painter().hline(
+                        hdr_r.x_range(),
+                        hdr_r.bottom(),
+                        Stroke::new(1.0_f32, border_col),
+                    );
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("target-issues-scroll")
+                        .max_height(185.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            for (row_ord, (idx, issue)) in issues.iter().enumerate() {
+                                let selected = app.panels.target_panel.selected_issue == Some(*idx);
+                                ui.push_id(("target-issue-row", *idx), |ui| {
+                                    let (row_rect, row_resp) = ui.allocate_exact_size(
+                                        Vec2::new(tbl_w, 22.0),
+                                        egui::Sense::click(),
+                                    );
+                                    row_resp.widget_info(|| {
+                                        egui::WidgetInfo::selected(
+                                            egui::WidgetType::SelectableLabel,
+                                            ui.is_enabled(),
+                                            selected,
+                                            &issue.name,
+                                        )
+                                    });
+                                    let row_fill = if selected {
+                                        if theme.dark {
+                                            Color32::from_rgb(0x2A, 0x3E, 0x5C)
+                                        } else {
+                                            Color32::from_rgb(0xC3, 0xD9, 0xF6)
+                                        }
+                                    } else if row_ord % 2 == 1 {
+                                        theme.color("ui.background.1")
+                                    } else {
+                                        card_bg
+                                    };
+                                    ui.painter().rect_filled(row_rect, 0.0, row_fill);
+                                    if selected {
+                                        ui.painter().rect_stroke(
+                                            row_rect.shrink(0.5),
+                                            0.0,
+                                            Stroke::new(
+                                                1.0_f32,
+                                                Color32::from_rgb(0x2B, 0x57, 0x9A),
+                                            ),
+                                            egui::StrokeKind::Inside,
+                                        );
                                     }
-                                }
-                                if !def.classifications.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.label(RichText::new("Vulnerability classifications").strong());
-                                    for c in &def.classifications {
-                                        ui.label(format!("• {} ({})", c.title, c.url));
+
+                                    let sev_icon = match issue.severity {
+                                        crate::workspace::IssueSeverity::High => {
+                                            super::scanner::LauncherIcon::IssueHigh
+                                        }
+                                        crate::workspace::IssueSeverity::Medium => {
+                                            super::scanner::LauncherIcon::IssueMedium
+                                        }
+                                        crate::workspace::IssueSeverity::Low => {
+                                            super::scanner::LauncherIcon::IssueLow
+                                        }
+                                        crate::workspace::IssueSeverity::Info => {
+                                            super::scanner::LauncherIcon::IssueInfo
+                                        }
+                                    };
+                                    // Draw severity icon in the first column
+                                    let ic_rect = egui::Rect::from_min_size(
+                                        egui::pos2(row_rect.left() + 6.0, row_rect.center().y - 7.0),
+                                        Vec2::new(14.0, 14.0),
+                                    );
+                                    let mut ic_ui = ui.new_child(
+                                        egui::UiBuilder::new()
+                                            .max_rect(ic_rect)
+                                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                                    );
+                                    super::scanner::paint_launcher_icon(
+                                        &mut ic_ui,
+                                        Vec2::new(14.0, 14.0),
+                                        Color32::WHITE,
+                                        sev_icon,
+                                    );
+
+                                    let kb_def = crate::issue_definitions::find_by_name(&issue.name);
+                                    let cwe_txt = kb_def
+                                        .map(|d| d.cwe_summary())
+                                        .unwrap_or_else(|| "—".into());
+                                    let vals = [
+                                        issue.name.clone(),
+                                        issue.url.clone(),
+                                        issue.parameter.as_deref().unwrap_or("—").to_string(),
+                                        format!("{:?}", issue.severity),
+                                        issue.confidence.clone(),
+                                        cwe_txt,
+                                    ];
+                                    let txt_col = if selected { heading_fg } else { body_fg };
+                                    let mut cx = row_rect.left();
+                                    for (c_i, ((_, cw), val)) in
+                                        cols.iter().zip(vals.iter()).enumerate()
+                                    {
+                                        let pad_left = if c_i == 0 { 24.0 } else { 8.0 };
+                                        let cell_r = egui::Rect::from_min_size(
+                                            egui::pos2(cx, row_rect.top()),
+                                            Vec2::new(*cw, row_rect.height()),
+                                        );
+                                        let clip_p = ui.painter().with_clip_rect(
+                                            cell_r
+                                                .shrink2(egui::vec2(4.0, 0.0))
+                                                .intersect(ui.clip_rect()),
+                                        );
+                                        clip_p.text(
+                                            egui::pos2(cell_r.left() + pad_left, cell_r.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            val,
+                                            egui::FontId::proportional(12.0),
+                                            txt_col,
+                                        );
+                                        cx = cell_r.right();
                                     }
-                                }
+
+                                    if row_resp.clicked() || row_resp.secondary_clicked() {
+                                        app.panels.target_panel.selected_issue = Some(*idx);
+                                    }
+                                    super::attach_message_context_menu(
+                                        app,
+                                        &row_resp,
+                                        &issue.url,
+                                        "",
+                                        &issue.evidence,
+                                    );
+                                });
                             }
                         });
+                });
+
+            if let Some(sel) = app.panels.target_panel.selected_issue {
+                if let Some((_, issue)) = issues.iter().find(|(i, _)| *i == sel) {
+                    let kb_def = crate::issue_definitions::find_by_name(&issue.name);
+                    ui.add_space(6.0);
+                    // `Advisory | Request | Response` sub-tabs (`Pro-QSG-6-view-issues.png`)
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 16.0;
+                        for (t_idx, lbl) in ["Advisory", "Request", "Response"].iter().enumerate() {
+                            let active = app.panels.target_panel.issue_detail_tab == t_idx;
+                            let r = ui.add(
+                                egui::Label::new(
+                                    RichText::new(*lbl).size(12.5).strong().color(if active {
+                                        heading_fg
+                                    } else {
+                                        body_fg
+                                    }),
+                                )
+                                .sense(egui::Sense::click()),
+                            );
+                            if active {
+                                let rect = r.rect;
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(rect.min.x - 4.0, rect.max.y + 1.0),
+                                        egui::pos2(rect.max.x + 4.0, rect.max.y + 4.0),
+                                    ),
+                                    0.0,
+                                    theme.color("ui.icon.accent"),
+                                );
+                            }
+                            if r.clicked() {
+                                app.panels.target_panel.issue_detail_tab = t_idx;
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Send URL to Repeater").clicked() {
+                            if let Ok(parsed) = crate::http_target::HttpTarget::parse(&issue.url) {
+                                let req = format!(
+                                    "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                                    parsed.authority()
+                                );
+                                app.panels.repeater.open(&issue.url, &req);
+                                app.tool = crate::ui::app::REPEATER;
+                                app.view = 0;
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+
+                    let sample_tx = app
+                        .log
+                        .iter()
+                        .rev()
+                        .find(|tx| tx.target == issue.url || issue.url.starts_with(&tx.host_url()))
+                        .cloned();
+                    match app.panels.target_panel.issue_detail_tab {
+                        1 => {
+                            let req = sample_tx
+                                .map(|t| t.request)
+                                .unwrap_or_else(|| format!("GET {} HTTP/1.1\r\n\r\n", issue.url));
+                            let r = super::burp_numbered_message_view(
+                                ui,
+                                &theme,
+                                "target-issue-req",
+                                230.0,
+                                &req,
+                                0,
+                                false,
+                            );
+                            super::attach_message_context_menu(app, &r, &issue.url, &req, "");
+                        }
+                        2 => {
+                            let resp = sample_tx
+                                .map(|t| t.response)
+                                .unwrap_or_else(|| issue.evidence.clone());
+                            let r = super::burp_numbered_message_view(
+                                ui,
+                                &theme,
+                                "target-issue-resp",
+                                230.0,
+                                &resp,
+                                0,
+                                false,
+                            );
+                            super::attach_message_context_menu(app, &r, &issue.url, "", &resp);
+                        }
+                        _ => {
+                            let sev_icon = match issue.severity {
+                                crate::workspace::IssueSeverity::High => {
+                                    super::scanner::LauncherIcon::IssueHigh
+                                }
+                                crate::workspace::IssueSeverity::Medium => {
+                                    super::scanner::LauncherIcon::IssueMedium
+                                }
+                                crate::workspace::IssueSeverity::Low => {
+                                    super::scanner::LauncherIcon::IssueLow
+                                }
+                                crate::workspace::IssueSeverity::Info => {
+                                    super::scanner::LauncherIcon::IssueInfo
+                                }
+                            };
+                            // High-contrast Advisory Card matching `Pro-QSG-6-view-issues.png`
+                            let adv_h = (ui.available_height() - 16.0).max(240.0);
+                            egui::Frame::new()
+                                .fill(card_bg)
+                                .stroke(Stroke::new(1.0_f32, border_col))
+                                .inner_margin(egui::Margin::symmetric(16, 12))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("target-issue-advisory-scroll")
+                                        .max_height(adv_h)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                super::scanner::paint_launcher_icon(
+                                                    ui,
+                                                    Vec2::new(28.0, 28.0),
+                                                    Color32::WHITE,
+                                                    sev_icon,
+                                                );
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "Advisory — {}",
+                                                        issue.name
+                                                    ))
+                                                    .size(16.5)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                                );
+                                            });
+                                            ui.add_space(4.0);
+                                            ui.separator();
+                                            let (host_part, path_part) = issue
+                                                .url
+                                                .split_once("://")
+                                                .map(|(s, r)| {
+                                                    let h = r.split('/').next().unwrap_or(r);
+                                                    let p = &r[h.len()..];
+                                                    (
+                                                        format!("{s}://{h}"),
+                                                        if p.is_empty() { "/" } else { p }
+                                                            .to_string(),
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    (issue.url.clone(), "/".to_string())
+                                                });
+                                            let issue_title_meta = if let Some(def) = kb_def {
+                                                format!("{} ({})", issue.name, def.type_hex)
+                                            } else {
+                                                format!("{} (custom)", issue.name)
+                                            };
+                                            egui::Grid::new("target-issue-advisory-meta")
+                                                .num_columns(2)
+                                                .spacing([22.0, 4.0])
+                                                .show(ui, |ui| {
+                                                    ui.label(
+                                                        RichText::new("Issue:").color(body_fg),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(issue_title_meta)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.end_row();
+                                                    ui.label(
+                                                        RichText::new("Severity:").color(body_fg),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(format!(
+                                                            "{:?}",
+                                                            issue.severity
+                                                        ))
+                                                        .strong()
+                                                        .color(heading_fg),
+                                                    );
+                                                    ui.end_row();
+                                                    ui.label(
+                                                        RichText::new("Confidence:").color(body_fg),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(&issue.confidence)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.end_row();
+                                                    ui.label(
+                                                        RichText::new("Host:").color(body_fg),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(&host_part)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.end_row();
+                                                    ui.label(
+                                                        RichText::new("Path:").color(body_fg),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(&path_part)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.end_row();
+                                                    if let Some(param) = &issue.parameter {
+                                                        ui.label(
+                                                            RichText::new("Insertion point:")
+                                                                .color(body_fg),
+                                                        );
+                                                        ui.label(
+                                                            RichText::new(param)
+                                                                .strong()
+                                                                .color(heading_fg),
+                                                        );
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                            ui.separator();
+                                            ui.add_space(6.0);
+                                            ui.label(
+                                                RichText::new("Issue detail")
+                                                    .size(13.5)
+                                                    .strong()
+                                                    .color(heading_fg),
+                                            );
+                                            ui.add_space(3.0);
+                                            egui::Frame::new()
+                                                .fill(code_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(3.0)
+                                                .inner_margin(egui::Margin::symmetric(10, 6))
+                                                .show(ui, |ui| {
+                                                    ui.set_min_width(
+                                                        (ui.available_width() - 12.0).max(160.0),
+                                                    );
+                                                    ui.label(
+                                                        RichText::new(&issue.evidence)
+                                                            .monospace()
+                                                            .size(12.0)
+                                                            .color(heading_fg),
+                                                    );
+                                                });
+
+                                            if let Some(def) = kb_def {
+                                                if !def.description.is_empty() {
+                                                    ui.add_space(10.0);
+                                                    ui.label(
+                                                        RichText::new("Issue background")
+                                                            .size(13.5)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.add_space(3.0);
+                                                    ui.label(
+                                                        RichText::new(&def.description)
+                                                            .size(12.5)
+                                                            .color(body_fg),
+                                                    );
+                                                }
+                                                if !def.remediation.is_empty() {
+                                                    ui.add_space(10.0);
+                                                    ui.label(
+                                                        RichText::new("Issue remediation")
+                                                            .size(13.5)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.add_space(3.0);
+                                                    ui.label(
+                                                        RichText::new(&def.remediation)
+                                                            .size(12.5)
+                                                            .color(body_fg),
+                                                    );
+                                                }
+                                                if !def.references.is_empty() {
+                                                    ui.add_space(10.0);
+                                                    ui.label(
+                                                        RichText::new("References")
+                                                            .size(13.5)
+                                                            .strong()
+                                                            .color(heading_fg),
+                                                    );
+                                                    ui.add_space(3.0);
+                                                    for r in &def.references {
+                                                        ui.label(
+                                                            RichText::new(format!(
+                                                                "• {} ({})",
+                                                                r.title, r.url
+                                                            ))
+                                                            .size(12.0)
+                                                            .color(body_fg),
+                                                        );
+                                                    }
+                                                }
+                                                if !def.classifications.is_empty() {
+                                                    ui.add_space(10.0);
+                                                    ui.label(
+                                                        RichText::new(
+                                                            "Vulnerability classifications",
+                                                        )
+                                                        .size(13.5)
+                                                        .strong()
+                                                        .color(heading_fg),
+                                                    );
+                                                    ui.add_space(3.0);
+                                                    for c in &def.classifications {
+                                                        ui.label(
+                                                            RichText::new(format!(
+                                                                "• {} ({})",
+                                                                c.title, c.url
+                                                            ))
+                                                            .size(12.0)
+                                                            .color(body_fg),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        });
+                                });
+                        }
+                    }
                 }
             }
-        }
-    }
+        });
 }
 
 /// Paints the exact `resources/Media/svg/light/site-map.svg` (`90 x 63` viewBox) 3-isometric-diamonds icon.

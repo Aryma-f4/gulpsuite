@@ -976,7 +976,7 @@ fn generate_documentation_screenshots() {
         .expect("save 03-new-scan-launcher.png");
     h_light.state_mut().panels.scanner.show_launcher = false;
 
-    // 4. Target -> Site map
+    // 4. Target -> Site map & Target -> Issues
     h_light.get_by_label("Target").click();
     h_light.state_mut().panels.target_panel.host = Some("https://ginandjuice.shop".into());
     h_light.state_mut().panels.target_panel.path =
@@ -987,6 +987,16 @@ fn generate_documentation_screenshots() {
         .expect("render target sitemap")
         .save(out_dir.join("04-target-sitemap.png"))
         .expect("save 04-target-sitemap.png");
+
+    h_light.state_mut().view = 2;
+    h_light.state_mut().panels.target_panel.selected_issue = Some(0);
+    h_light.run();
+    h_light
+        .render()
+        .expect("render target issues")
+        .save(out_dir.join("04b-target-issues.png"))
+        .expect("save 04b-target-issues.png");
+    h_light.state_mut().view = 0;
 
     // 5. Proxy -> HTTP history
     h_light.get_by_label("Proxy").click();

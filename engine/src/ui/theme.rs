@@ -103,6 +103,9 @@ impl Theme {
         // always get Burp's true surface and primary orange colours.
         values.insert("background.0".into(), resolve("$mono[1]", &raw.colors, 0));
         values.insert("icon.accent".into(), resolve("@orange", &raw.colors, 0));
+        if let Some(&header_col) = values.get("text.header") {
+            values.insert("text.heading".into(), header_col);
+        }
 
         // Burp paints its accent with a tone the palette does not express. The light theme's
         // selected-tab underline and primary button are #CC683D in a running Burp, and the

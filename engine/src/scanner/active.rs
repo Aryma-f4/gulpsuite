@@ -404,7 +404,7 @@ pub fn local_file_inclusion() -> Check {
     }
 }
 
-/// SQL injection, detected by error text, reflection, or a status change.
+/// SQL injection, detected by error text or multi-token SQL payload reflection.
 pub fn sql_injection() -> Check {
     Check {
         name: "SQL injection",
@@ -421,15 +421,17 @@ pub fn sql_injection() -> Check {
         detect: |response, payload| {
             if database_error(&response.body) {
                 Signal::Error
-            } else {
+            } else if payload.len() >= 4 {
                 match reflection(&response.body, payload) {
                     Reflection::Verbatim => Signal::Reflected,
                     Reflection::Encoded => Signal::Inert,
                     Reflection::None => Signal::Nothing,
                 }
+            } else {
+                Signal::Nothing
             }
         },
-        explain: "The response carries a database error or echoes an injected fragment.",
+        explain: "The response carries a database error or echoes an injected SQL fragment.",
     }
 }
 
@@ -673,6 +675,58 @@ pub fn evaluate(check: &Check, url: &str, parameter: &str, payload: &str, respon
     ))
 }
 
+/// Differential active evaluation against the un-injected `baseline` response:
+/// eliminates false positives where an error signature, template number, or reflected token
+/// was already present in `baseline`, or where a server-side check (`SQL injection`,
+/// `OS command injection`, `Server-side template injection`) only echoed the input without
+/// server-side error or execution evidence.
+pub fn evaluate_against_baseline(
+    check: &Check,
+    url: &str,
+    parameter: &str,
+    payload: &str,
+    baseline: &Response,
+    response: &Response,
+) -> Option<Finding> {
+    if !check.payloads.contains(&payload) {
+        return None;
+    }
+    let signal = (check.detect)(response, payload);
+    if !signal.is_exploitable() {
+        return None;
+    }
+    // If the baseline already triggered the exact same detector signal, it is a pre-existing
+    // page artifact rather than a vulnerability caused by `payload`.
+    let base_signal = (check.detect)(baseline, payload);
+    if base_signal == signal {
+        return None;
+    }
+    // Server-side execution/error checks require actual Error or Evaluated signals during live scans,
+    // not mere parameter echoing.
+    if matches!(
+        check.name,
+        "SQL injection" | "OS command injection" | "Server-side template injection"
+    ) && matches!(signal, Signal::Reflected | Signal::Inert)
+    {
+        return None;
+    }
+    // For SSTI (`{{7*7}}` -> `49`), verify the evaluated number was not already in `baseline.body`.
+    if check.name == "Server-side template injection" && baseline.body.contains("49") {
+        return None;
+    }
+    // For reflected XSS, only report when the response is HTML (or has no explicit non-HTML Content-Type).
+    if check.name == "Cross-site scripting (reflected)" {
+        let ct = response
+            .header("content-type")
+            .unwrap_or("text/html")
+            .to_ascii_lowercase();
+        if !ct.contains("html") && !ct.contains("xml") {
+            return None;
+        }
+    }
+    evaluate(check, url, parameter, payload, response)
+}
+
 /// Evaluates a declarative Custom Scan Check (`.bcheck` script) against `response` (`scanner/bchecks/index.html`).
 pub fn evaluate_bcheck(
     name: &str,
@@ -876,5 +930,60 @@ mod tests {
         let finding = evaluate_bcheck("Exposed .git/config", bcheck, "https://a.test/.git/config", &resp)
             .expect("BCheck should fire");
         assert_eq!(finding.severity, Severity::High);
+    }
+
+    #[test]
+    fn differential_baseline_evaluation_eliminates_false_positives() {
+        let normal_page = body("<html><head><title>Store</title></head><body><div class=\"item\" data-id='1'>Price: $49.00</div></body></html>");
+        // 1. Single quote in HTML attributes must not trigger SQLi
+        assert!(
+            evaluate_against_baseline(
+                &sql_injection(),
+                "https://a.test/shop",
+                "q",
+                "'",
+                &normal_page,
+                &normal_page,
+            )
+            .is_none()
+        );
+        // 2. Pre-existing "49" in baseline must not trigger SSTI on `{{7*7}}`
+        assert!(
+            evaluate_against_baseline(
+                &template_injection(),
+                "https://a.test/shop",
+                "q",
+                "{{7*7}}",
+                &normal_page,
+                &normal_page,
+            )
+            .is_none()
+        );
+        // 3. Echoing `;id` in a search page without command execution must not trigger OS command injection
+        let echoed_cmd = body("<html><body>You searched for ;id</body></html>");
+        assert!(
+            evaluate_against_baseline(
+                &command_injection(),
+                "https://a.test/shop",
+                "q",
+                ";id",
+                &normal_page,
+                &echoed_cmd,
+            )
+            .is_none()
+        );
+        // 4. Genuine SQL error absent from baseline IS reported
+        let sql_err = body("<html><body>You have an error in your SQL syntax near ''</body></html>");
+        assert!(
+            evaluate_against_baseline(
+                &sql_injection(),
+                "https://a.test/shop",
+                "q",
+                "'",
+                &normal_page,
+                &sql_err,
+            )
+            .is_some()
+        );
     }
 }

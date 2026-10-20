@@ -526,7 +526,7 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
         match app.view {
             0 => summary(app, ui, &task),
             1 => audit_items(app, ui, &task),
-            2 => issues(app, ui, &task),
+            2 => super::target::draw_issues_view(app, ui),
             3 => event_log(app, ui, &task),
             4 => logger(app, ui, &task),
             _ => audit_log(app, ui, &task),
@@ -866,11 +866,13 @@ fn audit_items(app: &App, ui: &mut Ui, task: &Task) {
         });
 }
 
+#[allow(dead_code)]
 fn issues(app: &App, ui: &mut Ui, task: &Task) {
     heading(ui, &app.theme, "Issues");
     issue_table_readonly(app, ui, task.id);
 }
 
+#[allow(dead_code)]
 fn issue_table_readonly(app: &App, ui: &mut Ui, task_id: TaskId) {
     let issues: Vec<_> = app
         .workspace

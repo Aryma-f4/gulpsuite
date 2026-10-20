@@ -22,10 +22,12 @@ Standalone scan configuration window featuring `#26649D` navigation tiles (`Scan
 
 ---
 
-### 3. Target (`Site map` / `Scope` / `Issue definitions`)
-Hierarchical host/folder/endpoint tree with custom vector node icons, `Contents` & `Issues` split views, target scope inclusion/exclusion rules, and searchable vulnerability knowledge base.
+### 3. Target (`Site map` / `Scope` / `Issues` & 183-Type Knowledge Base)
+Hierarchical host/folder/endpoint tree with custom vector node icons, `Contents` & `Issues` split views, target scope inclusion/exclusion rules, baseline differential active/passive vulnerability verification, and a 183-entry vulnerability knowledge base with rich `Advisory` / `Request` / `Response` inspection.
 
 ![Target — Site Map](docs/screenshots/04-target-sitemap.png)
+
+![Target — Issues & Advisory](docs/screenshots/04b-target-issues.png)
 
 ---
 

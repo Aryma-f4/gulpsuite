@@ -3130,6 +3130,7 @@ pub(crate) fn start(app: &mut App) {
                             }
                         }
                     }
+                    let baseline_arc = Arc::new(parsed_base.clone());
                     let body = parsed_base.body;
 
                     for point in crate::scanner::crawler::injection_points(url, &body)
@@ -3146,6 +3147,7 @@ pub(crate) fn start(app: &mut App) {
                                 let sem = sem.clone();
                                 let url = url.clone();
                                 let param_name = point.name.clone();
+                                let baseline_resp = baseline_arc.clone();
                                 probe_tasks.push(tokio::spawn(async move {
                                     let _permit = sem.acquire().await.ok()?;
                                     if delay_ms > 0 {
@@ -3159,11 +3161,12 @@ pub(crate) fn start(app: &mut App) {
                                         .await
                                         .ok()?;
                                     let response = crate::scanner::http::parse_response(&text);
-                                    crate::scanner::active::evaluate(
+                                    crate::scanner::active::evaluate_against_baseline(
                                         &checks[check_idx],
                                         &url,
                                         &param_name,
                                         payload,
+                                        &baseline_resp,
                                         &response,
                                     )
                                 }));
