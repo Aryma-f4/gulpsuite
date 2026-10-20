@@ -146,7 +146,8 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// Injection points a page offers: one per query parameter plus one per form field.
+/// Injection points a page offers: query parameters, form fields, and JSON properties,
+/// skipping ignored analytics/session parameters from `AuditDefaults.json`.
 pub fn injection_points(url: &str, body: &str) -> Vec<InjectionPoint> {
     let mut points = Vec::new();
 
@@ -154,16 +155,19 @@ pub fn injection_points(url: &str, body: &str) -> Vec<InjectionPoint> {
     if let Some(query) = path.split_once('?').map(|(_, q)| q) {
         for pair in query.split('&') {
             if let Some((name, _)) = pair.split_once('=') {
-                if !name.is_empty() {
-                    points.push(InjectionPoint::query(url, &decode(name)));
+                let decoded = decode(name);
+                if !decoded.is_empty() && !super::active::is_ignored_insertion_point(&decoded) {
+                    points.push(InjectionPoint::query(url, &decoded));
                 }
             }
         }
     }
 
     for fields in forms(body, url) {
-        // One point per field, so a form is fully covered.
         for (index, (name, _)) in fields.iter().enumerate() {
+            if super::active::is_ignored_insertion_point(name) {
+                continue;
+            }
             let mut siblings = fields.clone();
             siblings.remove(index);
             let mut point = InjectionPoint::query(url, name);
@@ -172,7 +176,59 @@ pub fn injection_points(url: &str, body: &str) -> Vec<InjectionPoint> {
             points.push(point);
         }
     }
+
+    if body.trim_start().starts_with('{') {
+        if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(body)
+        {
+            for key in map.keys().take(8) {
+                if !super::active::is_ignored_insertion_point(key) {
+                    points.push(InjectionPoint::json_field(url, key));
+                }
+            }
+        }
+    }
     points
+}
+
+/// Parses `Allow:` and `Disallow:` paths from `/robots.txt` (`CrawlDefaults.json` `request_robots_txt`).
+pub fn parse_robots_txt(body: &str, base: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        for prefix in ["Disallow:", "Allow:", "disallow:", "allow:"] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                let path = rest.trim();
+                if path.starts_with('/') && !path.contains('*') {
+                    if let Some(u) = resolve(base, path) {
+                        if !out.contains(&u) {
+                            out.push(u);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Parses `<loc>...</loc>` URLs from `/sitemap.xml` (`CrawlDefaults.json` `request_sitemap`).
+pub fn parse_sitemap_xml(body: &str, base: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("<loc>") {
+        let after = &rest[start + 5..];
+        let Some(end) = after.find("</loc>") else {
+            break;
+        };
+        let raw = after[..end].trim();
+        if let Some(u) = resolve(base, raw) {
+            if !out.contains(&u) {
+                out.push(u);
+            }
+        }
+        rest = &after[end + 6..];
+    }
+    out
 }
 
 fn decode(value: &str) -> String {

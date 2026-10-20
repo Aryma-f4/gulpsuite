@@ -292,7 +292,52 @@ fn bambda(app: &mut App, ui: &mut Ui) {
 /// Burp's Installed extensions view.
 fn installed(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    
+
+    ui.horizontal(|ui| {
+        ui.label("Total estimated system impact:");
+        ui.label(
+            eframe::egui::RichText::new("None")
+                .strong()
+                .color(theme.color("ui.text.body")),
+        );
+    });
+    ui.separator();
+    heading(ui, &theme, "Burp extensions");
+    muted(
+        ui,
+        &theme,
+        "Extensions let you customize Burp's behavior using your own or third-party code.",
+    );
+    ui.add_space(4.0);
+    eframe::egui::Grid::new("installed-extensions-grid")
+        .num_columns(4)
+        .striped(true)
+        .show(ui, |ui| {
+            for col in ["Loaded", "Type", "Name", "System impact"] {
+                ui.label(
+                    eframe::egui::RichText::new(col)
+                        .strong()
+                        .color(theme.color("ui.text.body")),
+                );
+            }
+            ui.end_row();
+            let mut live = app.panels.extender.live;
+            if ui.checkbox(&mut live, "").changed() {
+                app.panels.extender.live = live;
+            }
+            ui.label("Bambda");
+            ui.label("Active transform script");
+            ui.label("Low");
+            ui.end_row();
+            for script in list_scripts(&app.panels.extender_folder) {
+                ui.label("✓");
+                ui.label("Bambda");
+                ui.label(eframe::egui::RichText::new(&script.name).monospace());
+                ui.label("Low");
+                ui.end_row();
+            }
+        });
+    ui.add_space(6.0);
     ui.horizontal(|ui| {
         if ui.button("Load script into editor").clicked() {
             let path = app.panels.extender_path.clone();

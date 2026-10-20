@@ -67,10 +67,79 @@ pub struct InjectionPoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InjectionMethod {
     Query,
-    /// A POST field whose value gets replaced.
+    /// A POST field whose value gets replaced (`application/x-www-form-urlencoded`).
     Form,
     /// The value is placed in the path, between two markers.
     Path,
+    /// A JSON object property (`application/json`, JSON-escaped per `auditing.html#encoding-data-within-insertion-points`).
+    JsonField,
+    /// An HTTP Cookie (`Cookie: name=value`).
+    Cookie,
+    /// An HTTP request header (`Referer`, `X-Forwarded-For`, `Origin`, `User-Agent`).
+    Header,
+}
+
+/// Returns `true` when `name` matches Burp's `ignored_insertion_points` list from
+/// `resources/Preferences/AuditDefaults.json` (`_ga`, `_gid`, `_gat`, `AWSALB*`, `JSESSIONID`,
+/// `PHPSESSID`, `ASP.NET_SessionId`, `__VIEWSTATE`, `__EVENTVALIDATION`, etc.).
+pub fn is_ignored_insertion_point(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "_ga"
+            | "_gid"
+            | "_gat"
+            | "jsessionid"
+            | "phpsessid"
+            | "asp.net_sessionid"
+            | "cfid"
+            | "cftoken"
+            | "session_id"
+            | "__viewstate"
+            | "__eventvalidation"
+            | "__eventtarget"
+            | "__eventargument"
+            | "version"
+            | "encoding"
+            | "standalone"
+            | "xml:lang"
+    ) || lower.starts_with("_ga_")
+        || lower.starts_with("_gac_")
+        || lower.starts_with("awsalb")
+        || lower.starts_with("aspsessionid")
+        || lower.starts_with("xmlns")
+}
+
+/// Computes Burp Scanner's 80/20 Audit Prioritization Score (`auditing.html#audit-prioritization`):
+/// - 80% weight: Attack surface exposure (`unique_insertion_points * 16`, up to 80)
+/// - 20% weight: Interest level (state-changing method POST/PUT/PATCH/DELETE +8,
+///   structured content JSON/XML/HTML +6, authenticated +6).
+pub fn priority_score(
+    method: &str,
+    content_type: &str,
+    unique_insertion_points: usize,
+    authenticated: bool,
+) -> u32 {
+    let exposure = ((unique_insertion_points as u32) * 16).min(80);
+    let method_score = if matches!(
+        method.to_ascii_uppercase().as_str(),
+        "POST" | "PUT" | "PATCH" | "DELETE"
+    ) {
+        8
+    } else {
+        2
+    };
+    let ct_lower = content_type.to_ascii_lowercase();
+    let content_score = if ct_lower.contains("json")
+        || ct_lower.contains("xml")
+        || ct_lower.contains("html")
+    {
+        6
+    } else {
+        1
+    };
+    let auth_score = if authenticated { 6 } else { 0 };
+    exposure + method_score + content_score + auth_score
 }
 
 impl InjectionPoint {
@@ -83,16 +152,53 @@ impl InjectionPoint {
         }
     }
 
+    pub fn json_field(url: &str, name: &str) -> Self {
+        InjectionPoint {
+            url: url.to_string(),
+            name: name.to_string(),
+            method: InjectionMethod::JsonField,
+            siblings: Vec::new(),
+        }
+    }
+
+    pub fn header(url: &str, header_name: &str) -> Self {
+        InjectionPoint {
+            url: url.to_string(),
+            name: header_name.to_string(),
+            method: InjectionMethod::Header,
+            siblings: Vec::new(),
+        }
+    }
+
+    pub fn cookie(url: &str, cookie_name: &str) -> Self {
+        InjectionPoint {
+            url: url.to_string(),
+            name: cookie_name.to_string(),
+            method: InjectionMethod::Cookie,
+            siblings: Vec::new(),
+        }
+    }
+
     /// The request to send with `value` substituted, as (host, port, tls, raw).
     pub fn request(&self, value: &str) -> Option<(String, u16, bool, String)> {
         let (host, port, tls) = super::endpoint(&self.url)?;
         let raw = match self.method {
             InjectionMethod::Query => {
                 let base = super::http::path_of(&self.url);
-                let without = base.split(&format!("{}=", self.name)).next().unwrap_or(&base).to_string();
-                let query = format!("{}={}", super::http::encode(&self.name), super::http::encode(value));
-                // Append rather than replace: the point is to observe, not to be clever.
-                let target = format!("{without}{}{query}", if without.contains('?') { "&" } else { "?" });
+                let without = base
+                    .split(&format!("{}=", self.name))
+                    .next()
+                    .unwrap_or(&base)
+                    .to_string();
+                let query = format!(
+                    "{}={}",
+                    super::http::encode(&self.name),
+                    super::http::encode(value)
+                );
+                let target = format!(
+                    "{without}{}{query}",
+                    if without.contains('?') { "&" } else { "?" }
+                );
                 format!(
                     "GET {target} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
                     host_header(&host, port, tls)
@@ -109,6 +215,34 @@ impl InjectionPoint {
                 format!(
                     "GET {target} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
                     host_header(&host, port, tls)
+                )
+            }
+            InjectionMethod::JsonField => {
+                let target = super::http::path_of(&self.url);
+                let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+                let body = format!("{{\"{}\":\"{}\"}}", self.name, escaped);
+                format!(
+                    "POST {target} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    host_header(&host, port, tls),
+                    body.len()
+                )
+            }
+            InjectionMethod::Cookie => {
+                let target = super::http::path_of(&self.url);
+                format!(
+                    "GET {target} HTTP/1.1\r\nHost: {}\r\nCookie: {}={}\r\nConnection: close\r\n\r\n",
+                    host_header(&host, port, tls),
+                    self.name,
+                    super::http::encode(value)
+                )
+            }
+            InjectionMethod::Header => {
+                let target = super::http::path_of(&self.url);
+                let safe_val = value.replace(['\r', '\n'], "");
+                format!(
+                    "GET {target} HTTP/1.1\r\nHost: {}\r\n{}: {safe_val}\r\nConnection: close\r\n\r\n",
+                    host_header(&host, port, tls),
+                    self.name
                 )
             }
         };
@@ -421,6 +555,67 @@ pub fn open_redirect() -> Check {
     }
 }
 
+/// Server-side request forgery (SSRF) against cloud metadata / local services.
+pub fn ssrf() -> Check {
+    Check {
+        name: "Server-side request forgery (SSRF)",
+        severity: Severity::High,
+        payloads: &[
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:22/",
+        ],
+        detect: |response, _| {
+            let b = &response.body;
+            if b.contains("ami-id") || b.contains("instance-id") || b.contains("SSH-2.0-") {
+                Signal::Evaluated
+            } else {
+                Signal::Nothing
+            }
+        },
+        explain: "The server fetched an internal or metadata URL supplied in the parameter.",
+    }
+}
+
+/// XML external entity (XXE) injection.
+pub fn xxe_injection() -> Check {
+    Check {
+        name: "XML external entity (XXE) injection",
+        severity: Severity::High,
+        payloads: &[
+            "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><r>&xxe;</r>",
+        ],
+        detect: |response, _| {
+            if file_disclosure(&response.body) {
+                Signal::Evaluated
+            } else {
+                Signal::Nothing
+            }
+        },
+        explain: "An external XML entity resolved a local system file into the response.",
+    }
+}
+
+/// NoSQL operator injection.
+pub fn nosql_injection() -> Check {
+    Check {
+        name: "NoSQL injection",
+        severity: Severity::High,
+        payloads: &["{\"$gt\":\"\"}", "[$ne]=1"],
+        detect: |response, _| {
+            let lower = response.body.to_ascii_lowercase();
+            if lower.contains("mongoerror")
+                || lower.contains("mongoservererror")
+                || lower.contains("casterror")
+            {
+                Signal::Error
+            } else {
+                Signal::Nothing
+            }
+        },
+        explain: "The response returned a NoSQL driver/query error triggered by an operator payload.",
+    }
+}
+
 /// Every check the active scanner runs, in report order.
 pub fn all_checks() -> Vec<Check> {
     vec![
@@ -430,6 +625,9 @@ pub fn all_checks() -> Vec<Check> {
         command_injection(),
         path_traversal(),
         local_file_inclusion(),
+        ssrf(),
+        xxe_injection(),
+        nosql_injection(),
         crlf_injection(),
         log_injection(),
         open_redirect(),
@@ -473,6 +671,45 @@ pub fn evaluate(check: &Check, url: &str, parameter: &str, payload: &str, respon
         payload,
         &format!("{confidence} {}", check.explain),
     ))
+}
+
+/// Evaluates a declarative Custom Scan Check (`.bcheck` script) against `response` (`scanner/bchecks/index.html`).
+pub fn evaluate_bcheck(
+    name: &str,
+    script: &str,
+    url: &str,
+    response: &Response,
+) -> Option<Finding> {
+    // Extract quoted condition string from `if "<needle>" in {latest.response.body}` or `matches "<regex>"`
+    for line in script.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("if ") && trimmed.contains("in {latest.response.body}") {
+            let mut quotes = trimmed.split('"');
+            let _ = quotes.next();
+            if let Some(needle) = quotes.next() {
+                if !needle.is_empty() && response.body.contains(needle) {
+                    let sev = if script.contains("severity: high") {
+                        Severity::High
+                    } else if script.contains("severity: medium") {
+                        Severity::Medium
+                    } else if script.contains("severity: low") {
+                        Severity::Low
+                    } else {
+                        Severity::Info
+                    };
+                    return Some(Finding::new(
+                        name,
+                        sev,
+                        url,
+                        None,
+                        needle,
+                        "Matched custom BCheck response condition.",
+                    ));
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -620,5 +857,24 @@ mod tests {
         assert!(!Signal::Nothing.is_interesting());
         assert!(Signal::Reflected.is_interesting());
         assert!(Signal::Evaluated.is_interesting());
+    }
+
+    #[test]
+    fn audit_prioritization_and_ignored_insertion_points_follow_burp_defaults() {
+        assert!(is_ignored_insertion_point("_ga"));
+        assert!(is_ignored_insertion_point("_ga_ABCD123"));
+        assert!(is_ignored_insertion_point("JSESSIONID"));
+        assert!(is_ignored_insertion_point("__VIEWSTATE"));
+        assert!(!is_ignored_insertion_point("user_id"));
+
+        let high_score = priority_score("POST", "application/json", 4, true);
+        let low_score = priority_score("GET", "text/plain", 0, false);
+        assert!(high_score > low_score);
+
+        let resp = body("[core]\nrepositoryformatversion = 0");
+        let bcheck = "metadata:\n  name: \"Git\"\ngiven host then\n  if \"[core]\" in {latest.response.body} then\n    report issue:\n      severity: high";
+        let finding = evaluate_bcheck("Exposed .git/config", bcheck, "https://a.test/.git/config", &resp)
+            .expect("BCheck should fire");
+        assert_eq!(finding.severity, Severity::High);
     }
 }

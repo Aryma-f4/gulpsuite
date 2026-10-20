@@ -87,6 +87,67 @@ fn wait_for_held(runtime: &tokio::runtime::Runtime, proxy: &Proxy) -> Option<u64
 }
 
 #[test]
+fn editing_an_absolute_target_routes_to_the_edited_origin() {
+    let (original_port, original_seen) = start_origin();
+    let (edited_port, edited_seen) = start_origin();
+    let runtime = runtime();
+    let (proxy, _) = Proxy::new();
+    proxy.set_intercept(true);
+    let port = runtime.block_on(proxy.start(0)).unwrap();
+    let client = std::thread::spawn(move || {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        write!(stream, "GET http://127.0.0.1:{original_port}/old HTTP/1.1\r\nHost: 127.0.0.1:{original_port}\r\nConnection: close\r\n\r\n").unwrap();
+        let mut response = String::new();
+        let _ = stream.read_to_string(&mut response);
+        response
+    });
+    let id = wait_for_held(&runtime, &proxy).unwrap();
+    let raw = format!("GET http://127.0.0.1:{edited_port}/changed HTTP/1.1\r\nHost: 127.0.0.1:{edited_port}\r\nConnection: close\r\n\r\n");
+    runtime.block_on(proxy.forward_edited(id, &raw));
+    assert!(client.join().unwrap().contains("/changed"));
+    assert!(edited_seen.lock().unwrap().contains("/changed"));
+    assert!(original_seen.lock().unwrap().is_empty());
+    runtime.block_on(proxy.stop());
+}
+
+#[test]
+fn disabling_intercept_releases_held_traffic_and_notifies_the_ui() {
+    let (origin, _) = start_origin();
+    let runtime = runtime();
+    let (proxy, mut events) = Proxy::new();
+    proxy.set_intercept(true);
+    let port = runtime.block_on(proxy.start(0)).unwrap();
+    let client = std::thread::spawn(move || {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        write!(stream, "GET http://127.0.0.1:{origin}/release HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+        let mut response = String::new();
+        let _ = stream.read_to_string(&mut response);
+        response
+    });
+    let id = wait_for_held(&runtime, &proxy).unwrap();
+    proxy.set_intercept(false);
+    assert!(client.join().unwrap().contains("200 OK"));
+    assert!(runtime.block_on(proxy.held()).is_empty());
+    let mut released = false;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, Event::Released { id: event_id, forwarded: true } if event_id == id) {
+            released = true;
+        }
+    }
+    assert!(
+        released,
+        "intercept-off must remove the item from the UI queue"
+    );
+    runtime.block_on(proxy.stop());
+}
+
+#[test]
 fn an_edited_request_is_what_reaches_the_origin() {
     let (origin, seen) = start_origin();
     let runtime = runtime();
@@ -101,8 +162,9 @@ fn an_edited_request_is_what_reaches_the_origin() {
         std::thread::spawn(move || {
             let mut stream =
                 std::net::TcpStream::connect(("127.0.0.1", proxy_port)).expect("connect");
-            let request =
-                format!("GET http://{host}/original HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+            let request = format!(
+                "GET http://{host}/original HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            );
             stream.write_all(request.as_bytes()).expect("write");
             let mut out = String::new();
             let _ = stream.read_to_string(&mut out);
@@ -159,8 +221,9 @@ fn a_dropped_request_never_reaches_the_origin() {
         std::thread::spawn(move || {
             let mut stream =
                 std::net::TcpStream::connect(("127.0.0.1", proxy_port)).expect("connect");
-            let request =
-                format!("GET http://{host}/dropped HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+            let request = format!(
+                "GET http://{host}/dropped HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            );
             stream.write_all(request.as_bytes()).expect("write");
             let mut out = String::new();
             let _ = stream.read_to_string(&mut out);
@@ -220,7 +283,10 @@ fn an_edited_body_keeps_the_content_length_in_step() {
 
     let _ = client.join().expect("client thread");
     let sent = seen.lock().expect("seen").clone();
-    assert!(sent.contains("abcdefgh"), "the new body should be sent: {sent}");
+    assert!(
+        sent.contains("abcdefgh"),
+        "the new body should be sent: {sent}"
+    );
     assert!(
         sent.contains("Content-Length: 8"),
         "the content length should match the new body: {sent}"
@@ -243,8 +309,9 @@ fn the_event_stream_reports_the_parked_request() {
         std::thread::spawn(move || {
             let mut stream =
                 std::net::TcpStream::connect(("127.0.0.1", proxy_port)).expect("connect");
-            let request =
-                format!("GET http://{host}/x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+            let request = format!(
+                "GET http://{host}/x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            );
             let _ = stream.write_all(request.as_bytes());
             let mut out = String::new();
             let _ = stream.read_to_string(&mut out);
@@ -264,14 +331,19 @@ fn the_event_stream_reports_the_parked_request() {
                 // Letting it through is what produces the release event.
                 assert!(runtime.block_on(async { proxy.forward(id).await }));
             }
-            Ok(Ok(Event::Released { forwarded: true, .. })) => saw_released = true,
+            Ok(Ok(Event::Released {
+                forwarded: true, ..
+            })) => saw_released = true,
             Ok(Ok(_)) => {}
             Ok(Err(_)) => break,
             Err(_) => {}
         }
     }
     assert!(saw_held, "the proxy should report that it parked a request");
-    assert!(saw_released, "the proxy should report that it let the request through");
+    assert!(
+        saw_released,
+        "the proxy should report that it let the request through"
+    );
 
     let _ = client.join().expect("client thread");
     runtime.block_on(proxy.stop());
@@ -292,8 +364,9 @@ fn an_edited_response_is_what_the_client_gets() {
         std::thread::spawn(move || {
             let mut stream =
                 std::net::TcpStream::connect(("127.0.0.1", proxy_port)).expect("connect");
-            let request =
-                format!("GET http://{host}/x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+            let request = format!(
+                "GET http://{host}/x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            );
             stream.write_all(request.as_bytes()).expect("write");
             let mut out = String::new();
             let _ = stream.read_to_string(&mut out);
@@ -343,5 +416,46 @@ fn an_edited_response_is_what_the_client_gets() {
         "the client should have seen the edited response, got: {answer}"
     );
 
+    runtime.block_on(proxy.stop());
+}
+
+#[test]
+fn burp_portal_serves_welcome_and_ca_certificate_without_blocking_on_intercept() {
+    let runtime = runtime();
+    let (proxy, _events) = Proxy::new();
+    proxy.set_intercept(true);
+    let proxy_port = runtime.block_on(proxy.start(0)).expect("proxy bind");
+
+    for (request, expected_fragment) in [
+        (
+            "GET http://burp/ HTTP/1.1\r\nHost: burp\r\nConnection: close\r\n\r\n",
+            "Gulpsuite Professional Proxy",
+        ),
+        (
+            "GET http://burp/cert HTTP/1.1\r\nHost: burp\r\nConnection: close\r\n\r\n",
+            "Content-Type: application/x-x509-ca-cert",
+        ),
+        (
+            "GET http://burpsuite/cert.pem HTTP/1.1\r\nHost: burpsuite\r\nConnection: close\r\n\r\n",
+            "BEGIN CERTIFICATE",
+        ),
+    ] {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", proxy_port)).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("timeout");
+        stream.write_all(request.as_bytes()).expect("write");
+        let mut buf = Vec::new();
+        let _ = stream.read_to_end(&mut buf);
+        let text = String::from_utf8_lossy(&buf);
+        assert!(
+            text.contains(expected_fragment),
+            "expected {expected_fragment} in portal response, got: {text}"
+        );
+    }
+    assert!(
+        runtime.block_on(proxy.held()).is_empty(),
+        "portal requests must never be parked in the intercept queue"
+    );
     runtime.block_on(proxy.stop());
 }

@@ -1427,18 +1427,25 @@ dependencies = [
 
 [[package]]
 name = "gulpsuite"
-version = "0.2.0"
+version = "0.0.1"
 dependencies = [
+ "base64",
  "eframe",
  "egui_kittest",
+ "libc",
+ "objc",
  "rcgen",
  "regex",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
+ "time",
  "tokio",
  "tokio-rustls",
+ "url",
  "webpki-roots",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -31,14 +31,16 @@ fn client_config(roots: &[CertificateDer<'static>]) -> Result<rustls::ClientConf
 
 /// Starts an https origin whose certificate comes from the given authority, and records what it
 /// was sent.
-async fn start_tls_origin(
-    authority: &gulpsuite::tls::Authority,
-) -> (u16, Arc<Mutex<String>>) {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind origin");
+async fn start_tls_origin(authority: &gulpsuite::tls::Authority) -> (u16, Arc<Mutex<String>>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind origin");
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(String::new()));
     let record = seen.clone();
-    let config = authority.server_config("127.0.0.1").expect("origin certificate");
+    let config = authority
+        .server_config("127.0.0.1")
+        .expect("origin certificate");
     tokio::spawn(async move {
         let acceptor = TlsAcceptor::from(Arc::new(config));
         loop {
@@ -68,6 +70,27 @@ async fn start_tls_origin(
         }
     });
     (port, seen)
+}
+
+#[test]
+fn manual_https_requests_use_the_same_trusted_roots_as_the_proxy() {
+    let runtime = runtime();
+    let (proxy, _) = Proxy::new();
+    let authority = gulpsuite::tls::Authority::generate().unwrap();
+    proxy.add_trusted_root(authority.certificate_der());
+    let (port, seen) = runtime.block_on(start_tls_origin(&authority));
+    let (status, response) = runtime
+        .block_on(proxy.one_shot_secure(
+            "127.0.0.1",
+            port,
+            "GET /manual-tls HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            true,
+            2000,
+        ))
+        .unwrap();
+    assert_eq!(status, 200);
+    assert!(response.contains("/manual-tls"));
+    assert!(seen.lock().unwrap().contains("/manual-tls"));
 }
 
 #[test]
@@ -102,17 +125,16 @@ fn an_https_request_goes_through_the_proxy_and_is_seen() {
             let connect = format!(
                 "CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\nHost: 127.0.0.1:{origin_port}\r\n\r\n"
             );
-            tcp.write_all(connect.as_bytes()).await.expect("write connect");
+            tcp.write_all(connect.as_bytes())
+                .await
+                .expect("write connect");
 
             // The proxy answers the tunnel before the TLS handshake starts.
             let mut head = Vec::new();
             let mut byte = [0u8; 1];
             while !head.ends_with(b"\r\n\r\n") {
-                let n = match tokio::time::timeout(
-                    Duration::from_secs(10),
-                    tcp.read(&mut byte),
-                )
-                .await
+                let n = match tokio::time::timeout(Duration::from_secs(10), tcp.read(&mut byte))
+                    .await
                 {
                     Ok(Ok(n)) => n,
                     Ok(Err(e)) => return format!("read failed: {e}"),
@@ -142,7 +164,8 @@ fn an_https_request_goes_through_the_proxy_and_is_seen() {
             let _ = tls.write_all(request.as_bytes()).await;
             let _ = tls.flush().await;
             let mut out = String::new();
-            let _ = tokio::time::timeout(Duration::from_secs(10), tls.read_to_string(&mut out)).await;
+            let _ =
+                tokio::time::timeout(Duration::from_secs(10), tls.read_to_string(&mut out)).await;
             out
         })
     });
@@ -162,7 +185,9 @@ fn an_https_request_goes_through_the_proxy_and_is_seen() {
                 }
                 seen.push(format!("tx: {request}"));
             }
-            Ok(Ok(gulpsuite::proxy::Event::Error(message))) => seen.push(format!("error: {message}")),
+            Ok(Ok(gulpsuite::proxy::Event::Error(message))) => {
+                seen.push(format!("error: {message}"))
+            }
             Ok(Ok(other)) => seen.push(format!("event: {other:?}")),
             Ok(Err(_)) => break,
             Err(_) => {}

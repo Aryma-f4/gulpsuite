@@ -1,0 +1,114 @@
+name: Native Chromium and installer verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Resolve latest candidates for review, or build the committed lock
+        type: choice
+        default: verify
+        options: [verify, prepare-browser-lock]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, platform: macos-arm64, binary: engine/target/release/gulpsuite }
+          - { runner: macos-15-intel, platform: macos-x64, binary: engine/target/release/gulpsuite }
+          - { runner: windows-2022, platform: windows-x64, binary: engine/target/release/gulpsuite.exe }
+          - { runner: ubuntu-24.04, platform: linux-x64, binary: engine/target/release/gulpsuite }
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Native Linux build and Chromium dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libexpat1 libgbm1 libglib2.0-0t64 libgtk-3-0t64 libnspr4 libnss3 libpango-1.0-0 libudev-dev libvulkan1 libx11-dev libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon-dev libxrandr2 xdg-utils xvfb
+      - name: Prepare latest browser lock candidate
+        if: inputs.mode == 'prepare-browser-lock'
+        run: python packaging/chromium.py resolve --platform '${{ matrix.platform }}' --output '.build/candidate-${{ matrix.platform }}.json'
+      - name: Upload candidate for human review (does not publish a release)
+        if: inputs.mode == 'prepare-browser-lock'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-lock-${{ matrix.platform }}
+          path: .build/candidate-*.json
+      - name: Build and test local browser contracts
+        if: inputs.mode == 'verify'
+        run: |
+          python -m unittest discover -s packaging/tests -v
+          cargo build --locked --release --manifest-path engine/Cargo.toml --bin gulpsuite
+          cargo test --locked --release --manifest-path engine/Cargo.toml --test browser_launch --test browser_e2e --test tls_e2e
+      - name: Stage the reviewed pinned Chromium
+        if: inputs.mode == 'verify'
+        run: python packaging/chromium.py stage --platform '${{ matrix.platform }}' --destination .build/browser-stage
+      - name: Verify complete Chromium third-party notices (release gate)
+        if: inputs.mode == 'verify'
+        run: |
+          if [ '${{ runner.os }}' = Linux ]; then
+            xvfb-run -a python packaging/chromium.py credits --platform '${{ matrix.platform }}' --destination .build/browser-stage
+          else
+            python packaging/chromium.py credits --platform '${{ matrix.platform }}' --destination .build/browser-stage
+          fi
+      - name: Install NSIS build tool
+        if: inputs.mode == 'verify' && runner.os == 'Windows'
+        run: |
+          choco install nsis --no-progress -y
+          echo 'C:/Program Files (x86)/NSIS' >> "$GITHUB_PATH"
+      - name: Build unsigned development installer
+        if: inputs.mode == 'verify'
+        run: python packaging/package.py --platform '${{ matrix.platform }}' --binary '${{ matrix.binary }}' --stage .build/browser-stage --output dist --development
+      - name: Install and smoke test Linux package
+        if: inputs.mode == 'verify' && runner.os == 'Linux'
+        run: |
+          sudo dpkg -i dist/*.deb
+          xvfb-run -a python packaging/smoke.py --install-root /opt/gulpsuite --platform linux-x64 --engine-tests
+          mkdir -p "$HOME/.local/share/gulpsuite/BrowserProfiles"
+          touch "$HOME/.local/share/gulpsuite/BrowserProfiles/preservation-sentinel"
+          sudo dpkg -r gulpsuite
+          test -f "$HOME/.local/share/gulpsuite/BrowserProfiles/preservation-sentinel"
+      - name: Install and smoke test macOS disk image
+        if: inputs.mode == 'verify' && runner.os == 'macOS'
+        run: |
+          mkdir -p .build/mount .build/installed
+          hdiutil attach dist/*.dmg -nobrowse -mountpoint "$PWD/.build/mount"
+          ditto .build/mount/Gulpsuite.app .build/installed/Gulpsuite.app
+          hdiutil detach "$PWD/.build/mount"
+          codesign --verify --deep --strict .build/installed/Gulpsuite.app
+          python packaging/smoke.py --install-root .build/installed --platform '${{ matrix.platform }}' --engine-tests
+      - name: Install and smoke test Windows installer
+        if: inputs.mode == 'verify' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/*-setup.exe).FullName
+          $installDir = Join-Path $env:RUNNER_TEMP 'Gulpsuite Installed'
+          $process = Start-Process -Wait -PassThru $installer -ArgumentList '/S', "/D=$installDir"
+          if ($process.ExitCode -ne 0) { throw 'Installer failed' }
+          python packaging/smoke.py --install-root "$installDir" --platform windows-x64 --engine-tests
+          if ($LASTEXITCODE -ne 0) { throw 'Installed browser smoke failed' }
+          $profile = Join-Path $env:LOCALAPPDATA 'Gulpsuite/BrowserProfiles'
+          New-Item -ItemType Directory -Force $profile | Out-Null
+          New-Item -ItemType File (Join-Path $profile 'preservation-sentinel') | Out-Null
+          Start-Process -Wait (Join-Path $installDir 'Uninstall.exe') -ArgumentList '/S'
+          if (-not (Test-Path (Join-Path $profile 'preservation-sentinel'))) { throw 'Uninstaller removed profile data' }
+      - name: Retain verified development artifacts only
+        if: success() && inputs.mode == 'verify'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gulpsuite-${{ matrix.platform }}-development
+          path: dist/*

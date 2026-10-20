@@ -1,8 +1,29 @@
-//! Repeater: hand-edited requests.
+//! Burp Suite Professional v2026.3.3 Repeater (`quick-start-pro-repeater.png`,
+//! `quick-start-pro-repeater-history.png`, `send-group.html`, `tab-settings.html`, `groups.html`):
+//! - Multi-tab strip with 3px orange `#FF6633` underline, tab groups & colors, right-click
+//!   tab management (`Rename`, `Duplicate`, `Add to group`, `Close other/left/right`, `Reopen closed tab`),
+//!   and `...` tab jump menu
+//! - `Send` + `▾` Group Send modes (`Send group in sequence (single connection)`,
+//!   `Send group in sequence (separate connections)`, `Send group in parallel`)
+//! - `<` (`Previous response`), `>` (`Next response`), and `▾` numbered history dropdown list
+//! - `⚙` Tab-specific settings (`HTTP/1 & HTTP/2 connection reuse`, `Update Content-Length`,
+//!   `Unpack compressed responses`, `Normalize HTTP/1 line endings`, `Follow redirects: Never / On-site / In-scope / Always`,
+//!   `Process cookies in redirects`, `Restore global default`)
+//! - `Target:` bar with `✎` Target & `Override SNI` popup
+//! - Line-numbered `Request` & `Response` panes with orange headers and `Pretty | Raw | Hex | Render | \n | ≡` pill bar.
 
-use eframe::egui::Ui;
+use eframe::egui::{self, Color32, RichText, Ui, Vec2};
 
 use crate::ui::app::App;
+
+#[derive(Clone)]
+pub struct RepeaterExchange {
+    pub host: String,
+    pub request: String,
+    pub response: String,
+    pub status: Option<u16>,
+    pub elapsed_ms: u128,
+}
 
 /// One request in the Repeater. Burp keeps several open at once, each in its own tab.
 #[derive(Clone)]
@@ -13,11 +34,36 @@ pub struct RepeaterTab {
     pub raw: String,
     pub response: String,
     pub status: Option<u16>,
+    pub elapsed_ms: u128,
     pub sending: bool,
     /// The in-flight request id, if any.
     pub pending: Option<u64>,
     /// The raw editor is shown only on demand; the coloured view is the default.
     pub editing: bool,
+    pub hex_view: bool,
+    pub render_view: bool,
+    pub show_non_printable: bool,
+    pub notes: String,
+    pub group_name: String,
+    /// 0 = None, 1 = Purple, 2 = Red, 3 = Yellow, 4 = Green, 5 = Blue, 6 = Teal, 7 = Magenta
+    pub group_color: u8,
+    pub override_sni_enabled: bool,
+    pub override_sni: String,
+    pub custom_tab_settings: bool,
+    pub http1_reuse: bool,
+    pub http2_reuse: bool,
+    pub allow_http2_alpn_override: bool,
+    pub update_content_length: bool,
+    pub unpack_compressed: bool,
+    pub normalize_line_endings: bool,
+    pub strip_conn_over_http2: bool,
+    /// 0 = Never, 1 = On-site only, 2 = In-scope only, 3 = Always
+    pub follow_redirects_mode: usize,
+    pub process_cookies_in_redirects: bool,
+    pub parallel_order_badge: Option<(usize, usize)>,
+    pub history: Vec<RepeaterExchange>,
+    pub history_cursor: Option<usize>,
+    in_flight: Option<(String, String, std::time::Instant)>,
 }
 
 impl Default for RepeaterTab {
@@ -28,25 +74,130 @@ impl Default for RepeaterTab {
             raw: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".into(),
             response: String::new(),
             status: None,
+            elapsed_ms: 0,
             sending: false,
             pending: None,
             editing: false,
+            hex_view: false,
+            render_view: false,
+            show_non_printable: false,
+            notes: String::new(),
+            group_name: String::new(),
+            group_color: 0,
+            override_sni_enabled: false,
+            override_sni: String::new(),
+            custom_tab_settings: false,
+            http1_reuse: false,
+            http2_reuse: true,
+            allow_http2_alpn_override: false,
+            update_content_length: true,
+            unpack_compressed: true,
+            normalize_line_endings: true,
+            strip_conn_over_http2: true,
+            follow_redirects_mode: 0,
+            process_cookies_in_redirects: false,
+            parallel_order_badge: None,
+            history: Vec::new(),
+            history_cursor: None,
+            in_flight: None,
         }
+    }
+}
+
+impl RepeaterTab {
+    pub fn restore_default_settings(&mut self) {
+        self.custom_tab_settings = false;
+        self.http1_reuse = false;
+        self.http2_reuse = true;
+        self.allow_http2_alpn_override = false;
+        self.update_content_length = true;
+        self.unpack_compressed = true;
+        self.normalize_line_endings = true;
+        self.strip_conn_over_http2 = true;
+        self.follow_redirects_mode = 0;
+        self.process_cookies_in_redirects = false;
+    }
+
+    pub fn navigate_history(&mut self, direction: isize) -> bool {
+        if self.sending || self.history.is_empty() {
+            return false;
+        }
+        let current = self.history_cursor.unwrap_or(self.history.len() - 1);
+        let Some(next) = current
+            .checked_add_signed(direction)
+            .filter(|next| *next < self.history.len())
+        else {
+            return false;
+        };
+        self.jump_to_history(next)
+    }
+
+    pub fn jump_to_history(&mut self, index: usize) -> bool {
+        let Some(exchange) = self.history.get(index).cloned() else {
+            return false;
+        };
+        self.host = exchange.host;
+        self.raw = exchange.request;
+        self.response = exchange.response;
+        self.status = exchange.status;
+        self.elapsed_ms = exchange.elapsed_ms;
+        self.history_cursor = Some(index);
+        true
     }
 }
 
 #[derive(Clone)]
 pub struct RepeaterPanel {
     pub tabs: Vec<RepeaterTab>,
+    pub closed_tabs: Vec<RepeaterTab>,
     /// The tab that is open.
     pub active: usize,
+    /// False = side-by-side (2 columns), true = top/bottom stacked layout.
+    pub stacked_layout: bool,
+    /// Draggable left/right split ratio between Request and Response (`0.18..=0.82`).
+    pub split_ratio: f32,
+    /// Draggable height of the Request/Response editors.
+    pub editor_height: f32,
+    /// Opens the active Repeater tab in a freely resizable floating window.
+    pub detached_open: bool,
+    /// 0 = Send single tab, 1 = Send group in sequence (single conn),
+    /// 2 = Send group in sequence (separate conns), 3 = Send group in parallel.
+    pub send_group_mode: usize,
+    pub rename_tab: Option<usize>,
+    pub rename_draft: String,
+    pub show_target_modal: bool,
+    pub new_group_name: String,
+    pub new_group_color: u8,
+    pub show_getting_started: bool,
+    pub force_getting_started: bool,
+    pub hide_getting_started_forever: bool,
+    pub show_analysis_drawer: bool,
+    pub req_wrap: bool,
+    pub resp_wrap: bool,
 }
 
 impl Default for RepeaterPanel {
     fn default() -> Self {
         RepeaterPanel {
             tabs: vec![RepeaterTab::default()],
+            closed_tabs: Vec::new(),
             active: 0,
+            stacked_layout: false,
+            split_ratio: 0.5,
+            editor_height: 460.0,
+            detached_open: false,
+            send_group_mode: 0,
+            rename_tab: None,
+            rename_draft: String::new(),
+            show_target_modal: false,
+            new_group_name: "Group 1".into(),
+            new_group_color: 1,
+            show_getting_started: true,
+            force_getting_started: false,
+            hide_getting_started_forever: false,
+            show_analysis_drawer: false,
+            req_wrap: true,
+            resp_wrap: true,
         }
     }
 }
@@ -64,22 +215,34 @@ impl RepeaterPanel {
 
     /// Opens a request in a new tab, the way Burp does when something is sent to the Repeater.
     pub fn open(&mut self, host: &str, raw: &str) {
+        self.show_getting_started = false;
+        self.force_getting_started = false;
         let name = name_for(host, self.tabs.len() + 1);
         self.tabs.push(RepeaterTab {
             name,
             host: host.to_string(),
             raw: raw.to_string(),
-            response: String::new(),
-            status: None,
-            sending: false,
-            pending: None,
-            editing: false,
+            ..Default::default()
         });
+        self.active = self.tabs.len() - 1;
+    }
+
+    pub fn duplicate_active(&mut self) {
+        self.show_getting_started = false;
+        self.force_getting_started = false;
+        let mut cloned = self.active().clone();
+        cloned.name = format!("{} (copy)", cloned.name);
+        cloned.pending = None;
+        cloned.sending = false;
+        cloned.in_flight = None;
+        self.tabs.push(cloned);
         self.active = self.tabs.len() - 1;
     }
 
     /// Puts a request into the tab that is open, replacing what is in it.
     pub fn reuse(&mut self, host: &str, raw: &str, response: &str) {
+        self.show_getting_started = false;
+        self.force_getting_started = false;
         let count = self.tabs.len();
         let tab = self.active_mut();
         tab.name = name_for(host, count);
@@ -87,18 +250,105 @@ impl RepeaterPanel {
         tab.raw = raw.to_string();
         tab.response = response.to_string();
         tab.status = None;
+        tab.elapsed_ms = 0;
         tab.editing = false;
+        tab.hex_view = false;
+        tab.pending = None;
+        tab.sending = false;
+        tab.in_flight = None;
+        tab.history.clear();
+        tab.history_cursor = None;
     }
 
-    /// Closes a tab, keeping at least one open.
+    /// Closes a tab, keeping at least one open, and saves the closed tab for `Reopen closed tab`.
     pub fn close(&mut self, index: usize) {
         if self.tabs.len() <= 1 || index >= self.tabs.len() {
             return;
         }
-        self.tabs.remove(index);
-        if self.active >= self.tabs.len() {
+        let removed = self.tabs.remove(index);
+        if self.closed_tabs.len() >= 20 {
+            self.closed_tabs.remove(0);
+        }
+        self.closed_tabs.push(removed);
+        if index < self.active {
+            self.active -= 1;
+        } else if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         }
+    }
+
+    pub fn reopen_closed_tab(&mut self) -> bool {
+        if let Some(mut tab) = self.closed_tabs.pop() {
+            tab.pending = None;
+            tab.sending = false;
+            tab.in_flight = None;
+            self.tabs.push(tab);
+            self.active = self.tabs.len() - 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn close_other_tabs(&mut self, keep_index: usize) {
+        if keep_index >= self.tabs.len() {
+            return;
+        }
+        let kept = self.tabs[keep_index].clone();
+        for (i, t) in self.tabs.drain(..).enumerate() {
+            if i != keep_index {
+                self.closed_tabs.push(t);
+            }
+        }
+        self.tabs.push(kept);
+        self.active = 0;
+    }
+
+    pub fn complete(&mut self, id: u64, status: u16, response: String) -> bool {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.pending == Some(id)) else {
+            return false;
+        };
+        let (host, request, elapsed_ms) = tab
+            .in_flight
+            .take()
+            .map(|(host, request, start)| (host, request, start.elapsed().ms()))
+            .unwrap_or_else(|| (tab.host.clone(), tab.raw.clone(), 0));
+        tab.status = (status != 0).then_some(status);
+        tab.elapsed_ms = elapsed_ms;
+        tab.response = response.clone();
+        tab.pending = None;
+        tab.sending = false;
+        if tab.history.len() >= 100 {
+            tab.history.remove(0);
+        }
+        tab.history.push(RepeaterExchange {
+            host,
+            request,
+            response,
+            status: tab.status,
+            elapsed_ms,
+        });
+        while tab.history.len() > 1
+            && tab
+                .history
+                .iter()
+                .map(|exchange| exchange.request.len() + exchange.response.len())
+                .sum::<usize>()
+                > 64 * 1024 * 1024
+        {
+            tab.history.remove(0);
+        }
+        tab.history_cursor = Some(tab.history.len() - 1);
+        true
+    }
+}
+
+trait DurationMs {
+    fn ms(&self) -> u128;
+}
+impl DurationMs for std::time::Duration {
+    fn ms(&self) -> u128 {
+        self.as_millis()
     }
 }
 
@@ -116,42 +366,420 @@ fn name_for(host: &str, fallback: usize) -> String {
     }
 }
 
+fn group_color_swatch(code: u8) -> Option<Color32> {
+    match code {
+        1 => Some(Color32::from_rgb(0x5B, 0x4F, 0xFF)), // Purple
+        2 => Some(Color32::from_rgb(0xD6, 0x21, 0x3F)), // Red
+        3 => Some(Color32::from_rgb(0xD3, 0x8C, 0x01)), // Yellow
+        4 => Some(Color32::from_rgb(0x3B, 0xA3, 0x17)), // Green
+        5 => Some(Color32::from_rgb(0x26, 0x64, 0x9D)), // Blue
+        6 => Some(Color32::from_rgb(0x00, 0xA2, 0xB9)), // Teal
+        7 => Some(Color32::from_rgb(0xC3, 0x11, 0xA8)), // Magenta
+        _ => None,
+    }
+}
+
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    
+    {
+        let w = &mut ui.style_mut().visuals.widgets;
+        let r = egui::CornerRadius::same(4);
+        w.inactive.corner_radius = r;
+        w.hovered.corner_radius = r;
+        w.active.corner_radius = r;
+        w.open.corner_radius = r;
+        w.noninteractive.corner_radius = r;
+    }
+
+    let is_untouched_default = app.panels.repeater.tabs.len() == 1
+        && app.panels.repeater.tabs[0].host == "http://example.com/"
+        && app.panels.repeater.tabs[0].raw == "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        && app.panels.repeater.tabs[0].response.is_empty()
+        && !app.panels.repeater.tabs[0].sending;
+    if !app.panels.repeater.hide_getting_started_forever
+        && (app.panels.repeater.force_getting_started
+            || (app.panels.repeater.show_getting_started && is_untouched_default))
+    {
+        draw_repeater_getting_started(app, ui, &theme);
+        return;
+    }
+
     tabs(app, ui, &theme);
 
-    // Collect anything that came back since the last frame.
-    let pending = app.panels.repeater.active().pending;
-    if let Some(id) = pending {
-        if let Some((status, body)) = app.take_response(id) {
-            let tab = app.panels.repeater.active_mut();
-            tab.status = Some(status);
-            tab.response = body;
-            tab.sending = false;
-            tab.pending = None;
-            app.status = format!("Response {status} ({} bytes)", tab.response.len());
+    let redirect_target = redirect_url(
+        &app.panels.repeater.active().host,
+        app.panels.repeater.active().status,
+        &app.panels.repeater.active().response,
+    );
+
+    // Auto-follow redirect if tab-specific `follow_redirects_mode` allows it
+    if let Some((ref next_host, ref next_path)) = redirect_target {
+        let mode = app.panels.repeater.active().follow_redirects_mode;
+        let should_auto = match mode {
+            3 => true, // Always
+            1 => next_host == &app.panels.repeater.active().host, // On-site only
+            2 => app.panels.target_panel.in_scope(next_host), // In-scope only
+            _ => false,
+        };
+        if should_auto && !app.panels.repeater.active().sending {
+            let nh = next_host.clone();
+            let np = next_path.clone();
+            follow_redirect(app, &nh, &np);
         }
     }
 
-    ui.horizontal(|ui| {
-        ui.label("Target");
-        ui.add(
-            eframe::egui::TextEdit::singleline(&mut app.panels.repeater.active_mut().host)
-                .desired_width(320.0)
-                .font(eframe::egui::TextStyle::Monospace),
-        );
-        if ui
-            .add_enabled(
-                !app.panels.repeater.active().sending,
-                eframe::egui::Button::new("Send"),
-            )
-            .clicked()
-        {
-            send(app);
-        }
-    });
-    ui.add_space(4.0);
+    // Single-row Burp Repeater Action Toolbar (`quick-start-pro-repeater.png` & `quick-start-pro-repeater-history.png`)
+    let bar_bg = theme.color("ui.background.0");
+    let border_col = theme.color("ui.border.1");
+    egui::Frame::new()
+        .fill(bar_bg)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                // 1. Orange `Send` button (`#E05320`) + `▾` Group send menu
+                if ui
+                    .add_enabled_ui(!app.panels.repeater.active().sending, |ui| {
+                        let btn = egui::Button::new(
+                            RichText::new("Send")
+                                .color(Color32::WHITE)
+                                .strong()
+                                .size(12.5),
+                        )
+                        .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
+                        .corner_radius(4.0)
+                        .min_size(Vec2::new(66.0, 26.0));
+                        ui.add(btn)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    if app.panels.repeater.send_group_mode == 0 {
+                        send(app);
+                    } else {
+                        send_group(app);
+                    }
+                }
+
+                ui.menu_button("Group", |ui| {
+                    ui.label(RichText::new("Group send options").strong());
+                    for (idx, lbl) in [
+                        (0usize, "Send single tab"),
+                        (1usize, "Send group in sequence (single connection)"),
+                        (2usize, "Send group in sequence (separate connections)"),
+                        (3usize, "Send group in parallel"),
+                    ] {
+                        if ui
+                            .radio_value(&mut app.panels.repeater.send_group_mode, idx, lbl)
+                            .clicked()
+                        {
+                            ui.close();
+                        }
+                    }
+                    if app.panels.repeater.send_group_mode > 0
+                        && ui.button("Send group now").clicked()
+                    {
+                        send_group(app);
+                        ui.close();
+                    }
+                });
+
+                // 2. Outlined `Cancel` button
+                if ui
+                    .add_enabled(
+                        app.panels.repeater.active().sending,
+                        eframe::egui::Button::new("Cancel").min_size(Vec2::new(66.0, 26.0)),
+                    )
+                    .clicked()
+                {
+                    cancel(app);
+                }
+
+                // 3. `< | ▾` and `> | ▾` split history buttons (`quick-start-pro-repeater-history.png`)
+                let hist_items: Vec<(usize, String)> = app
+                    .panels
+                    .repeater
+                    .active()
+                    .history
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, ex)| {
+                        let first_line = ex.request.lines().next().unwrap_or("GET /");
+                        let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+                        (
+                            idx,
+                            format!(
+                                "{}. {}{}",
+                                idx + 1,
+                                ex.host.trim_end_matches('/'),
+                                path
+                            ),
+                        )
+                    })
+                    .rev()
+                    .collect();
+                let cur_hist = app.panels.repeater.active().history_cursor;
+                let can_back = !app.panels.repeater.active().sending
+                    && cur_hist.unwrap_or(0) > 0;
+                let can_fwd = !app.panels.repeater.active().sending
+                    && cur_hist
+                        .map(|c| c + 1 < app.panels.repeater.active().history.len())
+                        .unwrap_or(false);
+
+                if ui
+                    .add_enabled(can_back, egui::Button::new("<").min_size(Vec2::new(24.0, 26.0)))
+                    .on_hover_text("Previous response")
+                    .clicked()
+                {
+                    app.panels.repeater.active_mut().navigate_history(-1);
+                }
+                ui.menu_button("History", |ui| {
+                    ui.set_min_width(320.0);
+                    if hist_items.is_empty() {
+                        ui.label("No requests sent in this tab yet.");
+                    } else {
+                        for (idx, label) in &hist_items {
+                            let is_cur = cur_hist == Some(*idx);
+                            let row_bg = if is_cur {
+                                Color32::from_rgb(0xF3, 0xC3, 0x97)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            let resp = egui::Frame::new()
+                                .fill(row_bg)
+                                .inner_margin(egui::Margin::symmetric(8, 3))
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(label).color(if is_cur {
+                                                Color32::from_rgb(0x16, 0x16, 0x16)
+                                            } else {
+                                                theme.color("ui.text.body")
+                                            }),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    )
+                                })
+                                .inner;
+                            if resp.clicked() {
+                                app.panels.repeater.active_mut().jump_to_history(*idx);
+                                ui.close();
+                            }
+                        }
+                    }
+                });
+                if ui
+                    .add_enabled(can_fwd, egui::Button::new(">").min_size(Vec2::new(24.0, 26.0)))
+                    .on_hover_text("Next response")
+                    .clicked()
+                {
+                    app.panels.repeater.active_mut().navigate_history(1);
+                }
+
+                if let Some((next_host, next_path)) = redirect_target {
+                    if ui.button("Follow redirection").clicked() {
+                        follow_redirect(app, &next_host, &next_path);
+                    }
+                }
+
+                // Layout & Tab-specific `⚙` Repeater settings (`tab-settings.html`)
+                let custom_settings = app.panels.repeater.active().custom_tab_settings;
+                let gear_label = if custom_settings {
+                    RichText::new("⚙")
+                        .color(theme.color("palette.secondary.core"))
+                        .strong()
+                } else {
+                    RichText::new("⚙")
+                };
+                ui.menu_button(gear_label, |ui| {
+                    ui.set_min_width(270.0);
+                    let tab = app.panels.repeater.active_mut();
+                    ui.label(RichText::new("Connections").strong());
+                    if ui
+                        .checkbox(&mut tab.http1_reuse, "HTTP/1 connection reuse")
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    if ui
+                        .checkbox(&mut tab.http2_reuse, "HTTP/2 connection reuse")
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut tab.allow_http2_alpn_override,
+                            "Allow HTTP/2 ALPN override",
+                        )
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Message modification").strong());
+                    if ui
+                        .checkbox(&mut tab.update_content_length, "Update Content-Length")
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    if ui
+                        .checkbox(&mut tab.unpack_compressed, "Unpack compressed responses")
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut tab.normalize_line_endings,
+                            "Normalize HTTP/1 line endings",
+                        )
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    if ui
+                        .checkbox(
+                            &mut tab.strip_conn_over_http2,
+                            "Strip Connection header over HTTP/2",
+                        )
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    ui.separator();
+                    ui.label(RichText::new("Redirects").strong());
+                    for (m_idx, lbl) in ["Never", "On-site only", "In-scope only", "Always"]
+                        .iter()
+                        .enumerate()
+                    {
+                        if ui
+                            .radio_value(&mut tab.follow_redirects_mode, m_idx, *lbl)
+                            .changed()
+                        {
+                            tab.custom_tab_settings = true;
+                        }
+                    }
+                    if ui
+                        .checkbox(
+                            &mut tab.process_cookies_in_redirects,
+                            "Process cookies in redirects",
+                        )
+                        .changed()
+                    {
+                        tab.custom_tab_settings = true;
+                    }
+                    ui.separator();
+                    if ui.button("Restore global default").clicked() {
+                        tab.restore_default_settings();
+                        ui.close();
+                    }
+                });
+
+                let layout_lbl = if app.panels.repeater.stacked_layout {
+                    "Top/Bottom"
+                } else {
+                    "Side-by-side"
+                };
+                if ui
+                    .button(layout_lbl)
+                    .on_hover_text("Toggle Side-by-side / Top-Bottom layout")
+                    .clicked()
+                {
+                    app.panels.repeater.stacked_layout = !app.panels.repeater.stacked_layout;
+                }
+
+                if ui
+                    .button("Change method")
+                    .on_hover_text("Toggle GET <-> POST")
+                    .clicked()
+                {
+                    let toggled = crate::ui::app::Transaction::toggle_request_method(
+                        &app.panels.repeater.active().raw,
+                    );
+                    app.panels.repeater.active_mut().raw = toggled;
+                    app.status = "Toggled request method (GET <-> POST)".into();
+                }
+                if ui.button("Send to Intruder").clicked() {
+                    let tab = app.panels.repeater.active();
+                    let (host, raw) = (tab.host.clone(), tab.raw.clone());
+                    app.send_to_intruder(&host, &raw);
+                }
+
+                // Right-aligned `Target: https://...` matching `quick-start-pro-repeater.png`
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (edit_rect, edit_resp) =
+                        ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::click());
+                    let ep = ui.painter_at(edit_rect);
+                    let ec = theme.color("ui.icon.default");
+                    ep.line_segment(
+                        [
+                            egui::pos2(edit_rect.min.x + 5.0, edit_rect.max.y - 5.0),
+                            egui::pos2(edit_rect.max.x - 5.0, edit_rect.min.y + 5.0),
+                        ],
+                        egui::Stroke::new(1.6, ec),
+                    );
+                    ep.circle_filled(
+                        egui::pos2(edit_rect.min.x + 5.0, edit_rect.max.y - 5.0),
+                        1.5,
+                        ec,
+                    );
+                    if edit_resp
+                        .on_hover_text("Configure target host, port, HTTPS, and Override SNI")
+                        .clicked()
+                    {
+                        app.panels.repeater.show_target_modal =
+                            !app.panels.repeater.show_target_modal;
+                    }
+                    let host_txt = app.panels.repeater.active().host.clone();
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(format!("Target: {host_txt}"))
+                                    .strong()
+                                    .size(12.5)
+                                    .color(theme.color("ui.text.heading")),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text("Click to edit Target URL and SNI settings")
+                        .clicked()
+                    {
+                        app.panels.repeater.show_target_modal = true;
+                    }
+                });
+            });
+        });
+
+    // 1px separator line below the Action Toolbar (`quick-start-pro-repeater.png`)
+    let sep_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), 1.0),
+    );
+    ui.painter().rect_filled(sep_rect, 0.0, border_col);
+    ui.add_space(1.0);
+
+    // Target & SNI override dialog (`http-messages/index.html#http-repeater-tab`)
+    if app.panels.repeater.show_target_modal {
+        let mut open = true;
+        egui::Window::new("Target details")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(340.0)
+            .show(ui.ctx(), |ui| {
+                let tab = app.panels.repeater.active_mut();
+                ui.label("Target URL / Host:");
+                ui.text_edit_singleline(&mut tab.host);
+                ui.add_space(4.0);
+                ui.checkbox(&mut tab.override_sni_enabled, "Override SNI");
+                if tab.override_sni_enabled {
+                    ui.label("SNI hostname (e.g. Collaborator payload):");
+                    ui.text_edit_singleline(&mut tab.override_sni);
+                }
+            });
+        app.panels.repeater.show_target_modal = open;
+    }
 
     let message_bg = theme.color("ui.editor.message.background");
     let colour = match app.panels.repeater.active().status {
@@ -162,75 +790,1126 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     };
     let response = app.panels.repeater.active().response.clone();
     let request = app.panels.repeater.active().raw.clone();
+    let elapsed_ms = app.panels.repeater.active().elapsed_ms;
+    let stacked = app.panels.repeater.stacked_layout;
+    let avail_h = (ui.available_height()
+        - if app.panels.repeater.show_analysis_drawer {
+            220.0
+        } else {
+            26.0
+        })
+    .max(220.0);
+    let editor_h = (avail_h - 68.0).max(160.0);
 
-    ui.columns(2, |columns| {
-        columns[0].horizontal(|ui| {
-            ui.label("Request");
-            let editing = app.panels.repeater.active().editing;
-            if ui.button(if editing { "View" } else { "Edit" }).clicked() {
-                let tab = app.panels.repeater.active_mut();
-                tab.editing = !tab.editing;
+    egui::Frame::new()
+        .fill(bar_bg)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            if stacked {
+                let half_h = (editor_h * 0.5).max(110.0);
+                draw_request_pane(app, ui, &theme, &request, half_h, message_bg);
+                ui.separator();
+                draw_response_pane(
+                    app,
+                    ui,
+                    &theme,
+                    &response,
+                    colour,
+                    elapsed_ms,
+                    half_h,
+                    message_bg,
+                );
+            } else {
+                let mut ratio = app.panels.repeater.split_ratio;
+                super::vertical_split(
+                    ui,
+                    &theme,
+                    "repeater-side-by-side-split",
+                    &mut ratio,
+                    avail_h - 12.0,
+                    |side, ui| {
+                        if side == 0 {
+                            draw_request_pane(app, ui, &theme, &request, editor_h, message_bg);
+                        } else {
+                            draw_response_pane(
+                                app,
+                                ui,
+                                &theme,
+                                &response,
+                                colour,
+                                elapsed_ms,
+                                editor_h,
+                                message_bg,
+                            );
+                        }
+                    },
+                );
+                app.panels.repeater.split_ratio = ratio;
             }
         });
-        if app.panels.repeater.active().editing {
-            crate::ui::highlight::show_editable(
-                &mut columns[0],
-                &mut app.panels.repeater.active_mut().raw,
-                &theme,
-                message_bg,
-            );
-        } else {
-            crate::ui::highlight::show_message(&mut columns[0], &request, &theme, message_bg);
-        }
 
-        columns[1].horizontal(|ui| {
-            ui.label("Response");
-            let status = match app.panels.repeater.active().status {
-                Some(status) => status.to_string(),
-                None if response.is_empty() => "no response yet".into(),
-                None => "error".into(),
-            };
-            ui.label(eframe::egui::RichText::new(status).color(colour));
+    if app.panels.repeater.detached_open {
+        let mut open = true;
+        let mut ratio = app.panels.repeater.split_ratio;
+        let tab_name = app.panels.repeater.active().name.clone();
+        let tab_host = app.panels.repeater.active().host.clone();
+        eframe::egui::Window::new(format!("Repeater [{tab_name}] — {tab_host}"))
+            .open(&mut open)
+            .resizable(true)
+            .default_size([900.0, 560.0])
+            .show(ui.ctx(), |ui| {
+                let h = (ui.available_height() - 36.0).max(160.0);
+                super::vertical_split(
+                    ui,
+                    &theme,
+                    "repeater-detached-split",
+                    &mut ratio,
+                    h,
+                    |side, ui| {
+                        if side == 0 {
+                            draw_request_pane(app, ui, &theme, &request, h - 64.0, message_bg);
+                        } else {
+                            draw_response_pane(
+                                app,
+                                ui,
+                                &theme,
+                                &response,
+                                colour,
+                                elapsed_ms,
+                                h - 64.0,
+                                message_bg,
+                            );
+                        }
+                    },
+                );
+            });
+        app.panels.repeater.split_ratio = ratio;
+        app.panels.repeater.detached_open = open;
+    }
+
+    // Compact bottom Inspector & Response analysis toggle bar
+    egui::Frame::new()
+        .fill(theme.color("ui.background.1"))
+        .inner_margin(egui::Margin::symmetric(10, 2))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let arrow = if app.panels.repeater.show_analysis_drawer {
+                    "▼ Inspector & Response analysis"
+                } else {
+                    "▶ Inspector & Response analysis"
+                };
+                if ui.small_button(arrow).clicked() {
+                    app.panels.repeater.show_analysis_drawer =
+                        !app.panels.repeater.show_analysis_drawer;
+                }
+                if let Some((ord, tot)) = app.panels.repeater.active().parallel_order_badge {
+                    super::muted(ui, &theme, &format!("Parallel arrival: {ord}/{tot}"));
+                }
+            });
+            if app.panels.repeater.show_analysis_drawer {
+                super::draw_inspector(ui, &theme, "repeater-insp", &request, &response);
+                ui.separator();
+                analyzers(app, ui, &response);
+            }
         });
-        crate::ui::highlight::show_message(&mut columns[1], &response, &theme, message_bg);
-    });
-
-    ui.add_space(6.0);
-    ui.separator();
-    analyzers(app, ui, &response);
 }
 
-/// The row of tabs, the way Burp shows the requests that are open.
-fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
-    ui.horizontal_wrapped(|ui| {
-        for index in 0..app.panels.repeater.tabs.len() {
-            let selected = index == app.panels.repeater.active;
-            let name = app.panels.repeater.tabs[index].name.clone();
-            let label = eframe::egui::RichText::new(name)
-                .color(theme.color(if selected {
-                    "ui.text.body"
-                } else {
-                    "ui.icon.default"
-                }));
-            if ui.selectable_label(selected, label).clicked() {
-                app.panels.repeater.active = index;
-            }
-            if app.panels.repeater.tabs.len() > 1
-                && ui
-                    .small_button(eframe::egui::RichText::new("x").small())
-                    .on_hover_text("Close this tab")
-                    .clicked()
-            {
-                app.panels.repeater.close(index);
-                break;
+fn repeater_hex_dump(text: &str) -> String {
+    let mut out = String::new();
+    for (row, chunk) in text.as_bytes().chunks(16).enumerate() {
+        out.push_str(&format!("{:04x}: ", row * 16));
+        for i in 0..16 {
+            if let Some(b) = chunk.get(i) {
+                out.push_str(&format!("{b:02x} "));
+            } else {
+                out.push_str("   ");
             }
         }
-        if ui.button("+").on_hover_text("New tab").clicked() {
-            let host = app.panels.repeater.active().host.clone();
-            app.panels.repeater.open(&host, "");
+        out.push(' ');
+        for &b in chunk {
+            out.push(if (0x20..=0x7e).contains(&b) {
+                b as char
+            } else {
+                '.'
+            });
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Renders the segmented `[ Pretty | Raw | Hex (| Render) ]  [\n] [≡]` pill bar from `quick-start-pro-repeater.png`.
+fn draw_repeater_pill_bar(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    id_salt: &str,
+    modes: &[&str],
+    active_mode: &mut usize,
+    show_non_printable: &mut bool,
+    wrap: &mut bool,
+) -> egui::Response {
+    let pill_track_bg = if theme.dark {
+        Color32::from_rgb(0x32, 0x36, 0x3E)
+    } else {
+        Color32::from_rgb(0xE0, 0xE0, 0xE0)
+    };
+    let active_pill_bg = Color32::from_rgb(0x2B, 0x57, 0x9A);
+    let inactive_txt = if theme.dark {
+        Color32::from_rgb(0xD8, 0xDC, 0xE2)
+    } else {
+        Color32::from_rgb(0x2B, 0x2B, 0x2B)
+    };
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        egui::Frame::new()
+            .fill(pill_track_bg)
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::same(0))
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (idx, label) in modes.iter().enumerate() {
+                    let is_active = *active_mode == idx;
+                    let fill = if is_active {
+                        active_pill_bg
+                    } else {
+                        Color32::TRANSPARENT
+                    };
+                    let fg = if is_active {
+                        Color32::WHITE
+                    } else {
+                        inactive_txt
+                    };
+                    let btn = egui::Button::new(RichText::new(*label).color(fg).size(12.0).strong())
+                        .fill(fill)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(3.0)
+                        .min_size(Vec2::new(46.0, 22.0));
+                    if ui.add(btn).clicked() {
+                        *active_mode = idx;
+                    }
+                }
+            });
+
+        // `[\n]` non-printable characters pill button
+        let np_fill = if *show_non_printable {
+            active_pill_bg
+        } else {
+            pill_track_bg
+        };
+        let np_fg = if *show_non_printable {
+            Color32::WHITE
+        } else {
+            inactive_txt
+        };
+        if ui
+            .add(
+                egui::Button::new(RichText::new("\\n").color(np_fg).monospace().size(11.5).strong())
+                    .fill(np_fill)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(4.0)
+                    .min_size(Vec2::new(26.0, 22.0)),
+            )
+            .on_hover_text("Show non-printable characters")
+            .clicked()
+        {
+            *show_non_printable = !*show_non_printable;
+        }
+
+        // `[≡]` line-wrap pill button
+        let wrap_fill = if *wrap { active_pill_bg } else { pill_track_bg };
+        let wrap_fg = if *wrap { Color32::WHITE } else { inactive_txt };
+        let (wrap_rect, wrap_resp) =
+            ui.allocate_exact_size(Vec2::new(26.0, 22.0), egui::Sense::click());
+        if wrap_resp.on_hover_text("Toggle line wrapping").clicked() {
+            *wrap = !*wrap;
+        }
+        let p = ui.painter_at(wrap_rect);
+        p.rect_filled(wrap_rect, 4.0, wrap_fill);
+        for dy in [-4.0f32, 0.0, 4.0] {
+            p.line_segment(
+                [
+                    egui::pos2(wrap_rect.min.x + 6.0, wrap_rect.center().y + dy),
+                    egui::pos2(wrap_rect.max.x - 6.0, wrap_rect.center().y + dy),
+                ],
+                egui::Stroke::new(1.5, wrap_fg),
+            );
+        }
+        let _ = id_salt;
+    })
+    .response
+}
+
+fn draw_request_pane(
+    app: &mut App,
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    request: &str,
+    height: f32,
+    _message_bg: eframe::egui::Color32,
+) {
+    // Orange `Request` header + `[ Pretty | Raw | Hex ]  [\n] [≡]` pill bar (`quick-start-pro-repeater.png`)
+    ui.label(
+        RichText::new("Request")
+            .size(15.0)
+            .strong()
+            .color(Color32::from_rgb(0xE0, 0x53, 0x20)),
+    );
+    let mut mode = if app.panels.repeater.active().hex_view {
+        2
+    } else if app.panels.repeater.active().editing {
+        1
+    } else {
+        0
+    };
+    let mut np = app.panels.repeater.active().show_non_printable;
+    let mut wrap = app.panels.repeater.req_wrap;
+    let header_resp = draw_repeater_pill_bar(
+        ui,
+        theme,
+        "repeater-req-pills",
+        &["Pretty", "Raw", "Hex"],
+        &mut mode,
+        &mut np,
+        &mut wrap,
+    );
+    {
+        let tab = app.panels.repeater.active_mut();
+        tab.editing = mode == 1;
+        tab.hex_view = mode == 2;
+        tab.show_non_printable = np;
+    }
+    app.panels.repeater.req_wrap = wrap;
+    ui.add_space(4.0);
+
+    super::show_persistent_context_menu(&header_resp, |ui| {
+        repeater_actions_menu(app, ui);
+    });
+    let resp = if mode == 2 {
+        super::burp_numbered_message_view(
+            ui,
+            theme,
+            "repeater-req-hex",
+            height,
+            &repeater_hex_dump(request),
+            2,
+            false,
+        )
+    } else if mode == 1 {
+        let (r, _) = super::burp_numbered_message_editor(
+            ui,
+            theme,
+            "repeater-req-edit",
+            height,
+            &mut app.panels.repeater.active_mut().raw,
+            1,
+        );
+        r
+    } else {
+        let r =
+            super::burp_numbered_message_view(ui, theme, "repeater-req-pretty", height, request, 0, np);
+        if r.double_clicked() {
+            app.panels.repeater.active_mut().editing = true;
+        }
+        r
+    };
+    super::show_persistent_context_menu(&resp, |ui| {
+        repeater_actions_menu(app, ui);
+    });
+}
+
+fn draw_response_pane(
+    app: &mut App,
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    response: &str,
+    colour: eframe::egui::Color32,
+    elapsed_ms: u128,
+    height: f32,
+    _message_bg: eframe::egui::Color32,
+) {
+    // Orange `Response` header + status & timing (`quick-start-pro-repeater.png`)
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Response")
+                .size(15.0)
+                .strong()
+                .color(Color32::from_rgb(0xE0, 0x53, 0x20)),
+        );
+        if let Some(status) = app.panels.repeater.active().status {
+            ui.label(eframe::egui::RichText::new(status.to_string()).color(colour).strong());
+        } else if !response.is_empty() {
+            ui.label(eframe::egui::RichText::new("error").color(colour));
+        }
+        if !response.is_empty() {
+            super::muted(
+                ui,
+                theme,
+                &format!("{} ms · {} bytes", elapsed_ms, response.len()),
+            );
         }
     });
-    ui.add_space(2.0);
+    let mut mode = if app.panels.repeater.active().render_view {
+        3
+    } else if app.panels.repeater.active().hex_view {
+        2
+    } else {
+        0
+    };
+    let mut np = app.panels.repeater.active().show_non_printable;
+    let mut wrap = app.panels.repeater.resp_wrap;
+    let header_resp = draw_repeater_pill_bar(
+        ui,
+        theme,
+        "repeater-resp-pills",
+        &["Pretty", "Raw", "Hex", "Render"],
+        &mut mode,
+        &mut np,
+        &mut wrap,
+    );
+    {
+        let tab = app.panels.repeater.active_mut();
+        tab.hex_view = mode == 2;
+        tab.render_view = mode == 3;
+        tab.show_non_printable = np;
+    }
+    app.panels.repeater.resp_wrap = wrap;
+    ui.add_space(4.0);
+
+    super::show_persistent_context_menu(&header_resp, |ui| {
+        repeater_actions_menu(app, ui);
+    });
+    let view_mode = if mode == 2 { 2 } else { 0 };
+    let resp = super::burp_numbered_message_view(
+        ui,
+        theme,
+        "repeater-resp-pretty",
+        height,
+        response,
+        view_mode,
+        np,
+    );
+    super::show_persistent_context_menu(&resp, |ui| {
+        repeater_actions_menu(app, ui);
+    });
+}
+
+fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
+    let tab = app.panels.repeater.active().clone();
+    if ui.button("Scan / Do active scan").clicked() {
+        app.scan_url(&tab.host, true);
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            !tab.response.is_empty(),
+            eframe::egui::Button::new("Do passive scan"),
+        )
+        .clicked()
+    {
+        app.passive_scan_transaction(&tab.host, &tab.response);
+        ui.close();
+    }
+    ui.menu_button("Engagement tools", |ui| {
+        if ui.button("Generate CSRF PoC").clicked() {
+            app.open_csrf_poc(&tab.host, &tab.raw);
+            ui.close();
+        }
+    });
+    ui.separator();
+    if ui.button("Send to Intruder").clicked() {
+        app.send_to_intruder(&tab.host, &tab.raw);
+        ui.close();
+    }
+    if ui.button("Send to Comparer (request)").clicked() {
+        if app.panels.comparer.left.trim().is_empty() {
+            app.panels.comparer.left = tab.raw.clone();
+        } else {
+            app.panels.comparer.right = tab.raw.clone();
+        }
+        app.tool = crate::ui::app::COMPARER;
+        app.view = 0;
+        app.status = "Repeater request sent to Comparer".into();
+        ui.close();
+    }
+    if ui.button("Send to Comparer (response)").clicked() {
+        if app.panels.comparer.left.trim().is_empty() {
+            app.panels.comparer.left = tab.response.clone();
+        } else {
+            app.panels.comparer.right = tab.response.clone();
+        }
+        app.tool = crate::ui::app::COMPARER;
+        app.view = 0;
+        app.status = "Repeater response sent to Comparer".into();
+        ui.close();
+    }
+    if ui.button("Send to Decoder").clicked() {
+        app.panels.decoder.input = tab.raw.clone();
+        app.tool = crate::ui::app::DECODER;
+        app.view = 0;
+        app.status = "Repeater request sent to Decoder".into();
+        ui.close();
+    }
+    if ui.button("Send to Sequencer").clicked() {
+        app.panels.sequencer.text = tab.response.clone();
+        app.tool = crate::ui::app::SEQUENCER;
+        app.view = 0;
+        app.status = "Repeater response sent to Sequencer".into();
+        ui.close();
+    }
+    if ui.button("Change request method (GET ↔ POST)").clicked() {
+        app.panels.repeater.active_mut().raw =
+            crate::ui::app::Transaction::toggle_request_method(&tab.raw);
+        app.status = "Toggled request method (GET <-> POST)".into();
+        ui.close();
+    }
+    if ui.button("Insert Collaborator payload").clicked() {
+        let payload = format!(
+            "{}.{}",
+            app.panels.collaborator_token,
+            crate::collaborator::DOMAIN
+        );
+        app.panels.repeater.active_mut().raw.push_str(&payload);
+        app.status = format!("Inserted Collaborator payload {payload}");
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Copy URL").clicked() {
+        ui.ctx().copy_text(tab.host.clone());
+        app.status = "Copied Repeater target URL".into();
+        ui.close();
+    }
+    if ui.button("Copy as curl command").clicked() {
+        let curl = crate::ui::app::Transaction::to_curl_command(&tab.host, &tab.raw);
+        ui.ctx().copy_text(curl);
+        app.status = "Copied Repeater request as curl command".into();
+        ui.close();
+    }
+    if ui.button("Duplicate tab").clicked() {
+        app.panels.repeater.duplicate_active();
+        app.status = "Duplicated Repeater tab".into();
+        ui.close();
+    }
+}
+
+/// Renders the exact 50/50 split Repeater Getting Started screen from `/tmp/ref_Repeater_s.png`,
+/// using the exact SVG polygon coordinates from `resources/Media/svg/light/repeater.svg`
+/// and `resources/Media/svg/light/repeater-illustration.svg`.
+fn draw_repeater_getting_started(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
+    let avail = ui.available_size();
+    let left_bg = if theme.dark {
+        Color32::from_rgb(0x23, 0x27, 0x2D)
+    } else {
+        Color32::from_rgb(0xEA, 0xEE, 0xF2)
+    };
+    let right_bg = if theme.dark {
+        Color32::from_rgb(0x1E, 0x20, 0x24)
+    } else {
+        Color32::from_rgb(0xFA, 0xFA, 0xFA)
+    };
+
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.columns(2, |cols| {
+        // LEFT 50%: "To get started, send a request to Repeater from anywhere in Burp." + `repeater-illustration.svg`
+        egui::Frame::new()
+            .fill(left_bg)
+            .inner_margin(egui::Margin::same(0))
+            .show(&mut cols[0], |ui| {
+                let col_w = ui.available_width();
+                ui.set_min_size(Vec2::new(col_w, avail.y));
+                let top_pad = ((avail.y - 310.0) * 0.45).max(36.0);
+                let left_pad = ((col_w - 321.0) * 0.5).max(24.0);
+                ui.add_space(top_pad);
+                ui.horizontal(|ui| {
+                    ui.add_space(left_pad);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(
+                                "To get started, send a request to Repeater\nfrom anywhere in Burp.",
+                            )
+                            .size(18.0)
+                            .strong()
+                            .color(theme.color("ui.text.heading")),
+                        );
+                        ui.add_space(22.0);
+                        paint_repeater_onboarding_illustration(ui, theme);
+                    });
+                });
+            });
+
+        // RIGHT 50%: Top-right `✕`, `repeater.svg` two-arrows icon, "Repeater", description, "Learn more", "Don't show this again"
+        egui::Frame::new()
+            .fill(right_bg)
+            .inner_margin(egui::Margin::symmetric(20, 14))
+            .show(&mut cols[1], |ui| {
+                let col_w = ui.available_width();
+                ui.set_min_size(Vec2::new(
+                    col_w.max(160.0),
+                    (avail.y - 28.0).max(240.0),
+                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    let (x_rect, x_resp) =
+                        ui.allocate_exact_size(Vec2::new(20.0, 20.0), egui::Sense::click());
+                    let xp = ui.painter_at(x_rect);
+                    let xc = theme.color("ui.text.heading");
+                    xp.line_segment(
+                        [
+                            egui::pos2(x_rect.min.x + 5.0, x_rect.min.y + 5.0),
+                            egui::pos2(x_rect.max.x - 5.0, x_rect.max.y - 5.0),
+                        ],
+                        egui::Stroke::new(1.5, xc),
+                    );
+                    xp.line_segment(
+                        [
+                            egui::pos2(x_rect.max.x - 5.0, x_rect.min.y + 5.0),
+                            egui::pos2(x_rect.min.x + 5.0, x_rect.max.y - 5.0),
+                        ],
+                        egui::Stroke::new(1.5, xc),
+                    );
+                    if x_resp
+                        .on_hover_text("Close Getting started and open Repeater tab")
+                        .clicked()
+                    {
+                        app.panels.repeater.show_getting_started = false;
+                        app.panels.repeater.force_getting_started = false;
+                    }
+                });
+
+                let right_top_pad = ((avail.y - 280.0) * 0.42).max(32.0);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(right_top_pad);
+                    paint_repeater_two_arrows_icon(ui);
+                    ui.add_space(18.0);
+                    ui.label(
+                        RichText::new("Repeater")
+                            .size(16.0)
+                            .strong()
+                            .color(theme.color("ui.text.heading")),
+                    );
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(
+                            "Modify and resend individual requests to test how the server's\nresponse changes based on your input.",
+                        )
+                        .size(12.0)
+                        .color(theme.color("ui.text.body")),
+                    );
+                    ui.add_space(20.0);
+                    let learn_bg = if theme.dark {
+                        Color32::from_rgb(0x32, 0x36, 0x3E)
+                    } else {
+                        Color32::from_rgb(0xEA, 0xEA, 0xEA)
+                    };
+                    let learn_border = if theme.dark {
+                        Color32::from_rgb(0x48, 0x4D, 0x56)
+                    } else {
+                        Color32::from_rgb(0xD8, 0xD8, 0xD8)
+                    };
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Learn more")
+                                    .size(12.0)
+                                    .strong()
+                                    .color(theme.color("ui.text.heading")),
+                            )
+                            .fill(learn_bg)
+                            .stroke(egui::Stroke::new(1.0, learn_border))
+                            .corner_radius(4.0)
+                            .min_size(Vec2::new(108.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        app.status =
+                            "Repeater documentation: Right-click any HTTP request and select Send to Repeater, or click ✕ to open a manual Repeater tab.".into();
+                    }
+                    ui.add_space(18.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Don't show this again")
+                                    .color(Color32::from_rgb(0xC8, 0x5A, 0x28))
+                                    .size(12.0),
+                            )
+                            .frame(false),
+                        )
+                        .clicked()
+                    {
+                        app.panels.repeater.hide_getting_started_forever = true;
+                        app.panels.repeater.show_getting_started = false;
+                        app.panels.repeater.force_getting_started = false;
+                    }
+                });
+            });
+    });
+}
+
+/// Paints the exact `resources/Media/svg/light/repeater.svg` (`90 x 63` viewBox) two-arrows icon.
+fn paint_repeater_two_arrows_icon(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 63.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    let o = rect.min;
+    let map = |pts: &[(f32, f32)]| -> Vec<egui::Pos2> {
+        pts.iter().map(|(x, y)| egui::pos2(o.x + *x, o.y + *y)).collect()
+    };
+    let shadow_col = Color32::from_rgb(0xE6, 0xE6, 0xE6);
+    let dark_blue = Color32::from_rgb(0x26, 0x64, 0x9D);
+    let light_blue = Color32::from_rgb(0x92, 0xB1, 0xCE);
+
+    // 1. Shadow for lower-right arrow (`fill="#E6E6E6"`)
+    // Note: concave arrow polygon split into shaft quad + arrowhead triangle
+    p.add(egui::Shape::convex_polygon(
+        map(&[
+            (37.46, 47.63),
+            (64.11, 32.24),
+            (72.79, 37.26),
+            (46.14, 52.64),
+        ]),
+        shadow_col,
+        egui::Stroke::NONE,
+    ));
+    p.add(egui::Shape::convex_polygon(
+        map(&[(33.02, 45.07), (50.58, 55.21), (30.90, 56.43)]),
+        shadow_col,
+        egui::Stroke::NONE,
+    ));
+
+    // 2. Shadow for upper-left arrow (`fill="#E6E6E6"`)
+    p.add(egui::Shape::convex_polygon(
+        map(&[
+            (16.87, 35.74),
+            (43.51, 20.36),
+            (52.19, 25.37),
+            (25.55, 40.75),
+        ]),
+        shadow_col,
+        egui::Stroke::NONE,
+    ));
+    p.add(egui::Shape::convex_polygon(
+        map(&[(39.07, 17.79), (58.76, 16.57), (56.64, 27.93)]),
+        shadow_col,
+        egui::Stroke::NONE,
+    ));
+
+    // 3. Lower-right dark-blue arrow (`fill="#26649D"`)
+    p.add(egui::Shape::convex_polygon(
+        map(&[
+            (37.46, 41.63),
+            (64.11, 26.24),
+            (72.79, 31.26),
+            (46.14, 46.64),
+        ]),
+        dark_blue,
+        egui::Stroke::NONE,
+    ));
+    p.add(egui::Shape::convex_polygon(
+        map(&[(33.02, 39.07), (50.58, 49.21), (30.90, 50.43)]),
+        dark_blue,
+        egui::Stroke::NONE,
+    ));
+
+    // 4. Upper-left light-blue arrow (`fill="#92B1CE"`)
+    p.add(egui::Shape::convex_polygon(
+        map(&[
+            (16.87, 29.74),
+            (43.51, 14.36),
+            (52.19, 19.37),
+            (25.55, 34.75),
+        ]),
+        light_blue,
+        egui::Stroke::NONE,
+    ));
+    p.add(egui::Shape::convex_polygon(
+        map(&[(39.07, 11.79), (58.76, 10.57), (56.64, 21.93)]),
+        light_blue,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// Paints the exact `resources/Media/svg/light/repeater-illustration.svg` (`321 x 215` viewBox).
+fn paint_repeater_onboarding_illustration(ui: &mut Ui, theme: &crate::ui::theme::Theme) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(321.0, 215.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    let o = rect.min;
+    let r = |x: f32, y: f32, w: f32, h: f32| {
+        egui::Rect::from_min_size(egui::pos2(o.x + x, o.y + y), Vec2::new(w, h))
+    };
+
+    let top_card_bg = if theme.dark {
+        Color32::from_rgb(0x2D, 0x31, 0x38)
+    } else {
+        Color32::from_rgb(0xFB, 0xFC, 0xFD)
+    };
+    let req_card_bg = if theme.dark {
+        Color32::from_rgb(0x2B, 0x2F, 0x36)
+    } else {
+        Color32::WHITE
+    };
+    let resp_card_bg = if theme.dark {
+        Color32::from_rgb(0x27, 0x2B, 0x31)
+    } else {
+        Color32::from_rgb(0xF5, 0xF8, 0xFB)
+    };
+    let bar_col = if theme.dark {
+        Color32::from_rgb(0x43, 0x48, 0x52)
+    } else {
+        Color32::from_rgb(0xE6, 0xE6, 0xE6)
+    };
+    let menu_bg = if theme.dark {
+        Color32::from_rgb(0x36, 0x3B, 0x44)
+    } else {
+        Color32::from_rgb(0xF8, 0xF8, 0xF8)
+    };
+    let menu_bar_col = if theme.dark {
+        Color32::from_rgb(0x52, 0x58, 0x64)
+    } else {
+        Color32::from_rgb(0xD5, 0xD5, 0xD5)
+    };
+    let muted_txt = Color32::from_rgba_unmultiplied(0x2B, 0x2B, 0x2B, 140);
+
+    // 1. Top table card (`320.3 x 70.5`) + 4 rounded gray bars
+    p.rect_filled(r(0.7, 0.0, 320.3, 70.5), 2.0, top_card_bg);
+    for y in [11.5f32, 24.3, 37.2, 50.0] {
+        p.rect_filled(r(10.9, y, 298.5, 6.4), 3.2, bar_col);
+    }
+
+    // 2. Bottom-left `Request` card (`157.6 x 116.6` at `y = 76.9`) + Bottom-right `Response` card
+    p.rect_filled(r(0.7, 76.9, 157.6, 116.6), 2.0, req_card_bg);
+    p.rect_filled(r(164.7, 76.9, 156.3, 116.6), 2.0, resp_card_bg);
+    p.text(
+        egui::pos2(o.x + 8.0, o.y + 84.0),
+        egui::Align2::LEFT_TOP,
+        "Request",
+        egui::FontId::proportional(11.0),
+        if theme.dark {
+            Color32::from_gray(160)
+        } else {
+            muted_txt
+        },
+    );
+    p.text(
+        egui::pos2(o.x + 172.0, o.y + 84.0),
+        egui::Align2::LEFT_TOP,
+        "Response",
+        egui::FontId::proportional(11.0),
+        if theme.dark {
+            Color32::from_gray(160)
+        } else {
+            muted_txt
+        },
+    );
+
+    // 3. Pointer cursor arrow + "Right-click"
+    let cursor_col = if theme.dark {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(0x16, 0x16, 0x16)
+    };
+    p.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(o.x + 33.7, o.y + 102.0),
+            egui::pos2(o.x + 43.3, o.y + 107.1),
+            egui::pos2(o.x + 39.2, o.y + 108.1),
+            egui::pos2(o.x + 36.7, o.y + 112.1),
+        ],
+        cursor_col,
+        egui::Stroke::NONE,
+    ));
+    p.line_segment(
+        [
+            egui::pos2(o.x + 38.4, o.y + 107.8),
+            egui::pos2(o.x + 41.8, o.y + 112.4),
+        ],
+        egui::Stroke::new(1.8, cursor_col),
+    );
+    p.text(
+        egui::pos2(o.x + 51.5, o.y + 102.5),
+        egui::Align2::LEFT_TOP,
+        "Right-click",
+        egui::FontId::proportional(10.5),
+        cursor_col,
+    );
+
+    // 4. Context menu popup card (`92.2 x 90.9` at `x = 48.3, y = 123.9`)
+    p.rect_filled(
+        r(50.3, 125.9, 92.2, 90.9),
+        2.0,
+        Color32::from_rgba_unmultiplied(0, 0, 0, 18),
+    );
+    p.rect_filled(r(48.3, 123.9, 92.2, 90.9), 2.0, menu_bg);
+    for (y, w) in [(131.8f32, 76.4f32), (141.2, 68.2), (150.6, 54.1)] {
+        p.rect_filled(r(56.3, y, w, 5.8), 2.9, menu_bar_col);
+    }
+    // Blue `#26659E` highlight row with "Send to Repeater"
+    p.rect_filled(
+        r(48.3, 159.7, 92.2, 19.2),
+        0.0,
+        Color32::from_rgb(0x26, 0x65, 0x9E),
+    );
+    p.text(
+        egui::pos2(o.x + 55.0, o.y + 169.3),
+        egui::Align2::LEFT_CENTER,
+        "Send to Repeater",
+        egui::FontId::proportional(9.8),
+        Color32::WHITE,
+    );
+    for (y, w) in [(183.0f32, 55.8f32), (192.4, 68.2), (201.8, 54.1)] {
+        p.rect_filled(r(56.3, y, w, 5.8), 2.9, menu_bar_col);
+    }
+
+    // 5. Curved dashed arc from `(99, 108)` around `(194, 138)` to `(143, 169)`
+    let arc_pts = [
+        (104.0f32, 108.0f32),
+        (148.0, 108.0),
+        (175.0, 114.0),
+        (190.0, 126.0),
+        (194.0, 140.0),
+        (188.0, 154.0),
+        (172.0, 165.0),
+        (143.0, 169.0),
+    ];
+    let dash_col = Color32::from_rgb(0xCC, 0xCC, 0xCC);
+    for pair in arc_pts.windows(2) {
+        let a = egui::pos2(o.x + pair[0].0, o.y + pair[0].1);
+        let b = egui::pos2(o.x + pair[1].0, o.y + pair[1].1);
+        let mid = egui::pos2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+        p.line_segment([a, mid], egui::Stroke::new(1.0, dash_col));
+    }
+    // Arrowhead at `(143, 169)`
+    p.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(o.x + 142.3, o.y + 169.4),
+            egui::pos2(o.x + 145.9, o.y + 167.3),
+            egui::pos2(o.x + 145.9, o.y + 171.5),
+        ],
+        dash_col,
+        egui::Stroke::NONE,
+    ));
+}
+
+/// The row of tabs, matching `quick-start-pro-repeater.png`, `managing-tabs.html`, and `groups.html`.
+fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
+    let tab_bar_bg = theme.color("ui.background.1");
+    let border_col = theme.color("ui.border.1");
+
+    egui::Frame::new()
+        .fill(tab_bar_bg)
+        .inner_margin(egui::Margin::symmetric(0, 0))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let mut close_action: Option<usize> = None;
+                let mut close_others: Option<usize> = None;
+                let mut reopen_closed = false;
+
+                for index in 0..app.panels.repeater.tabs.len() {
+                    let selected = index == app.panels.repeater.active;
+                    let name = app.panels.repeater.tabs[index].name.clone();
+                    let grp_color = app.panels.repeater.tabs[index].group_color;
+                    let cell_bg = if selected {
+                        theme.color("ui.background.0")
+                    } else {
+                        tab_bar_bg
+                    };
+
+                    let cell_out = egui::Frame::new()
+                        .fill(cell_bg)
+                        .inner_margin(egui::Margin::symmetric(10, 5))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                if let Some(swatch) = group_color_swatch(grp_color) {
+                                    let (dot_rect, _) =
+                                        ui.allocate_exact_size(Vec2::new(8.0, 14.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(dot_rect.center(), 3.5, swatch);
+                                }
+                                let label = eframe::egui::RichText::new(&name)
+                                    .size(12.0)
+                                    .color(theme.color(if selected {
+                                        "ui.text.heading"
+                                    } else {
+                                        "ui.text.body"
+                                    }));
+                                let tab_resp = ui.add(
+                                    egui::Label::new(label).sense(egui::Sense::click()),
+                                );
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("×")
+                                                .size(12.0)
+                                                .color(theme.color("ui.icon.default")),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .on_hover_text("Close this tab")
+                                    .clicked()
+                                    && app.panels.repeater.tabs.len() > 1
+                                {
+                                    close_action = Some(index);
+                                }
+                                tab_resp
+                            })
+                            .inner
+                        });
+
+                    let cell_rect = cell_out.response.rect;
+                    // Right vertical divider line between tab cells (`quick-start-pro-repeater.png`)
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(cell_rect.max.x, cell_rect.min.y),
+                            egui::pos2(cell_rect.max.x, cell_rect.max.y),
+                        ],
+                        egui::Stroke::new(1.0, border_col),
+                    );
+                    if selected {
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_max(
+                                egui::pos2(cell_rect.min.x, cell_rect.max.y - 3.0),
+                                egui::pos2(cell_rect.max.x, cell_rect.max.y),
+                            ),
+                            0.0,
+                            theme.color("ui.icon.accent"),
+                        );
+                    }
+
+                    let mut tab_resp = cell_out.inner;
+                    tab_resp.rect = cell_rect;
+                    if tab_resp.clicked() {
+                        app.panels.repeater.active = index;
+                    }
+                    if tab_resp.double_clicked() {
+                        app.panels.repeater.rename_tab = Some(index);
+                        app.panels.repeater.rename_draft = name.clone();
+                    }
+                    super::show_persistent_context_menu(&tab_resp, |ui| {
+                        if ui.button("Rename tab").clicked() {
+                            app.panels.repeater.rename_tab = Some(index);
+                            app.panels.repeater.rename_draft = name.clone();
+                            ui.close();
+                        }
+                        if ui.button("Duplicate tab").clicked() {
+                            app.panels.repeater.active = index;
+                            app.panels.repeater.duplicate_active();
+                            ui.close();
+                        }
+                        ui.menu_button("Add tab to group / color", |ui| {
+                            for (code, cname) in [
+                                (0u8, "No group"),
+                                (1u8, "Purple group"),
+                                (2u8, "Red group"),
+                                (3u8, "Yellow group"),
+                                (4u8, "Green group"),
+                                (5u8, "Blue group"),
+                                (6u8, "Teal group"),
+                                (7u8, "Magenta group"),
+                            ] {
+                                if ui.button(cname).clicked() {
+                                    app.panels.repeater.tabs[index].group_color = code;
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if ui.button("Close tab").clicked() {
+                            close_action = Some(index);
+                            ui.close();
+                        }
+                        if ui.button("Close other tabs").clicked() {
+                            close_others = Some(index);
+                            ui.close();
+                        }
+                        if !app.panels.repeater.closed_tabs.is_empty()
+                            && ui.button("Reopen closed tab").clicked()
+                        {
+                            reopen_closed = true;
+                            ui.close();
+                        }
+                    });
+                }
+
+                if let Some(idx) = close_action {
+                    if let Some(id) = app.panels.repeater.tabs.get(idx).and_then(|t| t.pending) {
+                        app.cancel_request(id);
+                    }
+                    app.panels.repeater.close(idx);
+                }
+                if let Some(idx) = close_others {
+                    app.panels.repeater.close_other_tabs(idx);
+                }
+                if reopen_closed {
+                    app.panels.repeater.reopen_closed_tab();
+                }
+
+                ui.add_space(6.0);
+                // `...` tab list menu (`quick-start-pro-repeater.png`)
+                ui.menu_button("...", |ui| {
+                    for idx in 0..app.panels.repeater.tabs.len() {
+                        let tname = format!(
+                            "{}. {} ({})",
+                            idx + 1,
+                            app.panels.repeater.tabs[idx].name,
+                            app.panels.repeater.tabs[idx].host
+                        );
+                        if ui
+                            .selectable_label(app.panels.repeater.active == idx, tname)
+                            .clicked()
+                        {
+                            app.panels.repeater.active = idx;
+                            ui.close();
+                        }
+                    }
+                    if !app.panels.repeater.closed_tabs.is_empty() {
+                        ui.separator();
+                        if ui.button("Reopen closed tab").clicked() {
+                            app.panels.repeater.reopen_closed_tab();
+                            ui.close();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                if ui.button("+").on_hover_text("New tab").clicked() {
+                    let host = app.panels.repeater.active().host.clone();
+                    app.panels.repeater.open(&host, "");
+                }
+                ui.add_space(6.0);
+                if ui
+                    .small_button("? Getting started")
+                    .on_hover_text("Open Repeater Getting Started guide")
+                    .clicked()
+                {
+                    app.panels.repeater.hide_getting_started_forever = false;
+                    app.panels.repeater.force_getting_started = true;
+                }
+            });
+        });
+
+    let sep_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), 1.0),
+    );
+    ui.painter().rect_filled(sep_rect, 0.0, border_col);
+    ui.add_space(1.0);
+
+    if let Some(r_idx) = app.panels.repeater.rename_tab {
+        if r_idx < app.panels.repeater.tabs.len() {
+            ui.horizontal(|ui| {
+                ui.label("Rename tab:");
+                ui.text_edit_singleline(&mut app.panels.repeater.rename_draft);
+                if ui.button("Apply").clicked() {
+                    app.panels.repeater.tabs[r_idx].name =
+                        app.panels.repeater.rename_draft.trim().to_string();
+                    app.panels.repeater.rename_tab = None;
+                }
+                if ui.button("Cancel").clicked() {
+                    app.panels.repeater.rename_tab = None;
+                }
+            });
+        } else {
+            app.panels.repeater.rename_tab = None;
+        }
+    }
 }
 
 /// Burp's response analyzers. Backed by `http/message/responses/analysis/*` in the shipped API:
@@ -256,21 +1935,14 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
     } else {
         Vec::new()
     };
-    // Variations compare this response against its siblings from the same host in the history.
     let host = app.panels.repeater.active().host.clone();
     let siblings: Vec<String> = app
         .log
         .iter()
         .rev()
-        .filter(|tx| {
-            !tx.response.is_empty() && tx.target != host && host.ends_with(&tx.host)
-        })
+        .filter(|tx| !tx.response.is_empty() && tx.target != host && host.ends_with(&tx.host))
         .take(20)
-        .map(|tx| {
-            crate::analysis::split_message(&tx.response)
-                .1
-                .to_string()
-        })
+        .map(|tx| crate::analysis::split_message(&tx.response).1.to_string())
         .collect();
     let variations = crate::analysis::variations(body, &siblings);
     let (unique, partial, shared) = crate::analysis::variation_summary(&variations);
@@ -280,10 +1952,7 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
         super::label(
             ui,
             &theme,
-            &format!(
-                "Attributes: {}",
-                if markup { attributes.len() } else { 0 }
-            ),
+            &format!("Attributes: {}", if markup { attributes.len() } else { 0 }),
         );
         super::label(
             ui,
@@ -348,11 +2017,15 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
                     let text = match row {
                         crate::analysis::Variation::Unique => "unique".to_string(),
                         crate::analysis::Variation::Shared(n) => format!("in {n}"),
-                        crate::analysis::Variation::Partial(n, total) => format!("in {n} of {total}"),
+                        crate::analysis::Variation::Partial(n, total) => {
+                            format!("in {n} of {total}")
+                        }
                     };
                     let colour = match row {
                         crate::analysis::Variation::Unique => theme.color("ui.icon.warning"),
-                        crate::analysis::Variation::Partial(_, _) => theme.color("ui.icon.information"),
+                        crate::analysis::Variation::Partial(_, _) => {
+                            theme.color("ui.icon.information")
+                        }
                         crate::analysis::Variation::Shared(_) => theme.color("ui.icon.default"),
                     };
                     ui.horizontal(|ui| {
@@ -367,43 +2040,128 @@ fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
     });
 }
 
+/// Resolves a `3xx` `Location` header into `(new_host_origin, new_request_path)`.
+pub fn redirect_url(
+    current_host: &str,
+    status: Option<u16>,
+    response: &str,
+) -> Option<(String, String)> {
+    let code = status?;
+    if !matches!(code, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let (head, _) = crate::analysis::split_message(response);
+    let location = head.lines().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        k.trim()
+            .eq_ignore_ascii_case("location")
+            .then(|| v.trim().to_string())
+    })?;
+    if location.is_empty() {
+        return None;
+    }
+    if location.starts_with("http://") || location.starts_with("https://") {
+        let parsed = url::Url::parse(&location).ok()?;
+        let origin = format!(
+            "{}://{}{}",
+            parsed.scheme(),
+            parsed.host_str()?,
+            parsed.port().map(|p| format!(":{p}")).unwrap_or_default()
+        );
+        let mut path = parsed.path().to_string();
+        if path.is_empty() {
+            path.push('/');
+        }
+        if let Some(q) = parsed.query() {
+            path.push('?');
+            path.push_str(q);
+        }
+        Some((origin, path))
+    } else {
+        let path = if location.starts_with('/') {
+            location
+        } else {
+            format!("/{location}")
+        };
+        Some((current_host.to_string(), path))
+    }
+}
+
+pub(crate) fn follow_redirect(app: &mut App, next_host: &str, next_path: &str) {
+    let authority = next_host
+        .strip_prefix("http://")
+        .or_else(|| next_host.strip_prefix("https://"))
+        .unwrap_or(next_host)
+        .split('/')
+        .next()
+        .unwrap_or("localhost")
+        .to_string();
+    let tab = app.panels.repeater.active_mut();
+    tab.host = next_host.to_string();
+    tab.raw = format!("GET {next_path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
+    send(app);
+}
+
+/// Sends all tabs in the active group (or all tabs when ungrouped) in sequence or parallel (`send-group.html`).
+pub(crate) fn send_group(app: &mut App) {
+    let active_grp = app.panels.repeater.active().group_color;
+    let indices: Vec<usize> = (0..app.panels.repeater.tabs.len())
+        .filter(|&i| active_grp == 0 || app.panels.repeater.tabs[i].group_color == active_grp)
+        .collect();
+    let total = indices.len();
+    let prev_active = app.panels.repeater.active;
+    for (ord, idx) in indices.into_iter().enumerate() {
+        app.panels.repeater.active = idx;
+        app.panels.repeater.tabs[idx].parallel_order_badge = Some((ord + 1, total));
+        send(app);
+    }
+    app.panels.repeater.active = prev_active;
+    app.status = format!("Sent {total} grouped Repeater request(s)");
+}
+
 pub(crate) fn send(app: &mut App) {
+    if app.panels.repeater.active().sending {
+        return;
+    }
     let host = app.panels.repeater.active().host.trim().to_string();
-    // A live Bambda script rewrites the request before it leaves, and a broken one blocks the send
-    // rather than quietly sending something the operator did not intend.
-    let raw = match app.panels.extender.apply_live(&app.panels.repeater.active().raw) {
+    let target = match crate::http_target::HttpTarget::parse(&host) {
+        Ok(target) => target,
+        Err(error) => {
+            app.status = error;
+            return;
+        }
+    };
+    let raw = match app
+        .panels
+        .extender
+        .apply_live(&app.panels.repeater.active().raw)
+    {
         Ok(raw) => raw,
         Err(why) => {
             app.status = format!("Bambda rejected the request: {why}");
             return;
         }
     };
-    let secure = host.starts_with("https://");
-    let rest = host
-        .strip_prefix("http://")
-        .or_else(|| host.strip_prefix("https://"))
-        .unwrap_or(&host)
-        .to_string();
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(&rest);
-    let (hostname, port) = match authority.rsplit_once(':') {
-        Some((h, p)) => match p.parse::<u16>() {
-            Ok(port) => (h.to_string(), port),
-            Err(_) => (authority.to_string(), 80),
-        },
-        None => (authority.to_string(), 80),
-    };
-    if hostname.is_empty() {
-        app.status = "Target is missing a host".into();
-        return;
-    }
     let tab = app.panels.repeater.active_mut();
     tab.status = None;
-    tab.response = format!("Sending to {hostname}:{port}…");
-    let id = app.send_request(hostname, port, raw, secure);
+    tab.response.clear();
+    tab.in_flight = Some((host, raw.clone(), std::time::Instant::now()));
+    let id = app.send_request(target.host, target.port, raw, target.secure);
     let tab = app.panels.repeater.active_mut();
     tab.pending = Some(id);
     tab.sending = true;
     app.status = format!("Sent request #{id}");
+}
+
+pub(crate) fn cancel(app: &mut App) {
+    if let Some(id) = app.panels.repeater.active_mut().pending.take() {
+        app.cancel_request(id);
+        let tab = app.panels.repeater.active_mut();
+        tab.sending = false;
+        tab.in_flight = None;
+        tab.response = "Request cancelled".into();
+        app.status = "Repeater request cancelled".into();
+    }
 }
 
 #[cfg(test)]
@@ -411,17 +2169,54 @@ mod tests {
     use super::*;
     use crate::ui::app::App;
 
-    /// Burp keeps several requests open at once, each in its own tab, and something sent to the
-    /// Repeater arrives in a new one.
+    #[test]
+    fn closing_an_earlier_tab_preserves_the_selected_request() {
+        let mut panel = RepeaterPanel::default();
+        panel.open("http://a.test", "GET /a HTTP/1.1\r\n\r\n");
+        panel.open("http://b.test", "GET /b HTTP/1.1\r\n\r\n");
+        panel.open("http://c.test", "GET /c HTTP/1.1\r\n\r\n");
+        panel.active = 2;
+        panel.close(0);
+        assert_eq!(panel.active().host, "http://b.test");
+        assert!(panel.reopen_closed_tab());
+    }
+
+    #[test]
+    fn replies_land_in_the_owning_tab_and_history_restores_the_exchange() {
+        let mut panel = RepeaterPanel::default();
+        panel.active_mut().pending = Some(1);
+        panel.active_mut().sending = true;
+        panel.open("http://b.test", "GET /b HTTP/1.1\r\n\r\n");
+        panel.active_mut().pending = Some(2);
+        assert!(panel.complete(1, 201, "first response".into()));
+        assert!(!panel.tabs[0].sending);
+        assert_eq!(panel.tabs[0].response, "first response");
+        assert_eq!(panel.active().pending, Some(2));
+        assert!(panel.complete(2, 202, "second response".into()));
+        panel.active_mut().pending = Some(3);
+        panel.active_mut().raw = "GET /changed HTTP/1.1\r\n\r\n".into();
+        panel.complete(3, 200, "third response".into());
+        assert!(panel.active_mut().navigate_history(-1));
+        assert!(panel.active().raw.contains("/b"));
+        assert_eq!(panel.active().response, "second response");
+        assert!(panel.active_mut().navigate_history(1));
+        assert!(panel.active().raw.contains("/changed"));
+        assert_eq!(panel.active().response, "third response");
+        assert!(!panel.complete(1, 500, "stale response".into()));
+    }
+
     #[test]
     fn the_repeater_keeps_several_requests_open() {
         let ctx = eframe::egui::Context::default();
         let mut app = App::with_context(&ctx);
-        app.panels.repeater
-            .open("http://a.test/one", "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n");
-        app.panels
-            .repeater
-            .open("http://b.test/two", "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
+        app.panels.repeater.open(
+            "http://a.test/one",
+            "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n",
+        );
+        app.panels.repeater.open(
+            "http://b.test/two",
+            "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n",
+        );
 
         assert_eq!(app.panels.repeater.tabs.len(), 3, "the first tab plus two");
         assert_eq!(app.panels.repeater.active, 2, "the last one sent is open");
@@ -430,7 +2225,6 @@ mod tests {
             "the open tab is the one that was sent last"
         );
 
-        // Closing a tab keeps at least one open.
         app.panels.repeater.close(2);
         assert_eq!(app.panels.repeater.tabs.len(), 2);
         app.panels.repeater.close(0);
@@ -438,13 +2232,14 @@ mod tests {
         assert_eq!(app.panels.repeater.tabs.len(), 1, "one tab always remains");
     }
 
-    /// The tab bar is drawn, with the name of the open tab on it.
     #[test]
     fn the_repeater_draws_its_tabs() {
         let ctx = eframe::egui::Context::default();
         let mut app = App::with_context(&ctx);
-        app.panels.repeater
-            .open("http://b.test/two", "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
+        app.panels.repeater.open(
+            "http://b.test/two",
+            "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n",
+        );
 
         let output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
             eframe::egui::CentralPanel::default().show(ctx, |ui| {
@@ -460,7 +2255,10 @@ mod tests {
             })
             .collect();
         let all = texts.join("\n");
-        assert!(all.contains("b.test"), "the tab should be named after the host: {all}");
+        assert!(
+            all.contains("b.test"),
+            "the tab should be named after the host: {all}"
+        );
         assert!(
             all.contains("/two"),
             "the open request should be in the editor: {all}"

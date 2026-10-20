@@ -145,18 +145,147 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         automaton(app, ui);
         return;
     }
-    // Burp's Sequencer shows the sub-tab name and then the live-capture form directly;
-    // it carries no extra panel heading.
+    if app.view == 2 {
+        heading(ui, &theme, "Token handling");
+        muted(
+            ui,
+            &theme,
+            "Configure how each token is prepared before character-level and bit-level FIPS 140-2 statistical tests run.",
+        );
+        ui.add_space(6.0);
+        ui.label("• Character-level analysis: counts distinct symbols, frequency distribution, and Shannon bits per character.");
+        ui.label("• Bit-level FIPS 140-2 suite (Manual load tab): Monobit, Poker, Runs, and Long run tests over sample sets.");
+        ui.add_space(6.0);
+        muted(
+            ui,
+            &theme,
+            &format!(
+                "Current sample pool: {} sample(s) loaded",
+                app.panels.sequencer.automaton.len()
+            ),
+        );
+        return;
+    }
+    heading(ui, &theme, "Select live capture request");
+    muted(
+        ui,
+        &theme,
+        "Send requests here from other tools to configure a live capture. Select the request to \
+         use, configure the other options below, then click \"Start live capture\".",
+    );
+    ui.add_space(6.0);
 
-    ui.horizontal(|ui| {
-        ui.label("Token");
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(86.0);
+            if ui
+                .add_sized([80.0, 24.0], eframe::egui::Button::new("Remove"))
+                .clicked()
+            {
+                app.panels.sequencer.text.clear();
+            }
+            if ui
+                .add_sized([80.0, 24.0], eframe::egui::Button::new("Clear"))
+                .clicked()
+            {
+                app.panels.sequencer.text.clear();
+                app.panels.sequencer.automaton.clear();
+            }
+            if ui
+                .add_sized([80.0, 24.0], eframe::egui::Button::new("+ Repeater"))
+                .on_hover_text("Load active Repeater response")
+                .clicked()
+            {
+                app.panels.sequencer.text = app.panels.repeater.active().response.clone();
+            }
+        });
+        ui.add_space(6.0);
+        eframe::egui::Frame::new()
+            .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+            .show(ui, |ui| {
+                ui.set_min_width(460.0);
+                ui.set_min_height(110.0);
+                eframe::egui::ScrollArea::vertical()
+                    .id_salt("seq-live-requests")
+                    .max_height(130.0)
+                    .show(ui, |ui| {
+                        eframe::egui::Grid::new("seq-live-grid")
+                            .num_columns(3)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for h in ["# ▲", "Host", "Request"] {
+                                    ui.label(
+                                        eframe::egui::RichText::new(h)
+                                            .strong()
+                                            .color(theme.color("ui.text.body")),
+                                    );
+                                }
+                                ui.end_row();
+                                let recent: Vec<_> = app
+                                    .log
+                                    .iter()
+                                    .enumerate()
+                                    .rev()
+                                    .take(25)
+                                    .map(|(i, tx)| {
+                                        (
+                                            i,
+                                            tx.host_url(),
+                                            format!("{} {}", tx.method, tx.path_and_query()),
+                                            tx.target.clone(),
+                                            tx.request.clone(),
+                                            tx.response.clone(),
+                                        )
+                                    })
+                                    .collect();
+                                for (i, host_url, req_line, target, req, resp) in recent {
+                                    let r1 = ui.label(format!("{}", i + 1));
+                                    let r2 = ui.label(&host_url);
+                                    let r3 = ui.selectable_label(
+                                        app.panels.sequencer.text == resp && !resp.is_empty(),
+                                        eframe::egui::RichText::new(&req_line).monospace(),
+                                    );
+                                    if r1.clicked() || r2.clicked() || r3.clicked() {
+                                        app.panels.sequencer.text = resp.clone();
+                                    }
+                                    super::attach_message_context_menu(
+                                        app, &r3, &target, &req, &resp,
+                                    );
+                                    ui.end_row();
+                                }
+                            });
+                    });
+            });
+    });
+
+    ui.add_space(6.0);
+    if ui.button("Start live capture").clicked() || ui.button("Analyze").clicked() {
+        analyze(app);
+    }
+    ui.add_space(6.0);
+    ui.separator();
+    ui.add_space(4.0);
+
+    heading(ui, &theme, "Token location within response");
+    muted(
+        ui,
+        &theme,
+        "Select the location in the response where the token appears.",
+    );
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Cookie / Form field / Custom location:");
         ui.add(
             eframe::egui::TextEdit::singleline(&mut app.panels.sequencer.token)
-                .desired_width(220.0)
+                .hint_text("Cookie or parameter name (e.g. session)")
+                .desired_width(240.0)
                 .font(eframe::egui::TextStyle::Monospace),
         );
-        if ui.button("Analyze").clicked() {
+        if ui.button("Configure").clicked() {
             analyze(app);
+        }
+        if ui.button("Load from Repeater").clicked() {
+            app.panels.sequencer.text = app.panels.repeater.active().response.clone();
         }
     });
 

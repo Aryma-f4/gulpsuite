@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "platforms": {
+    "macos-arm64": {
+      "platform": "macos-arm64",
+      "revision": "1721783",
+      "source_commit": "2ed30c0115c4b9a98dfcfc8c3407dd08dbec2a6f",
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1721783/chrome-mac.zip",
+      "sha256": "576b3a73e8e7f567e9cf327299da89a1ab522442a3ad7f63f3a7c37d8cfb86a4",
+      "executable": "Chromium.app/Contents/MacOS/Chromium",
+      "notices": [
+        "CHROMIUM-LICENSE"
+      ],
+      "notice_files": {
+        "CHROMIUM-LICENSE": {
+          "url": "https://chromium.googlesource.com/chromium/src/+/2ed30c0115c4b9a98dfcfc8c3407dd08dbec2a6f/LICENSE?format=TEXT",
+          "text": "// Copyright 2015 The Chromium Authors\n//\n// Redistribution and use in source and binary forms, with or without\n// modification, are permitted provided that the following conditions are\n// met:\n//\n//    * Redistributions of source code must retain the above copyright\n// notice, this list of conditions and the following disclaimer.\n//    * Redistributions in binary form must reproduce the above\n// copyright notice, this list of conditions and the following disclaimer\n// in the documentation and/or other materials provided with the\n// distribution.\n//    * Neither the name of Google LLC nor the names of its\n// contributors may be used to endorse or promote products derived from\n// this software without specific prior written permission.\n//\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+          "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+        }
+      },
+      "third_party_credits": "chrome://credits"
+    },
+    "linux-x64": {
+      "platform": "linux-x64",
+      "revision": "1721758",
+      "source_commit": "61b43c78caf2679a26e1215b3ba9f4a01f3d7657",
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1721758/chrome-linux.zip",
+      "sha256": "0d610b4db86c9bab7b696710c5218a154baf93e8fde5b19c322c5ad10744037c",
+      "executable": "chrome",
+      "notices": [
+        "CHROMIUM-LICENSE"
+      ],
+      "notice_files": {
+        "CHROMIUM-LICENSE": {
+          "url": "https://chromium.googlesource.com/chromium/src/+/61b43c78caf2679a26e1215b3ba9f4a01f3d7657/LICENSE?format=TEXT",
+          "text": "// Copyright 2015 The Chromium Authors\n//\n// Redistribution and use in source and binary forms, with or without\n// modification, are permitted provided that the following conditions are\n// met:\n//\n//    * Redistributions of source code must retain the above copyright\n// notice, this list of conditions and the following disclaimer.\n//    * Redistributions in binary form must reproduce the above\n// copyright notice, this list of conditions and the following disclaimer\n// in the documentation and/or other materials provided with the\n// distribution.\n//    * Neither the name of Google LLC nor the names of its\n// contributors may be used to endorse or promote products derived from\n// this software without specific prior written permission.\n//\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+          "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+        }
+      },
+      "third_party_credits": "chrome://credits"
+    },
+    "macos-x64": {
+      "platform": "macos-x64",
+      "revision": "1721780",
+      "source_commit": "c17d235c6cebc6691cba2eca2464ecc5acff3df5",
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Mac/1721780/chrome-mac.zip",
+      "sha256": "24e5beb7d56dfd81c4655ac55e2ecef7a0550d35e6acd5b73a700c0bfae1602e",
+      "executable": "Chromium.app/Contents/MacOS/Chromium",
+      "notices": [
+        "CHROMIUM-LICENSE"
+      ],
+      "notice_files": {
+        "CHROMIUM-LICENSE": {
+          "url": "https://chromium.googlesource.com/chromium/src/+/c17d235c6cebc6691cba2eca2464ecc5acff3df5/LICENSE?format=TEXT",
+          "text": "// Copyright 2015 The Chromium Authors\n//\n// Redistribution and use in source and binary forms, with or without\n// modification, are permitted provided that the following conditions are\n// met:\n//\n//    * Redistributions of source code must retain the above copyright\n// notice, this list of conditions and the following disclaimer.\n//    * Redistributions in binary form must reproduce the above\n// copyright notice, this list of conditions and the following disclaimer\n// in the documentation and/or other materials provided with the\n// distribution.\n//    * Neither the name of Google LLC nor the names of its\n// contributors may be used to endorse or promote products derived from\n// this software without specific prior written permission.\n//\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+          "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+        }
+      },
+      "third_party_credits": "chrome://credits"
+    },
+    "windows-x64": {
+      "platform": "windows-x64",
+      "revision": "1721709",
+      "source_commit": "b2a1e640488ef0f55fb06cb34a25fc00968c26aa",
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/1721709/chrome-win.zip",
+      "sha256": "a9fa268c932243cf6cf5edc8ff3842c0ff556b7846f3ffe410aab82fa2ed7417",
+      "executable": "chrome.exe",
+      "notices": [
+        "CHROMIUM-LICENSE"
+      ],
+      "notice_files": {
+        "CHROMIUM-LICENSE": {
+          "url": "https://chromium.googlesource.com/chromium/src/+/b2a1e640488ef0f55fb06cb34a25fc00968c26aa/LICENSE?format=TEXT",
+          "text": "// Copyright 2015 The Chromium Authors\n//\n// Redistribution and use in source and binary forms, with or without\n// modification, are permitted provided that the following conditions are\n// met:\n//\n//    * Redistributions of source code must retain the above copyright\n// notice, this list of conditions and the following disclaimer.\n//    * Redistributions in binary form must reproduce the above\n// copyright notice, this list of conditions and the following disclaimer\n// in the documentation and/or other materials provided with the\n// distribution.\n//    * Neither the name of Google LLC nor the names of its\n// contributors may be used to endorse or promote products derived from\n// this software without specific prior written permission.\n//\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+          "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+        }
+      },
+      "third_party_credits": "chrome://credits"
+    }
+  }
+}

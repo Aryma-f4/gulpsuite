@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use eframe::egui::{
-    Align, Button, Context, CornerRadius, Frame, Layout, Rect, Response, RichText, Sense,
+    Button, Context, CornerRadius, Frame, Layout, Rect, Response, RichText, Sense,
     Key, Modifiers, Stroke, TextStyle, Ui, Vec2, pos2,
 };
 
@@ -55,14 +55,14 @@ pub const TOOL_VIEWS: [&[&str]; 13] = [
     &["Site map", "Scope", "Issues"],
     // Proxy, with the sub-view names Burp's own documentation uses.
     &["Intercept", "HTTP history", "WebSockets history", "Match and replace", "Proxy settings"],
-    // Intruder, the attack editor's side panels.
-    &["Positions", "Payloads", "Options", "Payload generation", "Resource pool"],
+    // Intruder: single top-level view; attack tabs and side panels (Payloads, Resource pool, Settings) live inside Intruder.
+    &["Intruder"],
     // Repeater
     &["Repeater"],
     // Collaborator
     &["Server", "Project"],
     // Sequencer
-    &["Manual", "Automaton"],
+    &["Live capture", "Manual load", "Sequencer settings"],
     // Decoder
     &["Decoder"],
     // Comparer
@@ -205,11 +205,255 @@ pub struct Transaction {
 
 impl Transaction {
     pub fn scheme(&self) -> &'static str {
-        if self.target.starts_with("https://") || self.status == 200 && self.target.contains(":443") {
+        if self.secure
+            || self.target.starts_with("https://")
+            || self.status == 200 && self.target.contains(":443")
+        {
             "https"
         } else {
             "http"
         }
+    }
+
+    pub fn host_url(&self) -> String {
+        let host = if !self.host.is_empty() {
+            self.host.clone()
+        } else {
+            host_of(&self.target)
+        };
+        format!("{}://{host}", self.scheme())
+    }
+
+    pub fn path_and_query(&self) -> String {
+        if let Ok(parsed) = url::Url::parse(&self.target) {
+            let mut pq = parsed.path().to_string();
+            if pq.is_empty() {
+                pq.push('/');
+            }
+            if let Some(q) = parsed.query() {
+                pq.push('?');
+                pq.push_str(q);
+            }
+            return pq;
+        }
+        if self.target.starts_with('/') {
+            self.target.clone()
+        } else {
+            format!("/{}", self.target)
+        }
+    }
+
+    pub fn has_params(&self) -> bool {
+        if self.path_and_query().contains('?') {
+            return true;
+        }
+        let (_, body) = crate::analysis::split_message(&self.request);
+        !body.trim().is_empty()
+    }
+
+    pub fn mime_type(&self) -> &'static str {
+        let (head, _) = crate::analysis::split_message(&self.response);
+        let ct = head
+            .lines()
+            .find_map(|line| {
+                let (k, v) = line.split_once(':')?;
+                k.trim()
+                    .eq_ignore_ascii_case("content-type")
+                    .then(|| v.trim().to_ascii_lowercase())
+            })
+            .unwrap_or_default();
+        if ct.contains("html") {
+            "HTML"
+        } else if ct.contains("json") {
+            "JSON"
+        } else if ct.contains("javascript") || ct.contains("ecmascript") {
+            "script"
+        } else if ct.contains("css") {
+            "CSS"
+        } else if ct.contains("xml") {
+            "XML"
+        } else if ct.contains("image/") {
+            "image"
+        } else if ct.contains("text/") {
+            "text"
+        } else {
+            ""
+        }
+    }
+
+    pub fn extension(&self) -> String {
+        let pq = self.path_and_query();
+        let path = pq.split('?').next().unwrap_or(&pq);
+        let last = path.rsplit('/').next().unwrap_or("");
+        match last.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() && !ext.is_empty() && ext.len() <= 8 => {
+                ext.to_ascii_lowercase()
+            }
+            _ => String::new(),
+        }
+    }
+
+    pub fn page_title(&self) -> String {
+        let (_, body) = crate::analysis::split_message(&self.response);
+        let lower = body.to_ascii_lowercase();
+        let Some(start) = lower.find("<title") else {
+            return String::new();
+        };
+        let Some(gt) = lower[start..].find('>') else {
+            return String::new();
+        };
+        let content_start = start + gt + 1;
+        let Some(end) = lower[content_start..].find("</title>") else {
+            return String::new();
+        };
+        body[content_start..content_start + end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(48)
+            .collect()
+    }
+
+    /// Generates a Burp-style `curl` command reproducing the HTTP request.
+    pub fn to_curl_command(target: &str, raw_request: &str) -> String {
+        let (head, body) = crate::analysis::split_message(raw_request);
+        let mut lines = head.lines();
+        let first = lines.next().unwrap_or("GET / HTTP/1.1");
+        let method = first.split_whitespace().next().unwrap_or("GET");
+        let mut cmd = format!("curl -i -s -k -X {method}");
+        for line in lines {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some((k, _)) = line.split_once(':') {
+                if k.trim().eq_ignore_ascii_case("content-length")
+                    || k.trim().eq_ignore_ascii_case("host")
+                {
+                    continue;
+                }
+            }
+            let escaped = line.replace('\'', "'\\''");
+            cmd.push_str(&format!(" -H '{escaped}'"));
+        }
+        if !body.is_empty() {
+            let escaped = body.replace('\'', "'\\''");
+            cmd.push_str(&format!(" --data-raw '{escaped}'"));
+        }
+        let escaped_url = target.replace('\'', "'\\''");
+        cmd.push_str(&format!(" '{escaped_url}'"));
+        cmd
+    }
+
+    /// Switches `GET /path?a=1` <-> `POST /path` with `application/x-www-form-urlencoded` body.
+    pub fn toggle_request_method(raw_request: &str) -> String {
+        let (head, body) = crate::analysis::split_message(raw_request);
+        let mut lines: Vec<&str> = head.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.is_empty() {
+            return raw_request.to_string();
+        }
+        let first = lines.remove(0);
+        let mut parts = first.split_whitespace();
+        let method = parts.next().unwrap_or("GET");
+        let uri = parts.next().unwrap_or("/");
+        let version = parts.next().unwrap_or("HTTP/1.1");
+
+        let headers: Vec<String> = lines
+            .into_iter()
+            .filter(|l| {
+                !l.split_once(':').is_some_and(|(k, _)| {
+                    k.trim().eq_ignore_ascii_case("content-length")
+                        || k.trim().eq_ignore_ascii_case("content-type")
+                })
+            })
+            .map(str::to_string)
+            .collect();
+
+        if method.eq_ignore_ascii_case("GET") {
+            let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
+            let new_body = if !query.is_empty() {
+                query.to_string()
+            } else {
+                body.to_string()
+            };
+            let mut out = format!("POST {path} {version}\r\n");
+            for h in headers {
+                out.push_str(&h);
+                out.push_str("\r\n");
+            }
+            out.push_str("Content-Type: application/x-www-form-urlencoded\r\n");
+            out.push_str(&format!("Content-Length: {}\r\n\r\n{}", new_body.len(), new_body));
+            out
+        } else {
+            let base_path = uri.split('?').next().unwrap_or("/");
+            let new_uri = if !body.trim().is_empty() {
+                format!("{base_path}?{}", body.trim())
+            } else {
+                uri.to_string()
+            };
+            let mut out = format!("GET {new_uri} {version}\r\n");
+            for h in headers {
+                out.push_str(&h);
+                out.push_str("\r\n");
+            }
+            out.push_str("\r\n");
+            out
+        }
+    }
+
+    /// Generates a Burp Suite Professional HTML CSRF PoC form for `target` and `raw_request`.
+    pub fn generate_csrf_poc(target: &str, raw_request: &str, auto_submit: bool) -> String {
+        let (head, body) = crate::analysis::split_message(raw_request);
+        let first = head.lines().next().unwrap_or("GET / HTTP/1.1");
+        let mut parts = first.split_whitespace();
+        let method = parts.next().unwrap_or("GET").to_ascii_uppercase();
+        let uri = parts.next().unwrap_or("/");
+        let ( action_url, query_str ) = if let Ok(parsed) = url::Url::parse(target) {
+            let mut base = format!(
+                "{}://{}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or("localhost"),
+                parsed.port().map(|p| format!(":{p}")).unwrap_or_default()
+            );
+            let (p, q) = uri.split_once('?').unwrap_or((parsed.path(), parsed.query().unwrap_or("")));
+            if p.starts_with('/') {
+                base.push_str(p);
+            } else {
+                base.push('/');
+                base.push_str(p);
+            }
+            (base, q.to_string())
+        } else {
+            let (p, q) = uri.split_once('?').unwrap_or((uri, ""));
+            (p.to_string(), q.to_string())
+        };
+
+        let param_source = if method == "GET" {
+            query_str.as_str()
+        } else {
+            body.trim()
+        };
+
+        let mut inputs = String::new();
+        for pair in param_source.split('&').filter(|s| !s.is_empty()) {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            let k_esc = k.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+            let v_esc = v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+            inputs.push_str(&format!(
+                "      <input type=\"hidden\" name=\"{k_esc}\" value=\"{v_esc}\" />\n"
+            ));
+        }
+
+        let script = if auto_submit {
+            "    <script>\n      history.pushState('', '', '/');\n      document.forms[0].submit();\n    </script>\n"
+        } else {
+            ""
+        };
+
+        format!(
+            "<html>\n  <!-- CSRF PoC - generated by Gulpsuite Professional -->\n  <body>\n    <form action=\"{action_url}\" method=\"{method}\">\n{inputs}      <input type=\"submit\" value=\"Submit request\" />\n    </form>\n{script}  </body>\n</html>\n"
+        )
     }
 }
 
@@ -219,11 +463,14 @@ pub struct App {
     pub workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter,
     pub shell: crate::ui::shell::SuiteShell,
     pub proxy: Arc<Proxy>,
+    browser_session: Option<crate::browser::BrowserSession>,
+    browser_updates: Option<Receiver<Result<crate::browser::BrowserSession, String>>>,
     events: Receiver<Event>,
     /// One-shot request results, keyed by the id handed back to the caller.
     responses_in: Receiver<(u64, Result<(u16, String), String>)>,
     pub responses: HashMap<u64, (u16, String)>,
     next_request: u64,
+    request_tasks: HashMap<u64, tokio::task::JoinHandle<()>>,
     /// Everything the proxy has reported, newest last.
     pub log: VecDeque<Transaction>,
     /// The links the responses point at, per host. Burp's site map shows them even when they were
@@ -262,6 +509,7 @@ pub struct App {
     _requests_tx: std::sync::mpsc::Sender<(u64, Result<(u16, String), String>)>,
     /// Progress and results from a running scan.
     pub scanner_updates: Option<std::sync::mpsc::Receiver<panels::scanner::ScanUpdate>>,
+    pub intruder_updates: Option<std::sync::mpsc::Receiver<crate::intruder::AttackUpdate>>,
     /// The last memory reading for the status bar, and when it was taken.
     pub memory_text: String,
     pub memory_checked: std::time::Instant,
@@ -284,13 +532,41 @@ pub struct App {
     /// Live updates from the login replayer worker. Kept on `App` rather than the panel because a
     /// receiver cannot be cloned and `Panels` is cloned wholesale.
     pub replay_updates: Option<std::sync::mpsc::Receiver<panels::replayer::ReplayUpdate>>,
+    /// State for the Engagement tools -> Generate CSRF PoC window: `(target, request, poc_html, auto_submit)`.
+    pub csrf_poc: Option<(String, String, String, bool)>,
+    /// Shows the in-window top menu bar (`Gulp | Project | Intruder | Repeater | View | Help`) on non-macOS platforms.
+    pub show_menu_bar: bool,
+    /// Installs the native macOS NSMenu bar outside the window when running as a desktop app.
+    pub use_native_macos_menu: bool,
+    /// Opens the Save As / Open Project file dialog.
+    pub show_project_dialog: bool,
+    /// Selected category in the multi-section Burp Settings dialog.
+    pub settings_category: usize,
+    /// Search query in the Settings navigation tree.
+    pub settings_search: String,
+    /// 0 = All, 1 = User, 2 = Project in the Settings dialog.
+    pub settings_scope_filter: usize,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut ctx = cc.egui_ctx.clone();
         install_fonts(&mut ctx);
-        App::with_context(&ctx)
+        let mut app = App::with_context(&ctx);
+        let preferred = app.panels.proxy_panel.port;
+        let port = if std::net::TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
+            preferred
+        } else {
+            8081
+        };
+        app.panels.proxy_panel.port = port;
+        app.intercepting = false;
+        app.proxy.set_intercept(false);
+        // On macOS the menu bar lives outside the window in the OS top bar; on Windows/Linux it sits at the top of the window.
+        app.use_native_macos_menu = cfg!(target_os = "macos");
+        app.show_menu_bar = !cfg!(target_os = "macos");
+        app.start_proxy(port);
+        app
     }
 
     /// Builds the app around a context. The window and the tests both go through here, so the
@@ -308,21 +584,27 @@ impl App {
         let proxy = Arc::new(proxy);
 
         // The runtime has to exist before anything spawns onto it; App::new runs on the main thread
-        // with no reactor.
+        // with no reactor. Scale worker threads to hardware parallelism for low-latency TLS/HTTP.
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get().clamp(4, 16))
+            .unwrap_or(4);
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            .worker_threads(workers)
             .enable_all()
             .build()
             .expect("tokio runtime");
 
         // The proxy runs on Tokio threads; the UI polls once a frame. Bridge the two here so the
-        // panels never have to know about Tokio.
+        // panels never have to know about Tokio, and wake the GUI whenever traffic arrives from
+        // the browser even while the browser window has focus.
         let (tx, rx) = channel();
+        let repaint_ctx = _ctx.clone();
         runtime.handle().spawn(async move {
             while let Ok(event) = events.recv().await {
                 if tx.send(event).is_err() {
                     break;
                 }
+                repaint_ctx.request_repaint();
             }
         });
 
@@ -337,10 +619,13 @@ impl App {
             workspace_adapter: crate::ui::workspace_adapter::WorkspaceAdapter::default(),
             shell: crate::ui::shell::SuiteShell::default(),
             proxy,
+            browser_session: None,
+            browser_updates: None,
             events: rx,
             responses_in: req_rx,
             responses: HashMap::new(),
             next_request: 1,
+            request_tasks: HashMap::new(),
             log: VecDeque::new(),
             discovered: BTreeMap::new(),
             tab_rows_height: 0.0,
@@ -361,6 +646,7 @@ impl App {
             panels: panels::Panels::default(),
             _requests_tx: req_tx,
             scanner_updates: None,
+            intruder_updates: None,
             memory_text: "Memory: —".to_string(),
             dashboard: panels::DashboardState::default(),
             wip: crate::ui::wip::WipState::default(),
@@ -373,6 +659,13 @@ impl App {
             discover_updates: None,
             scanner_findings: 0,
             replay_updates: None,
+            csrf_poc: None,
+            show_menu_bar: false,
+            use_native_macos_menu: false,
+            show_project_dialog: false,
+            settings_category: 0,
+            settings_search: String::new(),
+            settings_scope_filter: 0,
             runtime,
         }
         .tuned()
@@ -381,6 +674,7 @@ impl App {
     // ---- proxy control, kept off the UI thread -------------------------------------------
 
     pub fn start_proxy(&mut self, port: u16) {
+        self.proxy.set_intercept(self.intercepting);
         // The settings of the window are the ones the proxy runs with.
         self.proxy.set_tls_interception(self.tls_intercepting);
         self.proxy.set_intercept_response(self.intercepting_responses);
@@ -518,6 +812,65 @@ impl App {
                 Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
             }
         }
+        if let Some(updates) = &self.browser_updates {
+            let result = match updates.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Disconnected) => Some(Err("Browser launcher stopped unexpectedly".into())),
+                Err(TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.browser_updates = None;
+                match result {
+                    Ok(session)
+                        if self.listening == Some(session.config.proxy_port)
+                            || self.runtime.block_on(self.proxy.bound_port())
+                                == Some(session.config.proxy_port) =>
+                    {
+                        self.listening = Some(session.config.proxy_port);
+                        self.panels.proxy_panel.port = session.config.proxy_port;
+                        self.status = format!(
+                            "Integrated Chromium connected to 127.0.0.1:{}",
+                            session.config.proxy_port
+                        );
+                        self.browser_session = Some(session);
+                    }
+                    Ok(_) => {
+                        self.status = "Browser closed: proxy listener changed during launch".into()
+                    }
+                    Err(error) => self.browser_error(error),
+                }
+            }
+        }
+        let attack_updates: Vec<_> = self.intruder_updates.as_ref().map(|updates| updates.try_iter().collect()).unwrap_or_default();
+        for update in attack_updates {
+            match update {
+                crate::intruder::AttackUpdate::Result(result) => {
+                    if let Some(error) = &result.error {
+                        self.workspace.events.push(0, crate::workspace::EventLevel::Error, "Intruder", error, self.panels.intruder.task_id);
+                    }
+                    self.panels.intruder.record_exchange(result);
+                    if let Some(task) = self.panels.intruder.task_id.and_then(|id| self.workspace.tasks.get_mut(id)) {
+                        task.progress.completed = self.panels.intruder.results.len() as u64;
+                    }
+                }
+                crate::intruder::AttackUpdate::Done(summary) => {
+                    let panel = &mut self.panels.intruder;
+                    panel.running = false;
+                    panel.matches = summary.matches;
+                    if let Some(id) = panel.task_id {
+                        if let Some(task) = self.workspace.tasks.get_mut(id) {
+                            task.progress.completed = summary.completed as u64;
+                            task.progress.total = Some(summary.total as u64);
+                            task.progress.status = if summary.cancelled { "Cancelled".into() } else { format!("Finished: {} matches", summary.matches) };
+                        }
+                        if summary.cancelled { let _ = self.workspace.tasks.cancel(id); }
+                        else { let _ = self.workspace.tasks.complete(id); }
+                    }
+                    self.status = format!("Intruder {}: {} / {} completed, {} matched", if summary.cancelled { "cancelled" } else { "finished" }, summary.completed, summary.total, summary.matches);
+                    self.intruder_updates = None;
+                }
+            }
+        }
         // The Logger's DNS and Email views start their listeners on request. The listeners live on
         // the session runtime, so each request is dispatched off the UI thread and the bound port
         // comes back as an event.
@@ -563,12 +916,56 @@ impl App {
         }
         if let Some(updates) = &self.scanner_updates {
             let mut done = None;
+            let isolated = self.panels.scanner.isolated_scan;
             while let Ok(update) = updates.try_recv() {
-                self.workspace_adapter
-                    .apply_scan(&mut self.workspace, &update);
+                if !isolated || matches!(update, panels::scanner::ScanUpdate::Progress(_)) {
+                    self.workspace_adapter
+                        .apply_scan(&mut self.workspace, &update);
+                }
                 match update {
                     panels::scanner::ScanUpdate::Progress(text) => {
                         self.panels.scanner.progress = text.clone();
+                    }
+                    panels::scanner::ScanUpdate::Live {
+                        status,
+                        completed,
+                        total,
+                        page,
+                        findings,
+                    } => {
+                        self.panels.scanner.progress = status;
+                        self.panels.scanner.completed_steps = completed;
+                        self.panels.scanner.total_steps = total.max(1);
+                        if let Some((p_url, p_status)) = page {
+                            if !self
+                                .panels
+                                .scanner
+                                .pages
+                                .iter()
+                                .any(|(u, _)| u == &p_url)
+                            {
+                                self.panels.scanner.pages.push((p_url.clone(), p_status));
+                            }
+                            if !isolated {
+                                if let Some((scheme, rest)) = p_url.split_once("://") {
+                                    let host = rest.split('/').next().unwrap_or(rest);
+                                    let origin = format!("{scheme}://{host}");
+                                    let path = crate::scanner::http::path_of(&p_url);
+                                    self.discovered.entry(origin).or_default().insert(path);
+                                }
+                            }
+                        }
+                        for f in findings {
+                            let dup = self.panels.scanner.findings.iter().any(|existing| {
+                                existing.name == f.name
+                                    && existing.url == f.url
+                                    && existing.parameter == f.parameter
+                            });
+                            if !dup {
+                                self.panels.scanner.findings.push(f);
+                            }
+                        }
+                        self.scanner_findings = self.panels.scanner.findings.len();
                     }
                     panels::scanner::ScanUpdate::Done { findings, pages } => {
                         self.scanner_findings = findings.len();
@@ -577,6 +974,16 @@ impl App {
                 }
             }
             if let Some((findings, pages)) = done {
+                if !isolated {
+                    for (page_url, _) in &pages {
+                        if let Some((scheme, rest)) = page_url.split_once("://") {
+                            let host = rest.split('/').next().unwrap_or(rest);
+                            let origin = format!("{scheme}://{host}");
+                            let path = crate::scanner::http::path_of(page_url);
+                            self.discovered.entry(origin).or_default().insert(path);
+                        }
+                    }
+                }
                 let count = findings.len();
                 self.scanner_findings = count;
                 self.panels.scanner.findings = findings;
@@ -588,11 +995,14 @@ impl App {
             }
         }
         while let Ok((id, result)) = self.responses_in.try_recv() {
+            if self.request_tasks.remove(&id).is_none() { continue; }
             let status = match result {
                 Ok(pair) => pair,
                 Err(error) => (0, format!("error: {error}")),
             };
-            self.responses.insert(id, status);
+            if !self.panels.repeater.complete(id, status.0, status.1.clone()) {
+                self.responses.insert(id, status);
+            }
         }
     }
 
@@ -601,13 +1011,29 @@ impl App {
         let id = self.next_request;
         self.next_request += 1;
         let proxy = self.proxy.clone();
-        let runtime = self.runtime.handle().clone();
         let tx = self._requests_tx.clone();
-        std::thread::spawn(move || {
-            let result = runtime.block_on(proxy.one_shot_secure(&host, port, &raw, secure, 15_000));
+        let task = self.runtime.spawn(async move {
+            let result = proxy.one_shot_secure(&host, port, &raw, secure, 15_000).await;
             let _ = tx.send((id, result));
         });
+        self.request_tasks.insert(id, task);
         id
+    }
+
+    pub fn cancel_request(&mut self, id: u64) {
+        if let Some(task) = self.request_tasks.remove(&id) { task.abort(); }
+        self.responses.remove(&id);
+    }
+
+    pub fn send_to_intruder(&mut self, target: &str, request: &str) {
+        if self.panels.intruder.running {
+            self.status = "Pause or finish the active Intruder attack before replacing its request".into();
+            return;
+        }
+        self.panels.intruder.host = target.to_owned();
+        self.panels.intruder.template = crate::intruder::auto_mark_positions(request);
+        self.go(INTRUDER, 0);
+        self.status = "Request sent to Intruder".into();
     }
 
     /// Takes the result of a request issued by `send_request`, if it has landed.
@@ -625,6 +1051,14 @@ impl App {
         self.note(&format!("{event:?}"));
         match event {
             Event::Tx { method, target, status, bytes, request, response, secure } => {
+                if self.panels.proxy_panel.misc_dont_log_history {
+                    return;
+                }
+                if self.panels.proxy_panel.dont_log_out_of_scope
+                    && !self.panels.target_panel.in_scope(&target)
+                {
+                    return;
+                }
                 let host = host_of(&target);
                 self.remember_links(&target, &response);
                 retain(&mut self.log, Transaction {
@@ -640,6 +1074,12 @@ impl App {
                 }, bytes, &mut self.log_version);
             }
             Event::Held { id, method, target, raw } => {
+                if self.panels.proxy_panel.intercept_in_scope_only
+                    && !self.panels.target_panel.in_scope(&target)
+                {
+                    self.release(id, true);
+                    return;
+                }
                 if !self.held.iter().any(|h| h.id == id) {
                     self.held.push(HeldInfo {
                         id,
@@ -743,6 +1183,7 @@ impl App {
             }
             Event::ListenerStopped => {
                 self.listening = None;
+                self.browser_session = None;
                 self.status = "Listener stopped".into();
             }
             Event::Error(message) => self.status = message,
@@ -777,24 +1218,50 @@ fn host_of(target: &str) -> String {
 /// widths: "Dashboard" 53px, "Target" 30px, "Proxy" 27px, "Intruder" 37px, "Repeater" 44px and
 /// "Collaborator" 59px, all within half a pixel of the running Burp. The font file is only
 /// borrowed from the system, never copied into the app.
-fn install_fonts(ctx: &mut Context) {
+/// Installs the platform proportional and monospaced fonts (SF Pro + Menlo/SF Mono on macOS,
+/// Segoe UI + Consolas on Windows, Ubuntu/Liberation/DejaVu on Linux).
+pub fn install_fonts(ctx: &Context) {
     let mut fonts = eframe::egui::FontDefinitions::default();
-    // The platform face for ordinary text.
-    if let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNS.ttf") {
-        fonts
-            .font_data
-            .insert("system".to_owned(), eframe::egui::FontData::from_owned(bytes).into());
-        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
-            family.insert(0, "system".to_owned());
+    let proportional_candidates = [
+        "/System/Library/Fonts/SFNS.ttf",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/cantarell/Cantarell-Regular.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ];
+    for path in proportional_candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "system".to_owned(),
+                eframe::egui::FontData::from_owned(bytes).into(),
+            );
+            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
+                family.insert(0, "system".to_owned());
+            }
+            break;
         }
     }
-    // Burp shows HTTP messages in a monospaced face; SF Mono is the system one.
-    if let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNSMono.ttf") {
-        fonts
-            .font_data
-            .insert("system-mono".to_owned(), eframe::egui::FontData::from_owned(bytes).into());
-        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
-            family.insert(0, "system-mono".to_owned());
+
+    let mono_candidates = [
+        "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/SFNSMono.ttf",
+        "C:\\Windows\\Fonts\\consola.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ];
+    for path in mono_candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "system-mono".to_owned(),
+                eframe::egui::FontData::from_owned(bytes).into(),
+            );
+            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
+                family.insert(0, "system-mono".to_owned());
+            }
+            break;
         }
     }
     ctx.set_fonts(fonts);
@@ -816,10 +1283,7 @@ fn install_fonts(ctx: &mut Context) {
     ctx.set_style(style);
 }
 
-/// Menu definitions, mirroring Burp's bar.
-/// Only actions that genuinely exist are listed. Earlier entries ("New repeater tab",
-/// "Filter by MIME type", "Pause") named features this app does not have, so they were removed
-/// rather than left clicking into a status message.
+#[cfg(test)]
 const MENUS: [(&str, &[&str]); 9] = [
     ("Project", &["Save project", "Open project", "Exit"]),
     ("Dashboard", &["Clear dashboard"]),
@@ -837,6 +1301,13 @@ const SEQUENCER_MANUAL: usize = 0;
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if self.use_native_macos_menu {
+            crate::macos_menu::install_once();
+            for action in crate::macos_menu::take_actions() {
+                self.apply_native_menu_action(ctx, action);
+            }
+        }
         self.pump();
         self.hotkeys(ctx);
         self.shell.resolve_restored_viewport();
@@ -849,6 +1320,14 @@ impl eframe::App for App {
             .frame(frame)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
+                if self.show_menu_bar {
+                    Frame::new()
+                        .fill(self.theme.color("ui.background.1"))
+                        .inner_margin(eframe::egui::Margin::symmetric(10, 3))
+                        .show(ui, |ui| {
+                            self.menu_bar(ctx, ui);
+                        });
+                }
                 self.shell.sync_selection(self.tool, self.view);
                 let views = TOOL_VIEWS[self.tool];
                 let commands = self
@@ -1284,28 +1763,173 @@ impl App {
         }
     }
 
+    /// Opens the Burp Engagement tools -> Generate CSRF PoC window for `(url, raw_request)`.
+    pub fn open_csrf_poc(&mut self, url: &str, raw_request: &str) {
+        let html = Transaction::generate_csrf_poc(url, raw_request, true);
+        self.csrf_poc = Some((url.to_string(), raw_request.to_string(), html, true));
+        self.status = format!("Generated CSRF PoC for {url}");
+    }
+
+    /// Launches a crawl + active/passive scan of `url` and registers the task on the Dashboard.
+    pub fn scan_url(&mut self, url: &str, active: bool) {
+        self.panels.scanner.seed = url.to_string();
+        self.panels.scanner.active_checks = active;
+        crate::ui::panels::scanner::start(self);
+    }
+
+    /// Runs passive checks on a single captured response and records findings into the workspace.
+    pub fn passive_scan_transaction(&mut self, target: &str, response: &str) -> usize {
+        let parsed = crate::scanner::http::parse_response(response);
+        let findings = crate::scanner::passive::inspect(target, &parsed);
+        let count = findings.len();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        for f in findings {
+            let sev = match f.severity {
+                crate::scanner::Severity::Info => crate::workspace::IssueSeverity::Info,
+                crate::scanner::Severity::Low => crate::workspace::IssueSeverity::Low,
+                crate::scanner::Severity::Medium => crate::workspace::IssueSeverity::Medium,
+                crate::scanner::Severity::High => crate::workspace::IssueSeverity::High,
+            };
+            self.workspace.issues.upsert(crate::workspace::IssueRecord::new(
+                crate::workspace::TaskId(2),
+                &f.name,
+                sev,
+                &f.confidence,
+                &f.url,
+                f.parameter.clone(),
+                &f.evidence,
+                now,
+            ));
+            if !self
+                .panels
+                .scanner
+                .findings
+                .iter()
+                .any(|e| e.name == f.name && e.url == f.url)
+            {
+                self.panels.scanner.findings.push(f);
+            }
+        }
+        self.status = format!("Passive scan of {target}: {count} issue(s) recorded");
+        count
+    }
+
     /// The right-click actions offered on a captured transaction. Burp exposes these through
     /// `ui/contextmenu/*`; each one here either already exists or is honest about being absent.
     pub fn context_menu(&mut self, trigger: &eframe::egui::Response, index: usize) {
         let Some(tx) = self.log.get(index) else {
             return;
         };
-        let (request, response, target, method) = (
+        let (request, response, target, method, host_url) = (
             tx.request.clone(),
             tx.response.clone(),
             tx.target.clone(),
             tx.method.clone(),
+            tx.host_url(),
         );
         let has_request = !request.trim().is_empty();
 
         let ctx = trigger.ctx.clone();
         let ctx = &ctx;
-        eframe::egui::Popup::context_menu(trigger).show(|ui| {
+        trigger.context_menu(|ui| {
+            ui.set_min_width(235.0);
+            let short_u: String = target.chars().take(48).collect();
+            ui.label(eframe::egui::RichText::new(short_u).strong());
+            ui.separator();
+            if ui.button("Add to scope").clicked() {
+                if !self.panels.target_panel.scope.contains(&host_url) {
+                    if !self.panels.target_panel.scope.trim().is_empty() {
+                        self.panels.target_panel.scope.push_str(", ");
+                    }
+                    self.panels.target_panel.scope.push_str(&host_url);
+                }
+                self.status = format!("Added {host_url} to Target scope");
+                ui.close();
+            }
+            if ui.button("Exclude from scope").clicked() {
+                if !self.panels.target_panel.scope_exclude.contains(&host_url) {
+                    if !self.panels.target_panel.scope_exclude.trim().is_empty() {
+                        self.panels.target_panel.scope_exclude.push_str(", ");
+                    }
+                    self.panels.target_panel.scope_exclude.push_str(&host_url);
+                }
+                self.status = format!("Excluded {host_url} from Target scope");
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Scan").clicked() {
+                self.panels.scanner.seed = target.clone();
+                self.panels.scanner.urls_to_scan = target.clone();
+                self.panels.scanner.show_launcher = true;
+                self.panels.scanner.launcher_tab = 0;
+                self.status = format!("Opened scan launcher for {target}");
+                ui.close();
+            }
+            if ui.button("Scan / Do active scan").clicked() {
+                self.scan_url(&target, true);
+                ui.close();
+            }
+            if ui
+                .add_enabled(!response.is_empty(), eframe::egui::Button::new("Do passive scan"))
+                .clicked()
+            {
+                self.passive_scan_transaction(&target, &response);
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(has_request, eframe::egui::Button::new("Send to Intruder"))
+                .clicked()
+            {
+                self.send_to_intruder(&target, &request);
+                ui.close();
+            }
             if ui.button("Send to Repeater").clicked() {
                 self.panels.repeater.open(&target, &request);
                 self.tool = REPEATER;
                 self.view = 0;
                 self.status = "Request sent to Repeater".into();
+                ui.close();
+            }
+            if ui.button("Send to Sequencer").clicked() {
+                self.panels.sequencer.text = response.clone();
+                self.tool = SEQUENCER;
+                self.view = 0;
+                self.status = "Sent to Sequencer".into();
+                ui.close();
+            }
+            if ui.button("Send to Comparer (request)").clicked() {
+                if self.panels.comparer.left.trim().is_empty() {
+                    self.panels.comparer.left = request.clone();
+                } else {
+                    self.panels.comparer.right = request.clone();
+                }
+                self.tool = COMPARER;
+                self.view = 0;
+                self.status = "Request sent to Comparer".into();
+                ui.close();
+            }
+            if ui.button("Send to Comparer").clicked()
+                || ui.button("Send to Comparer (response)").clicked()
+            {
+                if self.panels.comparer.left.trim().is_empty() {
+                    self.panels.comparer.left = response.clone();
+                } else {
+                    self.panels.comparer.right = response.clone();
+                }
+                self.tool = COMPARER;
+                self.view = 0;
+                self.status = "Sent to Comparer".into();
+                ui.close();
+            }
+            if ui.button("Send to Decoder").clicked() {
+                self.panels.decoder.input = request.clone();
+                self.tool = DECODER;
+                self.view = 0;
+                self.status = "Sent to Decoder".into();
                 ui.close();
             }
             if ui.button("Send to Organizer").clicked() {
@@ -1323,17 +1947,92 @@ impl App {
                 ui.close();
             }
             ui.separator();
+            ui.menu_button("Extensions", |ui| {
+                if ui.button("Open in Bambda editor").clicked() {
+                    self.tool = EXTENSIONS;
+                    self.view = 0;
+                    ui.close();
+                }
+            });
+            if has_request {
+                ui.menu_button("Engagement tools", |ui| {
+                    if ui.button("Generate CSRF PoC").clicked() {
+                        self.open_csrf_poc(&target, &request);
+                        ui.close();
+                    }
+                    if ui.button("Discover content").clicked() {
+                        self.tool = DISCOVER;
+                        self.view = 0;
+                        ui.close();
+                    }
+                    if ui.button("Search").clicked() {
+                        self.show_search = true;
+                        ui.close();
+                    }
+                });
+            }
+            if ui.button("Request in browser").clicked() {
+                self.open_browser();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(
+                    has_request,
+                    eframe::egui::Button::new("Change request method (GET ↔ POST)"),
+                )
+                .clicked()
+            {
+                let toggled = Transaction::toggle_request_method(&request);
+                self.panels.repeater.open(&target, &toggled);
+                self.tool = REPEATER;
+                self.view = 0;
+                self.status = "Converted request method and opened in Repeater".into();
+                ui.close();
+            }
+            ui.menu_button("Highlight", |ui| {
+                for (code, label) in [
+                    (Some(1u8), "Red"),
+                    (Some(2), "Orange"),
+                    (Some(3), "Yellow"),
+                    (Some(4), "Green"),
+                    (Some(5), "Blue"),
+                    (None, "None (clear)"),
+                ] {
+                    if ui.button(label).clicked() {
+                        match code {
+                            Some(c) => {
+                                self.panels.proxy_panel.highlights.insert(index, c);
+                            }
+                            None => {
+                                self.panels.proxy_panel.highlights.remove(&index);
+                            }
+                        }
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+            if ui.button("Copy URL").clicked() {
+                ctx.copy_text(target.clone());
+                self.status = "URL copied".into();
+                ui.close();
+            }
+            if ui
+                .add_enabled(has_request, eframe::egui::Button::new("Copy as curl command"))
+                .clicked()
+            {
+                let curl = Transaction::to_curl_command(&target, &request);
+                ctx.copy_text(curl);
+                self.status = "Copied as curl command".into();
+                ui.close();
+            }
             if ui
                 .add_enabled(has_request, eframe::egui::Button::new("Copy request"))
                 .clicked()
             {
                 ctx.copy_text(request.clone());
                 self.status = "Request copied".into();
-                ui.close();
-            }
-            if ui.button("Copy URL").clicked() {
-                ctx.copy_text(target.clone());
-                self.status = "URL copied".into();
                 ui.close();
             }
             if ui
@@ -1345,6 +2044,16 @@ impl App {
                 ui.close();
             }
             ui.separator();
+            if ui.button("Record an issue › Create an issue").clicked() {
+                self.panels.scanner.manual_issue_service = target.clone();
+                self.panels.scanner.show_manual_issue_modal = true;
+                ui.close();
+            }
+            if ui.button("Report issues…").clicked() {
+                self.panels.scanner.report_host_filter.clear();
+                self.panels.scanner.show_report_wizard = true;
+                ui.close();
+            }
             if ui.button("Remove from history").clicked() {
                 self.log.remove(index);
                 // The site map is tagged with the history version, so it must be invalidated too.
@@ -1366,6 +2075,15 @@ impl App {
             if self.tool == REPEATER {
                 panels::repeater::send(self);
             }
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::K)) {
+            self.show_search = !self.show_search;
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::S)) {
+            self.save_project();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::O)) {
+            self.open_project();
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::I)) {
             self.intercepting = !self.intercepting;
@@ -1429,6 +2147,7 @@ impl App {
             }
             ShellCommand::OpenConsole => self.show_console = true,
             ShellCommand::OpenBrowser => self.open_browser(),
+            ShellCommand::OpenAi => self.wip.open(crate::ui::wip::WipFeature::Ai),
             ShellCommand::ToggleDrawer(kind) => {
                 self.status = match kind {
                     crate::ui::drawers::DrawerKind::EventLog => "Event log".into(),
@@ -1438,37 +2157,205 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(target_os = "macos")]
+    fn apply_native_menu_action(&mut self, ctx: &Context, action: crate::macos_menu::NativeMenuAction) {
+        use crate::macos_menu::NativeMenuAction;
+        match action {
+            NativeMenuAction::GulpSettings => {
+                self.show_settings = true;
+            }
+            NativeMenuAction::ToggleTheme => {
+                let dark = !self.is_dark();
+                self.set_dark(dark);
+            }
+            NativeMenuAction::Quit => {
+                ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
+            }
+            NativeMenuAction::NewProject => {
+                self.clear_log();
+                self.organizer.clear();
+                self.workspace.issues = Default::default();
+                self.status = "Started new temporary project".into();
+            }
+            NativeMenuAction::OpenProject | NativeMenuAction::SaveProjectAs => {
+                self.show_project_dialog = true;
+            }
+            NativeMenuAction::SaveProject => {
+                self.save_project();
+            }
+            NativeMenuAction::ProjectSettings => {
+                self.settings_category = 0;
+                self.show_settings = true;
+            }
+            NativeMenuAction::IntruderStart => {
+                self.go(INTRUDER, 0);
+                panels::intruder::start(self);
+            }
+            NativeMenuAction::IntruderPauseResume => {
+                if let Some(ctrl) = &self.panels.intruder.control {
+                    if ctrl.state() == crate::intruder::AttackState::Paused {
+                        ctrl.resume();
+                    } else {
+                        ctrl.pause();
+                    }
+                }
+            }
+            NativeMenuAction::IntruderCancel => {
+                if let Some(ctrl) = &self.panels.intruder.control {
+                    ctrl.cancel();
+                }
+            }
+            NativeMenuAction::IntruderClear => {
+                self.panels.intruder.clear_results();
+            }
+            NativeMenuAction::RepeaterSend => {
+                self.go(REPEATER, 0);
+                panels::repeater::send(self);
+            }
+            NativeMenuAction::RepeaterNewTab => {
+                let host = self.panels.repeater.active().host.clone();
+                self.panels.repeater.open(&host, "");
+                self.go(REPEATER, 0);
+            }
+            NativeMenuAction::RepeaterDuplicateTab => {
+                self.panels.repeater.duplicate_active();
+                self.go(REPEATER, 0);
+            }
+            NativeMenuAction::RepeaterToggleMethod => {
+                let toggled = Transaction::toggle_request_method(&self.panels.repeater.active().raw);
+                self.panels.repeater.active_mut().raw = toggled;
+                self.go(REPEATER, 0);
+            }
+            NativeMenuAction::SelectTool(tool) => {
+                self.go(tool.min(TOOLS.len() - 1), 0);
+            }
+            NativeMenuAction::ToggleEventLog => {
+                self.shell.toggle_drawer(crate::ui::drawers::DrawerKind::EventLog);
+            }
+            NativeMenuAction::ToggleAllIssues => {
+                self.shell.toggle_drawer(crate::ui::drawers::DrawerKind::AllIssues);
+            }
+            NativeMenuAction::SetDark(dark) => {
+                self.set_dark(dark);
+            }
+            NativeMenuAction::CommandPalette => {
+                self.show_search = true;
+            }
+            NativeMenuAction::OpenBrowser => {
+                self.open_browser();
+            }
+            NativeMenuAction::BrowserConsole => {
+                self.show_console = true;
+            }
+            NativeMenuAction::GenerateCsrfPoc => {
+                let tab = self.panels.repeater.active().clone();
+                self.open_csrf_poc(&tab.host, &tab.raw);
+            }
+        }
+    }
+
     fn menu_bar(&mut self, ctx: &Context, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            // Burp ships a light and a dark theme; both are bundled, so this switches rather than
-            // approximates.
-            let dark = self.is_dark();
-            if ui
-                .add_enabled(dark, eframe::egui::Button::new(bold_label("Dark")))
-                .clicked()
-            {
-                self.set_dark(true);
-            }
-            if ui
-                .add_enabled(!dark, eframe::egui::Button::new(bold_label("Light")))
-                .clicked()
-            {
-                self.set_dark(false);
-            }
-            ui.separator();
-            for (name, items) in MENUS {
-                ui.menu_button(name, |ui| {
-                    for item in items {
-                        if ui.button(*item).clicked() {
-                            self.menu_action(ctx, name, item);
-                            ui.close();
-                        }
+            ui.menu_button("Gulp", |ui| {
+                if ui.button("Gulp settings…").clicked() {
+                    self.show_settings = true;
+                    ui.close();
+                }
+                if ui.button("Switch theme (Dark / Light)").clicked() {
+                    let dark = !self.is_dark();
+                    self.set_dark(dark);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Exit").clicked() {
+                    self.menu_action(ctx, "Project", "Exit");
+                    ui.close();
+                }
+            });
+            ui.menu_button("Project", |ui| {
+                if ui.button("New temporary project").clicked() {
+                    self.clear_log();
+                    self.organizer.clear();
+                    self.workspace.issues = Default::default();
+                    self.status = "Started new temporary project".into();
+                    ui.close();
+                }
+                if ui.button("Open project…").clicked() {
+                    self.show_project_dialog = true;
+                    ui.close();
+                }
+                if ui.button("Save project").clicked() {
+                    self.save_project();
+                    ui.close();
+                }
+                if ui.button("Save project as…").clicked() {
+                    self.show_project_dialog = true;
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Project settings…").clicked() {
+                    self.settings_category = 0;
+                    self.show_settings = true;
+                    ui.close();
+                }
+            });
+            ui.menu_button("Intruder", |ui| {
+                if ui.button("Start attack").clicked() {
+                    self.menu_action(ctx, "Intruder", "Start attack");
+                    ui.close();
+                }
+                if ui.button("Clear results").clicked() {
+                    self.panels.intruder.clear_results();
+                    ui.close();
+                }
+            });
+            ui.menu_button("Repeater", |ui| {
+                if ui.button("Send").clicked() {
+                    self.menu_action(ctx, "Repeater", "Send");
+                    ui.close();
+                }
+                if ui.button("New tab").clicked() {
+                    let host = self.panels.repeater.active().host.clone();
+                    self.panels.repeater.open(&host, "");
+                    self.go(REPEATER, 0);
+                    ui.close();
+                }
+                if ui.button("Duplicate tab").clicked() {
+                    self.panels.repeater.duplicate_active();
+                    self.go(REPEATER, 0);
+                    ui.close();
+                }
+            });
+            ui.menu_button("View", |ui| {
+                for (idx, tool_name) in TOOLS.iter().enumerate() {
+                    if ui.button(*tool_name).clicked() {
+                        self.go(idx, 0);
+                        ui.close();
                     }
-                });
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new("Gulpsuite").color(self.theme.color("ui.icon.default")));
+                }
+                ui.separator();
+                if ui.button("Event log").clicked() {
+                    self.shell.toggle_drawer(crate::ui::drawers::DrawerKind::EventLog);
+                    ui.close();
+                }
+                if ui.button("All issues").clicked() {
+                    self.shell.toggle_drawer(crate::ui::drawers::DrawerKind::AllIssues);
+                    ui.close();
+                }
+            });
+            ui.menu_button("Help", |ui| {
+                if ui.button("Command palette & Search (Cmd+K)").clicked() {
+                    self.show_search = true;
+                    ui.close();
+                }
+                if ui.button("Open integrated Chromium browser").clicked() {
+                    self.open_browser();
+                    ui.close();
+                }
+                if ui.button("Browser console").clicked() {
+                    self.show_console = true;
+                    ui.close();
+                }
             });
         });
     }
@@ -1629,12 +2516,58 @@ impl App {
 
     /// The floating windows Burp opens from the icons at the right of the tool row.
     fn windows(&mut self, ctx: &Context) {
+        super::panels::scanner::draw_scanner_modals(self, ctx);
+        if self.panels.scanner.show_launcher {
+            let viewport = eframe::egui::ViewportId::from_hash_of("gulpsuite-new-scan-launcher");
+            let builder = eframe::egui::ViewportBuilder::default()
+                .with_title("New scan")
+                .with_inner_size([880.0, 620.0])
+                .with_min_inner_size([720.0, 480.0]);
+            let mut close_requested = false;
+            ctx.show_viewport_immediate(viewport, builder, |child_ctx, class| {
+                if class == eframe::egui::ViewportClass::Embedded {
+                    let mut open = true;
+                    eframe::egui::Window::new("New scan")
+                        .open(&mut open)
+                        .resizable(true)
+                        .frame(
+                            eframe::egui::Frame::window(&child_ctx.style())
+                                .fill(self.theme.color("ui.background.0"))
+                                .inner_margin(0.0),
+                        )
+                        .default_pos([260.0, 90.0])
+                        .default_size([880.0, 560.0])
+                        .show(child_ctx, |ui| {
+                            super::panels::scanner::draw_scan_launcher(self, ui)
+                        });
+                    if !open {
+                        close_requested = true;
+                    }
+                } else {
+                    close_requested = child_ctx.input(|input| input.viewport().close_requested());
+                    if !close_requested {
+                        apply_visuals(child_ctx, &self.theme);
+                        let frame = Frame::NONE
+                            .fill(self.theme.color("ui.background.0"))
+                            .inner_margin(0.0);
+                        eframe::egui::CentralPanel::default()
+                            .frame(frame)
+                            .show(child_ctx, |ui| {
+                                super::panels::scanner::draw_scan_launcher(self, ui);
+                            });
+                    }
+                }
+            });
+            if close_requested {
+                self.panels.scanner.show_launcher = false;
+            }
+        }
         if self.show_settings {
             let mut open = true;
             eframe::egui::Window::new("Settings")
                 .open(&mut open)
                 .resizable(true)
-                .default_width(320.0)
+                .default_size([860.0, 560.0])
                 .show(ctx, |ui| self.settings(ui));
             self.show_settings = open;
         }
@@ -1647,6 +2580,62 @@ impl App {
                 .show(ctx, |ui| self.search_window(ui));
             self.show_search = open;
         }
+        if self.show_project_dialog {
+            let mut open = true;
+            eframe::egui::Window::new("Project — Open / Save As")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([520.0, 260.0])
+                .show(ctx, |ui| {
+                    ui.label("Select or enter a Gulpsuite project file (.json):");
+                    ui.horizontal(|ui| {
+                        ui.label("File path:");
+                        ui.add(
+                            eframe::egui::TextEdit::singleline(&mut self.panels.project_path)
+                                .hint_text("gulpsuite-project.json")
+                                .desired_width(320.0),
+                        );
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if primary_button(ui, &self.theme.clone(), "Save project").clicked() {
+                            self.save_project();
+                            self.show_project_dialog = false;
+                        }
+                        if ui.button("Open project").clicked() {
+                            self.open_project();
+                            self.show_project_dialog = false;
+                        }
+                        if ui.button("New temporary project").clicked() {
+                            self.clear_log();
+                            self.organizer.clear();
+                            self.workspace.issues = Default::default();
+                            self.status = "Started new temporary project".into();
+                            self.show_project_dialog = false;
+                        }
+                    });
+                    ui.separator();
+                    ui.label(eframe::egui::RichText::new("Project files in current folder:").strong());
+                    if let Ok(entries) = std::fs::read_dir(".") {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                                let name = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if ui.selectable_label(self.panels.project_path == name, &name).clicked() {
+                                    self.panels.project_path = name;
+                                }
+                            }
+                        }
+                    }
+                });
+            if !open {
+                self.show_project_dialog = false;
+            }
+        }
         if self.show_console {
             let mut open = true;
             eframe::egui::Window::new("Browser console")
@@ -1656,96 +2645,493 @@ impl App {
                 .show(ctx, |ui| self.console_window(ui));
             self.show_console = open;
         }
+        if let Some((mut target, mut req, mut html, mut auto_submit)) = self.csrf_poc.clone() {
+            let mut open = true;
+            eframe::egui::Window::new("CSRF PoC generator")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([700.0, 480.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Target URL:");
+                        ui.text_edit_singleline(&mut target);
+                        if ui
+                            .checkbox(&mut auto_submit, "Include auto-submit script")
+                            .changed()
+                            || ui.button("Regenerate").clicked()
+                        {
+                            html = Transaction::generate_csrf_poc(&target, &req, auto_submit);
+                        }
+                        if ui.button("Copy HTML").clicked() {
+                            ui.ctx().copy_text(html.clone());
+                            self.status = "Copied CSRF PoC HTML to clipboard".into();
+                        }
+                        if ui.button("Test in browser").clicked() {
+                            self.open_browser();
+                        }
+                    });
+                    ui.label(eframe::egui::RichText::new("Request:").strong());
+                    ui.add(
+                        eframe::egui::TextEdit::multiline(&mut req)
+                            .font(TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(6),
+                    );
+                    ui.label(eframe::egui::RichText::new("CSRF HTML:").strong());
+                    ui.add(
+                        eframe::egui::TextEdit::multiline(&mut html)
+                            .font(TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(10),
+                    );
+                });
+            if open {
+                self.csrf_poc = Some((target, req, html, auto_submit));
+            } else {
+                self.csrf_poc = None;
+            }
+        }
     }
 
-    /// Burp's settings dialog: the theme, the project and the listener's port.
+    /// Burp Suite Pro v2026.3.3 complete Settings dialog (`settings/index.html` & `settings/tools/proxy.html`):
+    /// Search bar, `All | User | Project` scope filter pills, `Manage global settings` menu,
+    /// and all 13 Settings pages across Tools, Project, Sessions, Network, User interface, Suite, and Extensions.
     fn settings(&mut self, ui: &mut Ui) {
         let theme = self.theme.clone();
-        ui.label(eframe::egui::RichText::new("Appearance").strong());
-        ui.horizontal(|ui| {
-            if ui
-                .selectable_label(self.is_dark(), "Dark")
-                .clicked()
-            {
-                self.set_dark(true);
-            }
-            if ui
-                .selectable_label(!self.is_dark(), "Light")
-                .clicked()
-            {
-                self.set_dark(false);
-            }
-        });
-        ui.add_space(6.0);
-        ui.label(eframe::egui::RichText::new("Project").strong());
-        ui.horizontal(|ui| {
-            if ui.button("Save project").clicked() {
-                self.save_project();
-            }
-            if ui.button("Open project").clicked() {
-                self.open_project();
-            }
-        });
-        ui.add_space(6.0);
-        ui.label(eframe::egui::RichText::new("Listener").strong());
-        ui.horizontal(|ui| {
-            ui.label("Port");
-            let mut port = self.panels.proxy_panel.port.to_string();
-            if ui.text_edit_singleline(&mut port).changed() {
-                if let Ok(port) = port.trim().parse::<u16>() {
-                    self.panels.proxy_panel.port = port;
+        // (index, label, is_project_setting)
+        let categories: [(usize, &str, bool); 13] = [
+            (0, "Suite › Project files", true),
+            (1, "User interface › Appearance", false),
+            (2, "Tools › Proxy", true),
+            (3, "Tools › Intruder", true),
+            (4, "Tools › Repeater", false),
+            (5, "Tools › Collaborator", true),
+            (6, "Tools › Scanner", true),
+            (7, "Tools › Sequencer & Comparer", true),
+            (8, "Tools › Gulpsuite's browser", false),
+            (9, "Project › Scope, Tasks & Logging", true),
+            (10, "Sessions › Cookie jar & Handling", true),
+            (11, "Network › Connections, HTTP & TLS", true),
+            (12, "Extensions › Bambda & Script store", false),
+        ];
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Search:");
+            ui.add(
+                eframe::egui::TextEdit::singleline(&mut self.settings_search)
+                    .hint_text("Search settings (e.g. proxy, tls, listener, hotkeys)…")
+                    .desired_width(240.0),
+            );
+            ui.separator();
+            ui.selectable_value(&mut self.settings_scope_filter, 0, "All");
+            ui.selectable_value(&mut self.settings_scope_filter, 1, "User");
+            ui.selectable_value(&mut self.settings_scope_filter, 2, "Project");
+            ui.separator();
+            ui.menu_button("Manage global settings ▾", |ui| {
+                if ui.button("Restore default settings").clicked() {
+                    self.panels.proxy_panel = Default::default();
+                    self.status = "Restored default proxy and project settings".into();
+                    ui.close();
                 }
-            }
-            let listening = self.listening.is_some();
-            if ui.add_enabled(!listening, eframe::egui::Button::new("Start")).clicked() {
-                self.start_proxy(self.panels.proxy_panel.port);
-            }
-            if ui.add_enabled(listening, eframe::egui::Button::new("Stop")).clicked() {
-                self.stop_proxy();
-            }
-        });
-        ui.add_space(6.0);
-        ui.label(eframe::egui::RichText::new("Https").strong());
-        ui.horizontal(|ui| {
-            let mut tls = self.tls_intercepting;
-            if ui.checkbox(&mut tls, "Intercept https (TLS)").changed() {
-                self.tls_intercepting = tls;
-                self.proxy.set_tls_interception(tls);
-            }
-        });
-        super::panels::muted(
-            ui,
-            &theme,
-            "With interception on, a browser has to trust the proxy's own authority before https works.",
-        );
-        if let Some(path) = self.proxy.authority_path() {
-            let path = path.to_string_lossy().to_string();
-            ui.horizontal(|ui| {
-                ui.label(eframe::egui::RichText::new("Certificate").strong());
-                ui.label(eframe::egui::RichText::new(&path).monospace().color(theme.color("ui.text.body")));
-                if ui.button("Copy").clicked() {
-                    ui.ctx().copy_text(path.clone());
-                    self.status = "Certificate path copied".into();
+                if ui.button("Save settings (project JSON)").clicked() {
+                    self.save_project();
+                    ui.close();
+                }
+                if ui.button("Load settings (project JSON)").clicked() {
+                    self.open_project();
+                    ui.close();
                 }
             });
-        }
-        ui.add_space(6.0);
-        super::panels::muted(ui, &theme, "Gulpsuite: a Burp Suite style proxy, in one Rust process.");
+        });
+        ui.separator();
+
+        let search_needle = self.settings_search.trim().to_lowercase();
+        let scope_filter = self.settings_scope_filter;
+
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(215.0);
+                ui.label(eframe::egui::RichText::new("Navigation").strong());
+                ui.separator();
+                for (idx, label, is_project) in categories {
+                    if scope_filter == 1 && is_project {
+                        continue;
+                    }
+                    if scope_filter == 2 && !is_project {
+                        continue;
+                    }
+                    if !search_needle.is_empty() && !label.to_lowercase().contains(&search_needle) {
+                        continue;
+                    }
+                    if ui
+                        .selectable_label(self.settings_category == idx, label)
+                        .clicked()
+                    {
+                        self.settings_category = idx;
+                    }
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                match self.settings_category {
+                    0 => {
+                        super::panels::heading(ui, &theme, "Suite — Project files & Performance");
+                        super::panels::muted(
+                            ui,
+                            &theme,
+                            "Save or restore the entire workspace (tasks, issues, Organizer items, recordings, layout, and theme).",
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Project file path:");
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(&mut self.panels.project_path)
+                                    .hint_text("gulpsuite-project.json")
+                                    .desired_width(260.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("Save project").clicked() {
+                                self.save_project();
+                            }
+                            if ui.button("Open project").clicked() {
+                                self.open_project();
+                            }
+                            if ui.button("New temporary project").clicked() {
+                                self.clear_log();
+                                self.organizer.clear();
+                                self.workspace.issues = Default::default();
+                                self.status = "Started new temporary project".into();
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.separator();
+                        super::panels::heading(ui, &theme, "Suite performance & limits");
+                        ui.label(format!("• Memory usage: {}", self.memory_text));
+                        ui.label(format!("• Proxy history ring capacity: {} entries ({} KB per body)", LOG_CAPACITY, LOG_BODY_LIMIT / 1024));
+                        ui.label(format!("• Organizer store capacity: {} items", ORGANIZER_CAPACITY));
+                    }
+                    1 => {
+                        super::panels::heading(ui, &theme, "User interface — Display, Inspector & Hotkeys");
+                        ui.horizontal(|ui| {
+                            ui.label("Theme:");
+                            if ui.selectable_label(self.is_dark(), "Dark").clicked() {
+                                self.set_dark(true);
+                            }
+                            if ui.selectable_label(!self.is_dark(), "Light").clicked() {
+                                self.set_dark(false);
+                            }
+                        });
+                        ui.checkbox(
+                            &mut self.show_menu_bar,
+                            "Show in-window top menu bar (on macOS, native OS menu bar is used by default)",
+                        );
+                        ui.add_space(8.0);
+                        ui.separator();
+                        super::panels::heading(ui, &theme, "Hotkeys");
+                        eframe::egui::Grid::new("settings-hotkeys-grid")
+                            .num_columns(2)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for (k, desc) in [
+                                    ("Cmd/Ctrl + S", "Save project"),
+                                    ("Cmd/Ctrl + O", "Open project"),
+                                    ("Cmd/Ctrl + K", "Command palette & Search"),
+                                    ("Cmd/Ctrl + R", "Repeater: Send request"),
+                                    ("Cmd/Ctrl + I", "Proxy: Toggle Intercept on/off"),
+                                    ("Cmd + ,", "Open Gulp Settings"),
+                                    ("Alt + D / T / P / N / R", "Switch to Dashboard / Target / Proxy / Intruder / Repeater"),
+                                    ("Alt + O / S / E / C / L / G / X / I", "Switch to Collaborator / Sequencer / Decoder / Comparer / Logger / Organizer / Extensions / Discover"),
+                                ] {
+                                    ui.monospace(k);
+                                    ui.label(desc);
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    2 => {
+                        super::panels::proxy::settings(self, ui);
+                    }
+                    3 => {
+                        super::panels::heading(ui, &theme, "Intruder configuration");
+                        ui.label(eframe::egui::RichText::new("Default Intruder side panel layout").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Default position:");
+                            ui.radio_value(&mut self.panels.intruder.side_panel_left, true, "Left");
+                            ui.radio_value(&mut self.panels.intruder.side_panel_left, false, "Right");
+                            ui.separator();
+                            ui.label("Display mode:");
+                            ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, false, "Auto-expand");
+                            ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, true, "Always collapsed");
+                        });
+                        ui.separator();
+                        ui.label(eframe::egui::RichText::new("Automatic payload placement").strong());
+                        ui.radio_value(&mut self.panels.intruder.auto_payload_append, false, "Replace base parameter value");
+                        ui.radio_value(&mut self.panels.intruder.auto_payload_append, true, "Append to base parameter value");
+                        ui.separator();
+                        ui.label(eframe::egui::RichText::new("New tab configuration").strong());
+                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 0, "Use default attack configuration");
+                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 1, "Copy configuration from first tab");
+                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 2, "Copy configuration from last tab");
+                        ui.separator();
+                        ui.label(eframe::egui::RichText::new("Behavior when closing result windows").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("In-progress attack:");
+                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 0, "Ask each time");
+                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 1, "Continue in background");
+                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 2, "Delete attack");
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Finished attack:");
+                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 0, "Ask each time");
+                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 1, "Save to project file");
+                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 2, "Keep in memory");
+                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 3, "Delete attack");
+                        });
+                        ui.separator();
+                        ui.label(eframe::egui::RichText::new("Default resource pool & network").strong());
+                        ui.horizontal(|ui| {
+                            ui.label("Default concurrent requests:");
+                            ui.add(
+                                eframe::egui::DragValue::new(&mut self.panels.intruder.threads)
+                                    .range(1..=64),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Request delay (ms):");
+                            ui.add(
+                                eframe::egui::DragValue::new(
+                                    &mut self.panels.intruder.request_delay_ms,
+                                )
+                                .range(0..=60_000),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Request timeout (ms):");
+                            ui.add(
+                                eframe::egui::DragValue::new(&mut self.panels.intruder.timeout_ms)
+                                    .range(100..=300_000),
+                            );
+                        });
+                        ui.checkbox(
+                            &mut self.panels.intruder.update_host,
+                            "Update Host header to match target",
+                        );
+                    }
+                    4 => {
+                        super::panels::heading(ui, &theme, "Repeater configuration");
+                        ui.horizontal(|ui| {
+                            ui.label("Default split layout:");
+                            ui.selectable_value(
+                                &mut self.panels.repeater.stacked_layout,
+                                false,
+                                "Side-by-side",
+                            );
+                            ui.selectable_value(
+                                &mut self.panels.repeater.stacked_layout,
+                                true,
+                                "Top/Bottom",
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Editor height (px):");
+                            ui.add(
+                                eframe::egui::DragValue::new(
+                                    &mut self.panels.repeater.editor_height,
+                                )
+                                .range(120.0..=640.0),
+                            );
+                        });
+                    }
+                    5 => {
+                        super::panels::heading(ui, &theme, "Collaborator configuration");
+                        ui.checkbox(
+                            &mut self.panels.collaborator_local,
+                            "Include Collaborator server location in generated payloads",
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label("Token:");
+                            ui.text_edit_singleline(&mut self.panels.collaborator_token);
+                            if ui.button("Regenerate token").clicked() {
+                                self.panels.collaborator_token = crate::collaborator::new_token();
+                            }
+                        });
+                    }
+                    6 => {
+                        super::panels::heading(ui, &theme, "Scanner configuration");
+                        ui.horizontal(|ui| {
+                            ui.label("Max crawl depth:");
+                            ui.add(
+                                eframe::egui::DragValue::new(&mut self.panels.scanner.max_depth)
+                                    .range(1..=10),
+                            );
+                            ui.label("Max pages:");
+                            ui.add(
+                                eframe::egui::DragValue::new(&mut self.panels.scanner.max_pages)
+                                    .range(1..=5_000),
+                            );
+                        });
+                        ui.checkbox(
+                            &mut self.panels.scanner.active_checks,
+                            "Enable active payload injection checks",
+                        );
+                        ui.checkbox(
+                            &mut self.panels.scanner.only_high,
+                            "Show only High and Medium severity findings in Scanner view",
+                        );
+                    }
+                    7 => {
+                        super::panels::heading(ui, &theme, "Sequencer & Comparer configuration");
+                        ui.horizontal(|ui| {
+                            ui.label("Sequencer token parameter / cookie name:");
+                            ui.text_edit_singleline(&mut self.panels.sequencer.token);
+                        });
+                        ui.checkbox(
+                            &mut self.panels.comparer.byte_mode,
+                            "Default Comparer to Byte-level (hex) comparison",
+                        );
+                    }
+                    8 => {
+                        super::panels::heading(ui, &theme, "Gulpsuite's integrated Chromium browser");
+                        super::panels::muted(
+                            ui,
+                            &theme,
+                            "Runs in an isolated per-session profile pre-configured with --proxy-server and --ignore-certificate-errors-spki-list.",
+                        );
+                        if let Ok(pin) = self.proxy.browser_ca_pin() {
+                            ui.horizontal(|ui| {
+                                ui.label("Session CA SPKI pin:");
+                                ui.monospace(&pin);
+                            });
+                        }
+                        if ui.button("Open integrated Chromium browser").clicked() {
+                            self.open_browser();
+                        }
+                    }
+                    9 => {
+                        super::panels::heading(ui, &theme, "Project — Scope, Tasks & Logging");
+                        ui.horizontal(|ui| {
+                            ui.label("Target Scope Include:");
+                            ui.text_edit_singleline(&mut self.panels.target_panel.scope);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Target Scope Exclude:");
+                            ui.text_edit_singleline(&mut self.panels.target_panel.scope_exclude);
+                        });
+                        ui.checkbox(
+                            &mut self.panels.proxy_panel.dont_log_out_of_scope,
+                            "Don't send items to Proxy history or live tasks, if out of scope",
+                        );
+                        ui.checkbox(
+                            &mut self.panels.logger.only_errors,
+                            "Logger: record only 4xx/5xx error responses",
+                        );
+                    }
+                    10 => {
+                        super::panels::heading(ui, &theme, "Sessions — Cookie jar & Session handling");
+                        super::panels::muted(
+                            ui,
+                            &theme,
+                            "The proxy automatically learns cookies from Set-Cookie headers and replays them on matching requests.",
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.button("Evict expired cookies").clicked() {
+                                let removed = self.proxy.cookies().evict_expired();
+                                self.status = format!("Evicted {removed} expired cookie(s)");
+                            }
+                            if ui.button("Clear cookie jar").clicked() {
+                                self.proxy.cookies().clear();
+                                self.status = "Cleared session cookie jar".into();
+                            }
+                            ui.label(format!("{} cookie(s) stored", self.proxy.cookies().len()));
+                        });
+                    }
+                    11 => {
+                        super::panels::heading(ui, &theme, "Network — Connections, HTTP & TLS");
+                        ui.checkbox(
+                            &mut self.tls_intercepting,
+                            "Enable HTTPS MITM interception with session CA",
+                        );
+                        self.proxy.set_tls_interception(self.tls_intercepting);
+                        ui.checkbox(
+                            &mut self.panels.proxy_panel.misc_keep_alive,
+                            "Use keep-alive for HTTP/1 connections",
+                        );
+                        if let Some(path) = self.proxy.authority_path() {
+                            ui.horizontal(|ui| {
+                                ui.label("CA PEM:");
+                                ui.monospace(path.display().to_string());
+                                if ui.button("Copy PEM").clicked() {
+                                    if let Some(pem) = self.proxy.authority_pem() {
+                                        ui.ctx().copy_text(pem);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    _ => {
+                        super::panels::heading(ui, &theme, "Extensions — Bambda & Script store");
+                        ui.horizontal(|ui| {
+                            ui.label("Extension scripts folder:");
+                            ui.text_edit_singleline(&mut self.panels.extender_folder);
+                        });
+                        ui.checkbox(
+                            &mut self.panels.extender.live,
+                            "Apply active Bambda script to live Repeater requests",
+                        );
+                    }
+                }
+            });
+        });
     }
 
-    /// Burp's search window: it looks through the captured traffic.
+    /// Burp's Command Palette (`Cmd+K`) + Project-wide Search window.
     fn search_window(&mut self, ui: &mut Ui) {
         let theme = self.theme.clone();
         ui.horizontal(|ui| {
-            ui.label("Search");
-            ui.text_edit_singleline(&mut self.search_text);
+            ui.label("Command / Search:");
+            ui.add(
+                eframe::egui::TextEdit::singleline(&mut self.search_text)
+                    .hint_text("Type a tool name (e.g. repeater, proxy) or search HTTP traffic…")
+                    .desired_width(340.0),
+            );
             if ui.button("Clear").clicked() {
                 self.search_text.clear();
             }
         });
         let needle = self.search_text.trim().to_lowercase();
+
+        // Command palette entries matching `needle`
+        ui.add_space(4.0);
+        ui.label(eframe::egui::RichText::new("Commands").strong());
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("cmd-palette-scroll")
+            .max_height(130.0)
+            .show(ui, |ui| {
+                for (tool_idx, tool_name) in TOOLS.iter().enumerate() {
+                    for (view_idx, view_name) in TOOL_VIEWS[tool_idx].iter().enumerate() {
+                        let cmd_label = if TOOL_VIEWS[tool_idx].len() > 1 {
+                            format!("Go to {tool_name} › {view_name}")
+                        } else {
+                            format!("Go to {tool_name}")
+                        };
+                        if !needle.is_empty() && !cmd_label.to_lowercase().contains(&needle) {
+                            continue;
+                        }
+                        if ui.button(&cmd_label).clicked() {
+                            self.go(tool_idx, view_idx);
+                            self.show_search = false;
+                        }
+                    }
+                }
+            });
+
         if needle.is_empty() {
-            super::panels::muted(ui, &theme, "Type to search the captured requests and responses.");
+            super::panels::muted(
+                ui,
+                &theme,
+                "Type above to filter commands or search across all captured HTTP requests and responses.",
+            );
             return;
         }
         let mut matches = Vec::new();
@@ -1807,32 +3193,70 @@ impl App {
             });
     }
 
-    /// Burp's browser icon opens a browser on the target. This build has no embedded browser, so
-    /// the system's own is used, with the proxy address spelled out.
-    fn open_browser(&mut self) {
-        let target = self
-            .log
-            .iter()
-            .rev()
-            .find_map(|tx| {
-                tx.target
-                    .strip_prefix("http://")
-                    .or_else(|| tx.target.strip_prefix("https://"))
-                    .map(|rest| {
-                        let host = rest.split('/').next().unwrap_or(rest);
-                        format!("http://{host}/")
-                    })
-            })
-            .unwrap_or_else(|| "http://127.0.0.1:8080/".to_string());
-        let status = format!("Opening {target}");
-        let _ = std::process::Command::new("open").arg(&target).spawn();
-        self.status = status;
+    fn browser_error(&mut self, error: String) {
+        self.status = error.clone();
+        self.workspace.events.push(0, crate::workspace::EventLevel::Error, "Browser", &error, None);
+    }
+
+    /// Both the shell icon and Proxy action launch only the bundled Chromium.
+    pub fn open_browser(&mut self) {
+        if self.browser_updates.is_some() { return; }
+        let target = self.log.iter().rev().find_map(|tx| {
+            url::Url::parse(&tx.target).ok().filter(|url| matches!(url.scheme(), "http" | "https"))
+                .map(|url| url.to_string())
+        }).unwrap_or_else(|| "http://burp/".into());
+        if let Some(session) = &mut self.browser_session {
+            if self.listening == Some(session.config.proxy_port) && session.is_running() {
+                match session.open_window(target) {
+                    Ok(()) => self.status = "Opened integrated Chromium window".into(),
+                    Err(error) => self.browser_error(error),
+                }
+                return;
+            }
+        }
+        self.browser_session = None;
+        let setup = (|| {
+            let app = std::env::current_exe().map_err(|e| e.to_string())?;
+            Ok::<_, String>((crate::browser::BrowserInstall::from_app_executable(&app)?,
+                self.proxy.browser_ca_pin()?, crate::browser::new_profile_dir()?))
+        })();
+        let (install, ca_spki, profile_dir) = match setup { Ok(setup) => setup, Err(error) => { self.browser_error(error); return; } };
+        self.proxy.set_intercept(self.intercepting);
+        self.proxy.set_intercept_response(self.intercepting_responses);
+        self.proxy.set_tls_interception(self.tls_intercepting);
+        let proxy = self.proxy.clone();
+        let requested_port = self.listening.unwrap_or(self.panels.proxy_panel.port);
+        let runtime = self.runtime.handle().clone();
+        let (tx, rx) = channel();
+        self.browser_updates = Some(rx);
+        self.status = "Starting integrated Chromium…".into();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let proxy_port = match runtime.block_on(proxy.ensure_started(requested_port)) {
+                    Ok(port) => port,
+                    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => runtime
+                        .block_on(proxy.ensure_started(0))
+                        .map_err(|e| format!("Cannot start browser proxy: {e}"))?,
+                    Err(e) => return Err(format!("Cannot start browser proxy: {e}")),
+                };
+                let session = install.launch(crate::browser::LaunchConfig { proxy_port, ca_spki, profile_dir, target })?;
+                if runtime.block_on(proxy.bound_port()) != Some(proxy_port) {
+                    return Err("Proxy stopped during browser startup".into());
+                }
+                Ok(session)
+            })();
+            let _ = tx.send(result);
+        });
     }
     /// The tool's own area. Burp insets its content rather than butting it against the window edge.
     fn panel(&mut self, ui: &mut Ui, rect: Rect) {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.theme.color("ui.background.2"));
-        let inset = PANEL_INSET;
+        let inset = if matches!(self.tool, INTRUDER | REPEATER) {
+            0.0
+        } else {
+            PANEL_INSET
+        };
         let content = Rect::from_min_size(
             pos2(rect.min.x + inset, rect.min.y + inset),
             Vec2::new((rect.width() - inset * 2.0).max(0.0), (rect.height() - inset * 2.0).max(0.0)),

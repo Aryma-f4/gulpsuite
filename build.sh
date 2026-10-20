@@ -13,7 +13,7 @@ JOBS="${GULPSUITE_JOBS:-2}"
 export CARGO_BUILD_JOBS="$JOBS"
 
 cd engine
-cargo build --release -j "$JOBS" 2>&1 | grep -Ev "^\s*Compiling|^\s*Downloaded|^\s*Adding|^\s*Updating" | tail -20
+cargo build --release -j "$JOBS"
 
 # Test output is filtered for readability but the exit status is kept, so a failure still fails.
 if cargo test --release -j "$JOBS" > /tmp/gulpsuite-tests.log 2>&1; then
@@ -27,3 +27,7 @@ cd ..
 
 cp engine/target/release/gulpsuite ./gulpsuite
 echo "built: ./gulpsuite"
+if [ -f engine/target/release/gulpsuite-setup ]; then
+  cp engine/target/release/gulpsuite-setup ./gulpsuite-setup
+  echo "built: ./gulpsuite-setup"
+fi

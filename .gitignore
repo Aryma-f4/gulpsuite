@@ -1,7 +1,14 @@
 # Build output
 engine/target/
 /gulpsuite
+/gulpsuite-setup
 /Gulpsuite.app/
+/Gulpsuite-preview.app/
+/.build/
+/.superpowers/
+/dist/
+**/__pycache__/
+/*.app.backup.*/
 *.dSYM
 
 # Reverse engineering scratch: extracted Burp classes and resources, not part of the app

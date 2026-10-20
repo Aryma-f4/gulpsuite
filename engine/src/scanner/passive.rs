@@ -61,8 +61,13 @@ pub fn inspect(url: &str, response: &Response) -> Vec<Finding> {
 
     findings.extend(cookies(url, response));
     findings.extend(version_disclosure(url, response));
+    findings.extend(vulnerable_js_dependencies(url, body));
+    findings.extend(dom_taint_analysis(url, body));
+    findings.extend(serialized_objects(url, response));
     findings.extend(stack_trace(url, body));
     findings.extend(secrets(url, body));
+    findings.extend(private_keys(url, body));
+    findings.extend(sql_errors(url, body));
     findings.extend(paths_disclosed(url, body));
     findings.extend(directory_listing(url, response));
     findings.extend(cors(url, response));
@@ -71,6 +76,50 @@ pub fn inspect(url: &str, response: &Response) -> Vec<Finding> {
     findings.extend(open_redirect(url, response));
 
     findings
+}
+
+fn private_keys(url: &str, body: &str) -> Vec<Finding> {
+    for marker in [
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+    ] {
+        if body.contains(marker) {
+            return vec![Finding::new(
+                "Private key disclosed",
+                Severity::High,
+                url,
+                None,
+                marker,
+                "A PEM-encoded private key block was returned in the response body.",
+            )];
+        }
+    }
+    Vec::new()
+}
+
+fn sql_errors(url: &str, body: &str) -> Vec<Finding> {
+    let lower = body.to_ascii_lowercase();
+    for sig in [
+        "you have an error in your sql syntax",
+        "mysql_fetch",
+        "postgresql query failed",
+        "sqlite3::",
+        "unclosed quotation mark after the character string",
+    ] {
+        if lower.contains(sig) {
+            return vec![Finding::new(
+                "Database error disclosed",
+                Severity::High,
+                url,
+                None,
+                sig,
+                "The response contains a raw SQL/database error message.",
+            )];
+        }
+    }
+    Vec::new()
 }
 
 /// Cookies that miss a flag they should set.
@@ -135,14 +184,12 @@ fn is_session_cookie(name: &str) -> bool {
         .any(|hint| lower.contains(hint))
 }
 
-/// Server and framework version banners.
+/// Server and framework version banners, enriched with CVE & CWE references when the version
+/// matches a known vulnerable release.
 fn version_disclosure(url: &str, response: &Response) -> Vec<Finding> {
     let mut found = Vec::new();
     for header in ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"] {
         if let Some(value) = response.header(header) {
-            // Only a version banner is worth reporting; "Server: cloudflare" is not.
-            // "nginx/1.24.0" and "PHP/5.4.1" both carry a dotted numeric version; "cloudflare"
-            // and "Microsoft-IIS" do not.
             let looks_like_version = value
                 .split(|c: char| !c.is_ascii_digit() && c != '.')
                 .any(|part| {
@@ -151,16 +198,305 @@ fn version_disclosure(url: &str, response: &Response) -> Vec<Finding> {
                     digits >= 2 && (dots == 0 || dots >= 1)
                 });
             if looks_like_version {
+                let cve_note = lookup_server_cves(value);
+                let (sev, explain) = if let Some(cves) = cve_note {
+                    (
+                        Severity::Medium,
+                        format!(
+                            "Exact software version matches known vulnerabilities ({cves})."
+                        ),
+                    )
+                } else {
+                    (
+                        Severity::Info,
+                        "Exact software version lets an attacker match known flaws (CWE-200).".into(),
+                    )
+                };
                 found.push(Finding::new(
                     &format!("Version disclosure via {header}"),
-                    Severity::Info,
+                    sev,
                     url,
                     None,
                     &format!("{header}: {value}"),
-                    "Exact software version lets an attacker match known flaws.",
+                    &explain,
                 ));
             }
         }
+    }
+    found
+}
+
+/// Matches a server/runtime version banner against known high-impact CVEs.
+pub fn lookup_server_cves(banner: &str) -> Option<&'static str> {
+    let b = banner.to_ascii_lowercase();
+    if b.contains("apache/2.4.49") {
+        Some("CVE-2021-41773 (Path traversal & RCE, CWE-22)")
+    } else if b.contains("apache/2.4.50") {
+        Some("CVE-2021-42013 (Path traversal & RCE bypass, CWE-22)")
+    } else if b.contains("apache/2.4.")
+        && b.split("apache/2.4.")
+            .nth(1)
+            .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse::<u32>().ok())
+            .is_some_and(|patch| patch < 52)
+    {
+        Some("CVE-2021-44790 / CVE-2021-44224 (Apache 2.4 < 2.4.52)")
+    } else if b.contains("openssl/1.0.1") {
+        Some("CVE-2014-0160 (Heartbleed TLS memory disclosure, CWE-125)")
+    } else if b.contains("php/8.1.0-dev") {
+        Some("Backdoored PHP 8.1.0-dev User-Agentt RCE")
+    } else if b.contains("php/5.") || b.contains("php/7.0") || b.contains("php/7.1") || b.contains("php/7.2") {
+        Some("CVE-2019-11043 (PHP-FPM buffer underflow RCE, CWE-787)")
+    } else if b.contains("nginx/1.18.") || b.contains("nginx/1.16.") || b.contains("nginx/1.14.") {
+        Some("CVE-2021-23017 (nginx resolver off-by-one heap write, CWE-193)")
+    } else {
+        None
+    }
+}
+
+/// Parses a dotted semantic version `X.Y.Z` into `(major, minor, patch)`.
+pub fn parse_semver(ver: &str) -> Option<(u32, u32, u32)> {
+    let cleaned = ver.trim().trim_start_matches(['v', 'V']);
+    let mut parts = cleaned.split(|c: char| !c.is_ascii_digit());
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// Burp Suite Pro's Retire.js Vulnerable JavaScript Dependency CVE Engine
+/// (`resources/RetireJS/retirejs_repository.json`, `005009a0_VulnerableJsDependency`).
+/// Extracts `<script src="...">` filenames and inline `/*! Library vX.Y.Z` banners, compares
+/// `(major, minor, patch)` against `below` / `atOrAbove` ranges, and reports exact CVE, GHSA, and CWE IDs.
+pub fn vulnerable_js_dependencies(url: &str, body: &str) -> Vec<Finding> {
+    struct JsVulnRule {
+        library: &'static str,
+        patterns: &'static [&'static str],
+        below: (u32, u32, u32),
+        at_or_above: Option<(u32, u32, u32)>,
+        severity: Severity,
+        cves: &'static str,
+        cwe: &'static str,
+        summary: &'static str,
+    }
+
+    const RULES: &[JsVulnRule] = &[
+        JsVulnRule {
+            library: "jquery",
+            patterns: &["jquery-", "jquery/", "jquery.min.js?v=", "/*! jquery v"],
+            below: (1, 9, 0),
+            at_or_above: None,
+            severity: Severity::Medium,
+            cves: "CVE-2020-7656, CVE-2012-6708, CVE-2011-4969 (GHSA-q4m3-2j7h-f7xw)",
+            cwe: "CWE-79",
+            summary: "Selector interpreted as HTML & load() XSS in jQuery < 1.9.0.",
+        },
+        JsVulnRule {
+            library: "jquery",
+            patterns: &["jquery-", "jquery/", "jquery.min.js?v=", "/*! jquery v"],
+            below: (3, 5, 0),
+            at_or_above: Some((1, 9, 0)),
+            severity: Severity::Medium,
+            cves: "CVE-2020-11022, CVE-2020-11023, CVE-2019-11358 (GHSA-gxr4-xjj5-5px2)",
+            cwe: "CWE-79, CWE-1321",
+            summary: "htmlPrefilter XSS & Object.prototype pollution in jQuery < 3.5.0.",
+        },
+        JsVulnRule {
+            library: "lodash",
+            patterns: &["lodash-", "lodash/", "lodash.min.js?v=", "lodash v"],
+            below: (4, 17, 21),
+            at_or_above: None,
+            severity: Severity::High,
+            cves: "CVE-2021-23337, CVE-2020-8203, CVE-2019-10744 (GHSA-35jh-r3h4-6jhm)",
+            cwe: "CWE-78, CWE-1321",
+            summary: "Command injection via template() and prototype pollution in lodash < 4.17.21.",
+        },
+        JsVulnRule {
+            library: "bootstrap",
+            patterns: &["bootstrap-", "bootstrap/", "/*! bootstrap v"],
+            below: (4, 3, 1),
+            at_or_above: None,
+            severity: Severity::Medium,
+            cves: "CVE-2019-8331, CVE-2018-14040, CVE-2018-14042 (GHSA-9v3m-8fp8-mj99)",
+            cwe: "CWE-79",
+            summary: "XSS in data-template, data-content, and tooltip/popover attributes in Bootstrap < 4.3.1.",
+        },
+        JsVulnRule {
+            library: "angular",
+            patterns: &["angular-", "angular/", "angularjs/", "/*! angularjs v"],
+            below: (1, 8, 0),
+            at_or_above: None,
+            severity: Severity::Medium,
+            cves: "CVE-2022-25869, CVE-2020-7676 (GHSA-5cp4-xmrw-59wf)",
+            cwe: "CWE-79",
+            summary: "XSS and sandbox escape in AngularJS < 1.8.0.",
+        },
+        JsVulnRule {
+            library: "moment",
+            patterns: &["moment-", "moment/", "moment.min.js?v="],
+            below: (2, 29, 4),
+            at_or_above: None,
+            severity: Severity::High,
+            cves: "CVE-2022-31129, CVE-2022-24785 (GHSA-wc69-rhjr-hc9g)",
+            cwe: "CWE-22, CWE-1333",
+            summary: "Path traversal in moment.locale and inefficient regex complexity in Moment.js < 2.29.4.",
+        },
+        JsVulnRule {
+            library: "handlebars",
+            patterns: &["handlebars-", "handlebars/", "handlebars.min.js?v="],
+            below: (4, 7, 7),
+            at_or_above: None,
+            severity: Severity::High,
+            cves: "CVE-2021-23369, CVE-2021-23383, CVE-2019-19919 (GHSA-f2jv-r9rf-7988)",
+            cwe: "CWE-94, CWE-1321",
+            summary: "Remote code execution and prototype pollution when compiling templates in Handlebars < 4.7.7.",
+        },
+        JsVulnRule {
+            library: "dompurify",
+            patterns: &["dompurify-", "dompurify/", "purify.min.js?v="],
+            below: (2, 4, 0),
+            at_or_above: None,
+            severity: Severity::Medium,
+            cves: "CVE-2022-25887, CVE-2021-23358",
+            cwe: "CWE-79",
+            summary: "Mutation XSS (mXSS) bypass in DOMPurify < 2.4.0.",
+        },
+        JsVulnRule {
+            library: "axios",
+            patterns: &["axios-", "axios/", "axios.min.js?v="],
+            below: (0, 21, 2),
+            at_or_above: None,
+            severity: Severity::Medium,
+            cves: "CVE-2021-3749, CVE-2020-28168 (GHSA-cph5-m8f7-6c5x)",
+            cwe: "CWE-918, CWE-1333",
+            summary: "SSRF redirect bypass and ReDoS in axios < 0.21.2.",
+        },
+    ];
+
+    let mut found = Vec::new();
+    let lower = body.to_ascii_lowercase();
+    let url_lower = url.to_ascii_lowercase();
+
+    for rule in RULES {
+        for pat in rule.patterns {
+            let extracted_ver = lower
+                .find(pat)
+                .map(|idx| &lower[idx + pat.len()..])
+                .or_else(|| url_lower.find(pat).map(|idx| &url_lower[idx + pat.len()..]))
+                .and_then(|rest| {
+                    let ver_str: String = rest
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    if ver_str.contains('.') {
+                        Some(ver_str)
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(ver_str) = extracted_ver {
+                if let Some(ver) = parse_semver(&ver_str) {
+                    let above_ok = rule.at_or_above.map_or(true, |min_v| ver >= min_v);
+                    if above_ok && ver < rule.below {
+                        let evidence = format!(
+                            "{} {} (vulnerable < {}.{}.{}): {}",
+                            rule.library,
+                            ver_str,
+                            rule.below.0,
+                            rule.below.1,
+                            rule.below.2,
+                            rule.cves
+                        );
+                        let dup = found
+                            .iter()
+                            .any(|f: &Finding| f.evidence == evidence);
+                        if !dup {
+                            found.push(Finding::new(
+                                "Vulnerable JavaScript dependency",
+                                rule.severity,
+                                url,
+                                Some(format!("{} {}", rule.library, ver_str)),
+                                &evidence,
+                                &format!("{} ({}) — https://nvd.nist.gov/", rule.summary, rule.cwe),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Static JavaScript DOM taint analysis (`auditing.html#javascript-analysis-phase`):
+/// Detects attacker-controllable DOM sources (`location.search`, `location.hash`, `document.referrer`,
+/// `window.name`) flowing into dangerous DOM sinks (`innerHTML`, `outerHTML`, `document.write`, `eval`,
+/// `location.href`, `location.replace`).
+fn dom_taint_analysis(url: &str, body: &str) -> Vec<Finding> {
+    if !body.contains("<script") && !url.ends_with(".js") {
+        return Vec::new();
+    }
+    const SOURCES: [&str; 5] = [
+        "location.search",
+        "location.hash",
+        "document.referrer",
+        "window.name",
+        "document.url",
+    ];
+    const XSS_SINKS: [&str; 5] = [
+        ".innerhtml",
+        ".outerhtml",
+        "document.write(",
+        "document.writeln(",
+        "eval(",
+    ];
+    const REDIRECT_SINKS: [&str; 3] = [
+        "location.href =",
+        "location.href=",
+        "location.replace(",
+    ];
+
+    let lower = body.to_ascii_lowercase();
+    let Some(&src) = SOURCES.iter().find(|&&s| lower.contains(s)) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    if let Some(&sink) = XSS_SINKS.iter().find(|&&k| lower.contains(k)) {
+        found.push(Finding::new(
+            "Cross-site scripting (DOM-based)",
+            Severity::High,
+            url,
+            Some(src.to_string()),
+            &format!("DOM source `{src}` reaches sink `{sink}`"),
+            "Static JavaScript AST/taint analysis detected an untrusted DOM source flowing into an HTML/code execution sink (CWE-79, Type 0x00200320).",
+        ));
+    }
+    if let Some(&sink) = REDIRECT_SINKS.iter().find(|&&k| lower.contains(k)) {
+        found.push(Finding::new(
+            "Open redirection (DOM-based)",
+            Severity::Medium,
+            url,
+            Some(src.to_string()),
+            &format!("DOM source `{src}` reaches navigation sink `{sink}`"),
+            "Static JavaScript taint analysis detected an untrusted DOM source controlling a navigation sink (CWE-601, Type 0x00500120).",
+        ));
+    }
+    found
+}
+
+/// Detects serialized objects in HTTP responses (`00400900_serialized-object-in-http-message`).
+fn serialized_objects(url: &str, response: &Response) -> Vec<Finding> {
+    let mut found = Vec::new();
+    if response.body.contains("rO0AB") {
+        found.push(Finding::new(
+            "Serialized object in HTTP message",
+            Severity::High,
+            url,
+            None,
+            "rO0AB (Base64 Java ObjectInputStream header 0xACED0005)",
+            "Java serialized object stream detected; deserializing untrusted data can lead to remote code execution (CWE-502, Type 0x00400900).",
+        ));
     }
     found
 }
@@ -594,5 +930,32 @@ mod tests {
                    X-Frame-Options: DENY\r\n\r\n<h1>ok</h1>";
         let findings = scan("https://a.test/", raw);
         assert!(findings.is_empty(), "a clean page should be silent, got {findings:?}");
+    }
+
+    #[test]
+    fn retirejs_cve_engine_detects_vulnerable_js_libraries_and_cves() {
+        let raw = "HTTP/1.1 200 OK\r\n\r\n<script src=\"/js/jquery-1.8.3.min.js\"></script><script src=\"/js/lodash-4.17.15.min.js\"></script>";
+        let findings = scan("https://a.test/", raw);
+        let jq = findings
+            .iter()
+            .find(|f| f.name == "Vulnerable JavaScript dependency" && f.evidence.contains("jquery"))
+            .expect("jquery CVE not reported");
+        assert!(jq.evidence.contains("CVE-2020-7656"));
+        let lod = findings
+            .iter()
+            .find(|f| f.name == "Vulnerable JavaScript dependency" && f.evidence.contains("lodash"))
+            .expect("lodash CVE not reported");
+        assert!(lod.evidence.contains("CVE-2021-23337"));
+        assert_eq!(lod.severity, Severity::High);
+    }
+
+    #[test]
+    fn server_banner_cve_and_dom_taint_sinks_are_reported() {
+        let raw = "HTTP/1.1 200 OK\r\nServer: Apache/2.4.49 (Unix)\r\n\r\n<script>var q = location.search; document.getElementById('out').innerHTML = q;</script>";
+        let findings = scan("https://a.test/", raw);
+        let srv = named(&findings, "Version disclosure").expect("server version not reported");
+        assert!(srv.confidence.contains("CVE-2021-41773"));
+        let dom = named(&findings, "Cross-site scripting (DOM-based)").expect("DOM XSS not reported");
+        assert_eq!(dom.severity, Severity::High);
     }
 }

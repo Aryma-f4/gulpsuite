@@ -39,6 +39,10 @@ fn proxy_transactions_advance_both_live_tasks() {
         1
     );
     assert_eq!(workspace.events.len(), 1);
+    assert!(
+        !workspace.issues.is_empty(),
+        "live passive audit must automatically record findings from proxy traffic"
+    );
 }
 
 #[test]

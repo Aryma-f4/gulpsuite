@@ -5,9 +5,10 @@
 //! certificate of its own for the host that was asked for, and the browser is told to trust the
 //! proxy's authority. The authority is written to disk so it can be installed in a browser.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -21,6 +22,8 @@ pub struct Authority {
     certificate: rcgen::Certificate,
     /// The file the certificate was written to, so the UI can point at it.
     pub path: PathBuf,
+    /// Per-host cached leaf TLS configs so parallel browser connections share one keygen.
+    cache: Mutex<HashMap<String, Arc<ServerConfig>>>,
 }
 
 /// A resolver that always hands out the one certificate it was built with.
@@ -63,17 +66,29 @@ impl Authority {
         if let Ok(mut file) = std::fs::File::create(&path) {
             let _ = file.write_all(certificate.pem().as_bytes());
         }
+        let der_path = path.with_extension("der");
+        if let Ok(mut file) = std::fs::File::create(&der_path) {
+            let _ = file.write_all(certificate.der());
+        }
 
         Ok(Authority {
             key_pair,
             certificate,
             path,
+            cache: Mutex::new(HashMap::new()),
         })
     }
 
     /// The authority's certificate, in the form a browser can install.
     pub fn pem(&self) -> String {
         self.certificate.pem()
+    }
+
+    /// Only this session's CA is exempted in the isolated integrated browser.
+    pub fn spki_pin(&self) -> String {
+        use base64::Engine;
+        let digest = ring::digest::digest(&ring::digest::SHA256, &self.key_pair.public_key_der());
+        base64::engine::general_purpose::STANDARD.encode(digest.as_ref())
     }
 
     /// The authority's own certificate, for a client that has to trust it.
@@ -95,17 +110,38 @@ impl Authority {
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
         let signing = rustls::crypto::ring::sign::any_supported_type(&key).map_err(|e| e.to_string())?;
         Ok(CertifiedKey::new(
-            vec![CertificateDer::from(certificate.der().to_vec())],
+            // Include the session CA so Chromium can match its scoped SPKI pin.
+            vec![CertificateDer::from(certificate.der().to_vec()), self.certificate_der()],
             signing,
         ))
     }
 
     /// The server side of a TLS connection to a client, for one host.
     pub fn server_config(&self, host: &str) -> Result<ServerConfig, String> {
+        let config = self.server_config_arc(host)?;
+        Ok((*config).clone())
+    }
+
+    /// Cached `Arc<ServerConfig>` per host so parallel browser `CONNECT` tunnels do not
+    /// regenerate a fresh keypair on every subresource connection.
+    pub fn server_config_arc(&self, host: &str) -> Result<Arc<ServerConfig>, String> {
+        if let Ok(guard) = self.cache.lock() {
+            if let Some(cached) = guard.get(host) {
+                return Ok(cached.clone());
+            }
+        }
         let key = Arc::new(self.leaf(host)?);
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(Arc::new(OneCert(key)));
+        let config = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(Arc::new(OneCert(key))),
+        );
+        if let Ok(mut guard) = self.cache.lock() {
+            if guard.len() >= 512 {
+                guard.clear();
+            }
+            guard.insert(host.to_string(), config.clone());
+        }
         Ok(config)
     }
 }
@@ -114,12 +150,10 @@ impl Authority {
 ///
 /// The application support directory is the one place on macOS a user can find and install from.
 pub fn certificate_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home)
-        .join("Library")
-        .join("Application Support")
-        .join("Gulpsuite")
-        .join("gulpsuite-proxy-ca.pem")
+    // No shared /tmp certificate export when the user data path is unavailable.
+    crate::platform_paths::data_dir()
+        .map(|dir| dir.join("gulpsuite-proxy-ca.pem"))
+        .unwrap_or_default()
 }
 
 /// The client side of a TLS connection to an origin, trusting the system roots.
@@ -153,7 +187,7 @@ mod tests {
     fn the_authority_signs_a_certificate_for_a_host() {
         let authority = Authority::generate().expect("authority");
         let key = authority.leaf("example.test").expect("leaf");
-        assert_eq!(key.cert.len(), 1, "one certificate in the chain");
+        assert_eq!(key.cert.len(), 2, "leaf plus session CA in the chain");
         assert!(
             authority.pem().contains("BEGIN CERTIFICATE"),
             "the authority has a certificate in PEM form"

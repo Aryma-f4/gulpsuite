@@ -96,6 +96,11 @@ impl Theme {
         // `$Colors.palette.mono.4` (Button.borderColor). Measured from Burp: the rule under the
         // tool tabs is #DFDFDF in the light theme, which is mono.4 there.
         values.insert("border.1".into(), resolve("$mono[4]", &raw.colors, 0));
+        // Alias `background.0` to `$mono[1]` (#FFFFFF in Light, #2B2B2B in Dark) and
+        // `icon.accent` to `@orange` (#FF6633) so panels using 0-indexed background or accent keys
+        // always get Burp's true surface and primary orange colours.
+        values.insert("background.0".into(), resolve("$mono[1]", &raw.colors, 0));
+        values.insert("icon.accent".into(), resolve("@orange", &raw.colors, 0));
 
         // Burp paints its accent with a tone the palette does not express. The light theme's
         // selected-tab underline and primary button are #CC683D in a running Burp, and the

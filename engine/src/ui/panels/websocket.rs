@@ -3,7 +3,7 @@
 
 use eframe::egui::Ui;
 
-use super::{heading, label, muted};
+use super::{empty_state, label, muted};
 use crate::ui::app::App;
 
 /// Human-readable name for a frame opcode.
@@ -19,19 +19,25 @@ fn opcode_name(opcode: u8) -> &'static str {
     }
 }
 
-/// Records captured WebSocket traffic. `tool` is shown in the heading so the same data reads
-/// correctly under either Proxy or Logger.
+/// Records captured WebSocket traffic. `tool` names the owning panel for status messages.
 pub fn draw(app: &mut App, ui: &mut Ui, tool: &str) {
     let theme = app.theme.clone();
-    heading(ui, &theme, &format!("{tool} — WebSockets"));
 
     if app.websockets.is_empty() {
-        muted(
+        let (learn, _) = empty_state(
             ui,
             &theme,
-            "No WebSocket connections captured. The proxy records one when a request upgrades and the \\
-             server answers 101.",
+            "WebSockets history is empty",
+            "The WebSockets history displays all WebSocket messages passed through Burp. The \
+             proxy records a connection when a request upgrades and the server answers 101.",
+            true,
+            None,
         );
+        if learn {
+            app.status = format!(
+                "{tool} WebSockets: upgrade an HTTP connection (101 Switching Protocols) to capture frames"
+            );
+        }
         return;
     }
 

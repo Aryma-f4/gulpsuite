@@ -6,7 +6,7 @@
 
 use eframe::egui::Ui;
 
-use super::{label, muted};
+use super::{heading, label, muted};
 use crate::ui::app::App;
 
 /// Paths probed per host. Kept small and fixed so a scan cannot fan out without bound.
@@ -21,7 +21,23 @@ pub const PATHS: &[&str] = &[
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    
+
+    heading(ui, &theme, "Create your own Repeater feature");
+    muted(
+        ui,
+        &theme,
+        "Create powerful custom actions to extract, analyze, and transform data with Bambda scripts.",
+    );
+    ui.horizontal(|ui| {
+        if crate::ui::app::primary_button(ui, &theme, "Try it out").clicked() {
+            app.tool = crate::ui::app::EXTENSIONS;
+            app.view = 0;
+            app.status = "Opened Bambda custom actions editor".into();
+        }
+    });
+    ui.separator();
+    heading(ui, &theme, "Content discovery");
+
     ui.horizontal(|ui| {
         label(ui, &theme, "Paths");
         ui.text_edit_singleline(&mut app.panels.discover_paths);
@@ -39,7 +55,14 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
     ui.add_space(4.0);
     if app.panels.discover_running {
-        muted(ui, &theme, &format!("Probing… {}", app.panels.discover_progress));
+        ui.horizontal(|ui| {
+            super::scanner::paint_burp_spinner(
+                ui,
+                eframe::egui::Vec2::new(16.0, 16.0),
+                eframe::egui::Color32::from_rgb(0x5B, 0x4F, 0xFF),
+            );
+            muted(ui, &theme, &format!("Probing… {}", app.panels.discover_progress));
+        });
     } else {
         muted(ui, &theme, "Burp crawls a starting URL; this build probes a fixed path list against hosts already in the proxy history.");
     }
@@ -50,9 +73,29 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         muted(ui, &theme, "No results yet.");
         return;
     }
+    let chosen: Vec<(String, u16)> = app.panels.discover_results.clone();
     eframe::egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-        for (url, status) in app.panels.discover_results.iter() {
-            ui.label(eframe::egui::RichText::new(format!("{status}  {url}")).monospace());
+        for (url, status) in chosen.iter() {
+            ui.horizontal(|ui| {
+                ui.label(eframe::egui::RichText::new(format!("{status}  {url}")).monospace());
+                if ui.small_button("To Repeater").clicked() {
+                    if let Ok(parsed) = crate::http_target::HttpTarget::parse(url) {
+                        let path = url::Url::parse(url)
+                            .ok()
+                            .map(|u| u.path().to_string())
+                            .filter(|p| !p.is_empty())
+                            .unwrap_or_else(|| "/".into());
+                        let req = format!(
+                            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                            parsed.authority()
+                        );
+                        app.panels.repeater.open(url, &req);
+                        app.tool = crate::ui::app::REPEATER;
+                        app.view = 0;
+                        app.status = format!("Sent {url} to Repeater");
+                    }
+                }
+            });
         }
     });
 }

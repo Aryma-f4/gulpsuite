@@ -1,6 +1,6 @@
 [package]
 name = "gulpsuite"
-version = "0.2.0"
+version = "0.0.1"
 edition = "2021"
 
 [lib]
@@ -12,6 +12,10 @@ name = "gulpsuite"
 path = "src/bin/gulpsuite.rs"
 
 [[bin]]
+name = "gulpsuite-setup"
+path = "src/bin/gulpsuite-setup.rs"
+
+[[bin]]
 name = "gulpsuite-engine"
 path = "src/bin/gulpsuite-engine.rs"
 
@@ -19,12 +23,25 @@ path = "src/bin/gulpsuite-engine.rs"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "io-std", "time"] }
 serde_json = "1"
 regex = "1"
+url = "2"
+time = "0.3"
+base64 = "0.22"
+ring = "0.17"
 eframe = "0.33"
 serde = { version = "1", features = ["derive"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 webpki-roots = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 
 [dev-dependencies]
 egui_kittest = { version = "=0.33.3", features = ["eframe", "snapshot", "wgpu"] }

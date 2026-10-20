@@ -2,7 +2,7 @@
 
 use eframe::egui::Ui;
 
-use super::{heading, muted};
+use super::{empty_state, heading, horizontal_resize_handle, muted, vertical_split};
 use crate::ui::app::App;
 
 #[derive(Clone)]
@@ -10,10 +10,121 @@ pub struct ProxyPanel {
     pub port: u16,
     /// Index into the log of the row whose detail is open.
     pub selected: Option<usize>,
+    /// Row index opened in a detached resizable popup window.
+    pub detached_row: Option<usize>,
     /// Which parked request is open in the intercept editor.
     pub held_selected: Option<u64>,
     /// The edited message waiting to be forwarded, with the id of the message it belongs to.
     pub held_edit: Option<(u64, String)>,
+    /// Resizable height of the Intercept request/response editor.
+    pub intercept_height: f32,
+    /// Resizable height of the HTTP history table.
+    pub table_height: f32,
+    /// Resizable height of the lower Request/Response detail pane.
+    pub detail_height: f32,
+    /// Draggable horizontal split ratio (`0.18..=0.82`) between Request and Response panes.
+    pub split_ratio: f32,
+    ///Drags the detached window's Request/Response split.
+    pub detached_split_ratio: f32,
+    /// Active sort column (`0..12`) in HTTP history.
+    pub sort_column: Option<usize>,
+    pub sort_ascending: bool,
+    /// Filter query for HTTP history.
+    pub filter: String,
+    /// Master switch for HTTP history filters (`Filter on` / `Filter off` in Burp).
+    pub filter_enabled: bool,
+    /// Opens Burp's detailed `HTTP history filter` modal window.
+    pub show_filter_window: bool,
+    /// Restrict HTTP history to Target Scope rules.
+    pub in_scope_only: bool,
+    /// Restrict HTTP history to requests carrying query/body parameters.
+    pub params_only: bool,
+    /// Restrict HTTP history to 4xx/5xx responses.
+    pub errors_only: bool,
+    pub status_2xx: bool,
+    pub status_3xx: bool,
+    pub status_4xx: bool,
+    pub status_5xx: bool,
+    pub regex_search: bool,
+    pub case_sensitive: bool,
+    pub negative_search: bool,
+    pub hide_extensions_enabled: bool,
+    pub hide_extensions: String,
+    pub show_extensions: String,
+    pub only_notes: bool,
+    pub only_highlighted: bool,
+    /// Restrict HTTP history by MIME type (`All`, `HTML`, `JSON`, `script`, `CSS`, `XML`, `image`).
+    pub mime_filter: String,
+    /// Hex dump toggle for the selected HTTP history request/response viewer.
+    pub hex_view: bool,
+    /// User-annotated notes keyed by history row index.
+    pub notes: std::collections::HashMap<usize, String>,
+    /// User highlight colour code (`1..=5`) keyed by history row index.
+    pub highlights: std::collections::HashMap<usize, u8>,
+    // ---- Burp Proxy settings (all 9 sections from settings/tools/proxy.html) ----
+    pub bind_address_mode: usize,
+    pub redirect_host: String,
+    pub redirect_port: String,
+    pub force_tls: bool,
+    pub support_invisible_proxy: bool,
+    pub cert_mode: usize,
+    pub cert_specific_host: String,
+    pub auto_update_content_length: bool,
+    pub auto_fix_newlines: bool,
+    pub intercept_in_scope_only: bool,
+    pub ws_intercept_c2s: bool,
+    pub ws_intercept_s2c: bool,
+    pub ws_intercept_in_scope_only: bool,
+    pub resp_mod_unhide_fields: bool,
+    pub resp_mod_highlight_unhidden: bool,
+    pub resp_mod_enable_disabled: bool,
+    pub resp_mod_remove_maxlength: bool,
+    pub resp_mod_remove_js_validation: bool,
+    pub resp_mod_remove_all_js: bool,
+    pub resp_mod_https_to_http: bool,
+    pub resp_mod_strip_cookie_secure: bool,
+    pub tls_passthrough_hosts: String,
+    pub tls_auto_passthrough_on_error: bool,
+    pub tls_passthrough_out_of_scope: bool,
+    pub default_history_display: usize,
+    pub default_interception_state: usize,
+    pub misc_http10_server: bool,
+    pub misc_http10_client: bool,
+    pub misc_keep_alive: bool,
+    pub misc_resp_conn_close: bool,
+    pub misc_req_conn_close: bool,
+    pub misc_strip_proxy_headers: bool,
+    pub misc_strip_unsupported_encoding: bool,
+    pub misc_strip_ws_extensions: bool,
+    pub misc_unpack_compressed_req: bool,
+    pub misc_unpack_compressed_resp: bool,
+    pub misc_disable_portal: bool,
+    pub misc_suppress_errors: bool,
+    pub misc_dont_log_history: bool,
+    pub dont_log_out_of_scope: bool,
+    // Formatter & Configure filter modal fields (`quick-start-pro-intercepted-request.png`, `filter-settings-http.png`)
+    pub intercept_fmt_mode: usize,
+    pub intercept_wrap: bool,
+    pub intercept_non_printable: bool,
+    pub history_req_fmt_mode: usize,
+    pub history_resp_fmt_mode: usize,
+    pub history_req_wrap: bool,
+    pub history_resp_wrap: bool,
+    pub history_req_np: bool,
+    pub history_resp_np: bool,
+    pub filter_mode_bambda: bool,
+    pub filter_bambda_script: String,
+    pub filter_hide_no_response: bool,
+    pub filter_show_extensions_enabled: bool,
+    pub filter_listener_port: String,
+    pub mime_html: bool,
+    pub mime_script: bool,
+    pub mime_xml: bool,
+    pub mime_css: bool,
+    pub mime_other_text: bool,
+    pub mime_images: bool,
+    pub mime_flash: bool,
+    pub mime_other_binary: bool,
 }
 
 impl Default for ProxyPanel {
@@ -21,8 +132,100 @@ impl Default for ProxyPanel {
         ProxyPanel {
             port: 8080,
             selected: None,
+            detached_row: None,
             held_selected: None,
             held_edit: None,
+            intercept_height: 320.0,
+            table_height: 240.0,
+            detail_height: 280.0,
+            split_ratio: 0.5,
+            detached_split_ratio: 0.5,
+            sort_column: None,
+            sort_ascending: true,
+            filter: String::new(),
+            filter_enabled: true,
+            show_filter_window: false,
+            in_scope_only: false,
+            params_only: false,
+            errors_only: false,
+            status_2xx: true,
+            status_3xx: true,
+            status_4xx: true,
+            status_5xx: true,
+            regex_search: false,
+            case_sensitive: false,
+            negative_search: false,
+            hide_extensions_enabled: false,
+            hide_extensions: "gif, jpg, png, ico, woff, woff2".into(),
+            show_extensions: String::new(),
+            only_notes: false,
+            only_highlighted: false,
+            mime_filter: "All".into(),
+            hex_view: false,
+            notes: std::collections::HashMap::new(),
+            highlights: std::collections::HashMap::new(),
+            bind_address_mode: 0,
+            redirect_host: String::new(),
+            redirect_port: String::new(),
+            force_tls: false,
+            support_invisible_proxy: false,
+            cert_mode: 0,
+            cert_specific_host: String::new(),
+            auto_update_content_length: true,
+            auto_fix_newlines: true,
+            intercept_in_scope_only: false,
+            ws_intercept_c2s: false,
+            ws_intercept_s2c: false,
+            ws_intercept_in_scope_only: false,
+            resp_mod_unhide_fields: false,
+            resp_mod_highlight_unhidden: false,
+            resp_mod_enable_disabled: false,
+            resp_mod_remove_maxlength: false,
+            resp_mod_remove_js_validation: false,
+            resp_mod_remove_all_js: false,
+            resp_mod_https_to_http: false,
+            resp_mod_strip_cookie_secure: false,
+            tls_passthrough_hosts: String::new(),
+            tls_auto_passthrough_on_error: false,
+            tls_passthrough_out_of_scope: false,
+            default_history_display: 0,
+            default_interception_state: 1,
+            misc_http10_server: false,
+            misc_http10_client: false,
+            misc_keep_alive: true,
+            misc_resp_conn_close: false,
+            misc_req_conn_close: true,
+            misc_strip_proxy_headers: true,
+            misc_strip_unsupported_encoding: true,
+            misc_strip_ws_extensions: true,
+            misc_unpack_compressed_req: false,
+            misc_unpack_compressed_resp: false,
+            misc_disable_portal: false,
+            misc_suppress_errors: false,
+            misc_dont_log_history: false,
+            dont_log_out_of_scope: false,
+            intercept_fmt_mode: 0,
+            intercept_wrap: true,
+            intercept_non_printable: false,
+            history_req_fmt_mode: 0,
+            history_resp_fmt_mode: 0,
+            history_req_wrap: true,
+            history_resp_wrap: true,
+            history_req_np: false,
+            history_resp_np: false,
+            filter_mode_bambda: false,
+            filter_bambda_script: "return requestResponse.request().isInScope();".into(),
+            filter_hide_no_response: false,
+            filter_show_extensions_enabled: false,
+            filter_listener_port: String::new(),
+            mime_html: true,
+            mime_script: true,
+            mime_xml: true,
+            mime_css: false,
+            mime_other_text: true,
+            mime_images: false,
+            mime_flash: true,
+            mime_other_binary: false,
         }
     }
 }
@@ -69,7 +272,15 @@ fn match_and_replace(app: &mut App, ui: &mut Ui) {
                 Err(why) => app.status = format!("Rules rejected: {why}"),
             }
         }
-        muted(ui, &theme, if active { "rules are live" } else { "no rules active" });
+        muted(
+            ui,
+            &theme,
+            if active {
+                "rules are live"
+            } else {
+                "no rules active"
+            },
+        );
     });
 
     ui.add_space(6.0);
@@ -77,7 +288,11 @@ fn match_and_replace(app: &mut App, ui: &mut Ui) {
     match crate::bambda::parse(&script) {
         Ok(statements) => {
             if statements.is_empty() {
-                muted(ui, &theme, "No rules. Edit the script in the Extensions tab.");
+                muted(
+                    ui,
+                    &theme,
+                    "No rules. Edit the script in the Extensions tab.",
+                );
                 return;
             }
             eframe::egui::Grid::new("match-replace-grid")
@@ -103,61 +318,497 @@ fn match_and_replace(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Burp's Intercept view: listener controls plus the requests parked for a decision.
-/// Burp's Proxy settings view: the listener controls live here rather than on Intercept, so the
-/// Intercept toolbar only carries the request/response decisions.
-fn settings(app: &mut App, ui: &mut Ui) {
-    ui.horizontal(|ui| {
-        let listening = app.listening.is_some();
-        if ui.add_enabled(!listening, eframe::egui::Button::new("Start")).clicked() {
-            app.start_proxy(app.panels.proxy_panel.port);
-        }
-        if ui.add_enabled(listening, eframe::egui::Button::new("Stop")).clicked() {
-            app.stop_proxy();
-        }
-        ui.separator();
-        ui.label("Port");
-        let mut port_text = app.panels.proxy_panel.port.to_string();
-        if ui.text_edit_singleline(&mut port_text).changed() {
-            if let Ok(port) = port_text.trim().parse::<u16>() {
-                app.panels.proxy_panel.port = port;
+/// Complete Burp Suite Pro v2026.3.3 `Proxy settings` view (`settings/tools/proxy.html`),
+/// shared by both `Proxy -> Proxy settings` and `Settings -> Tools -> Proxy`.
+pub fn settings(app: &mut App, ui: &mut Ui) {
+    let theme = app.theme.clone();
+    eframe::egui::ScrollArea::vertical()
+        .id_salt("proxy-settings-scroll")
+        .show(ui, |ui| {
+            // 1. Proxy listeners (Binding, Request handling, Certificate, TLS Protocols, HTTP)
+            heading(ui, &theme, "Proxy listeners");
+            muted(
+                ui,
+                &theme,
+                "Burp's proxy listener accepts HTTP and HTTPS traffic on loopback and routes the integrated browser.",
+            );
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                let listening = app.listening.is_some();
+                if ui
+                    .add_enabled(!listening, eframe::egui::Button::new("Start"))
+                    .clicked()
+                {
+                    app.start_proxy(app.panels.proxy_panel.port);
+                }
+                if ui
+                    .add_enabled(listening, eframe::egui::Button::new("Stop"))
+                    .clicked()
+                {
+                    app.stop_proxy();
+                }
+                ui.separator();
+                ui.label("Bind to port");
+                let mut port_text = app.panels.proxy_panel.port.to_string();
+                if ui
+                    .add(eframe::egui::TextEdit::singleline(&mut port_text).desired_width(68.0))
+                    .changed()
+                {
+                    if let Ok(port) = port_text.trim().parse::<u16>() {
+                        app.panels.proxy_panel.port = port;
+                    }
+                }
+                ui.separator();
+                ui.label("Bind to address:");
+                eframe::egui::ComboBox::from_id_salt("proxy-bind-addr")
+                    .selected_text(match app.panels.proxy_panel.bind_address_mode {
+                        1 => "All interfaces",
+                        2 => "Specific address",
+                        _ => "Loopback only (127.0.0.1)",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut app.panels.proxy_panel.bind_address_mode,
+                            0,
+                            "Loopback only (127.0.0.1)",
+                        );
+                        ui.selectable_value(
+                            &mut app.panels.proxy_panel.bind_address_mode,
+                            1,
+                            "All interfaces",
+                        );
+                        ui.selectable_value(
+                            &mut app.panels.proxy_panel.bind_address_mode,
+                            2,
+                            "Specific address",
+                        );
+                    });
+                ui.separator();
+                ui.label(
+                    app.listening
+                        .map(|port| format!("Running on 127.0.0.1:{port}"))
+                        .unwrap_or_else(|| "Stopped".into()),
+                );
+                if ui.button("Open browser").clicked() {
+                    app.open_browser();
+                }
+            });
+
+            ui.add_space(6.0);
+            eframe::egui::CollapsingHeader::new(
+                eframe::egui::RichText::new("Listener request handling & TLS certificate").strong(),
+            )
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Redirect to host:");
+                    ui.add(
+                        eframe::egui::TextEdit::singleline(
+                            &mut app.panels.proxy_panel.redirect_host,
+                        )
+                        .desired_width(160.0),
+                    );
+                    ui.label("Redirect to port:");
+                    ui.add(
+                        eframe::egui::TextEdit::singleline(
+                            &mut app.panels.proxy_panel.redirect_port,
+                        )
+                        .desired_width(68.0),
+                    );
+                });
+                ui.checkbox(
+                    &mut app.panels.proxy_panel.force_tls,
+                    "Force use of TLS on outgoing connections",
+                );
+                ui.checkbox(
+                    &mut app.panels.proxy_panel.support_invisible_proxy,
+                    "Support invisible proxying (enable only if needed)",
+                );
+                ui.separator();
+                ui.label(eframe::egui::RichText::new("Server TLS certificate:").strong());
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.cert_mode,
+                    0,
+                    "Generate CA-signed per-host certificates (default)",
+                );
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.cert_mode,
+                    1,
+                    "Use a self-signed certificate",
+                );
+                ui.horizontal(|ui| {
+                    ui.radio_value(
+                        &mut app.panels.proxy_panel.cert_mode,
+                        2,
+                        "Generate a CA-signed certificate with a specific hostname:",
+                    );
+                    ui.add(
+                        eframe::egui::TextEdit::singleline(
+                            &mut app.panels.proxy_panel.cert_specific_host,
+                        )
+                        .desired_width(160.0),
+                    );
+                });
+            });
+
+            ui.add_space(8.0);
+            heading(ui, &theme, "CA certificate");
+            muted(
+                ui,
+                &theme,
+                "The integrated Chromium browser trusts this session CA automatically via SPKI pinning. \
+                 External browsers can download the certificate from http://burp/cert or http://burpsuite/cert.",
+            );
+            if let Some(path) = app.proxy.authority_path() {
+                ui.horizontal(|ui| {
+                    ui.label("PEM file:");
+                    ui.monospace(path.display().to_string());
+                });
+                ui.horizontal(|ui| {
+                    ui.label("DER file:");
+                    ui.monospace(path.with_extension("der").display().to_string());
+                });
             }
-        }
-        ui.checkbox(&mut app.intercepting, "Intercept");
-        app.proxy.set_intercept(app.intercepting);
-        ui.separator();
-        // Burp has a switch for responses as well, so a response can be changed before the client
-        // gets to see it.
-        let mut responses = app.intercepting_responses;
-        if ui.checkbox(&mut responses, "Responses").changed() {
-            app.intercepting_responses = responses;
-            app.proxy.set_intercept_response(responses);
-        }
-        // Https is intercepted with a certificate of the proxy's own, so the traffic inside the
-        // tunnel can be seen. With it off the tunnel is passed through as it is.
-        let mut tls = app.tls_intercepting;
-        if ui.checkbox(&mut tls, "TLS").changed() {
-            app.tls_intercepting = tls;
-            app.proxy.set_tls_interception(tls);
-        }
-    });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Copy CA PEM").clicked() {
+                    if let Some(pem) = app.proxy.authority_pem() {
+                        ui.ctx().copy_text(pem);
+                        app.status = "Copied proxy CA PEM certificate to clipboard".into();
+                    }
+                }
+                if ui.button("Copy SPKI pin").clicked() {
+                    if let Ok(pin) = app.proxy.browser_ca_pin() {
+                        ui.ctx().copy_text(pin.clone());
+                        app.status = format!("Copied session CA SPKI pin: {pin}");
+                    }
+                }
+                ui.monospace("http://burp/cert");
+            });
+
+            // 2. Request and response interception rules
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "Request and response interception rules");
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut app.intercepting, "Intercept");
+                app.proxy.set_intercept(app.intercepting);
+                ui.separator();
+                let mut responses = app.intercepting_responses;
+                if ui.checkbox(&mut responses, "Responses").changed() {
+                    app.intercepting_responses = responses;
+                    app.proxy.set_intercept_response(responses);
+                }
+                let mut tls = app.tls_intercepting;
+                if ui.checkbox(&mut tls, "TLS").changed() {
+                    app.tls_intercepting = tls;
+                    app.proxy.set_tls_interception(tls);
+                }
+            });
+            ui.checkbox(
+                &mut app.panels.proxy_panel.intercept_in_scope_only,
+                "Only intercept in-scope requests (URL is in Target scope)",
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.auto_update_content_length,
+                "Automatically update Content-Length header when the request / response is edited",
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.auto_fix_newlines,
+                "Automatically fix missing or superfluous new lines at end of request",
+            );
+
+            // 3. WebSocket interception rules
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "WebSocket interception rules");
+            ui.checkbox(
+                &mut app.panels.proxy_panel.ws_intercept_c2s,
+                "Intercept client-to-server messages",
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.ws_intercept_s2c,
+                "Intercept server-to-client messages",
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.ws_intercept_in_scope_only,
+                "Only intercept in-scope WebSocket messages",
+            );
+
+            // 4. Response modification rules
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "Response modification rules");
+            ui.columns(2, |cols| {
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_unhide_fields,
+                    "Unhide hidden form fields",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_highlight_unhidden,
+                    "Prominently highlight unhidden fields",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_enable_disabled,
+                    "Enable disabled form fields",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_remove_maxlength,
+                    "Remove input field length limits",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_remove_js_validation,
+                    "Remove JavaScript form validation",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_remove_all_js,
+                    "Remove all JavaScript",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_https_to_http,
+                    "Convert HTTPS links to HTTP",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.resp_mod_strip_cookie_secure,
+                    "Remove secure flag from cookies",
+                );
+            });
+
+            // 5. HTTP and WebSocket match and replace rules
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "HTTP and WebSocket match and replace rules");
+            ui.horizontal(|ui| {
+                ui.checkbox(
+                    &mut app.panels.match_replace_enabled,
+                    "Enable HTTP match and replace rules",
+                );
+                if ui.button("Open Match and replace rules").clicked() {
+                    app.tool = crate::ui::app::PROXY;
+                    app.view = 3;
+                }
+            });
+
+            // 6. TLS pass through
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "TLS pass through");
+            muted(
+                ui,
+                &theme,
+                "Connections to these hosts or IP ranges will pass straight through without TLS interception.",
+            );
+            ui.add(
+                eframe::egui::TextEdit::multiline(&mut app.panels.proxy_panel.tls_passthrough_hosts)
+                    .hint_text("Host or IP range patterns, one per line (e.g. pinned.example.com)")
+                    .font(eframe::egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.tls_auto_passthrough_on_error,
+                "Automatically add entries on client TLS negotiation failure",
+            );
+            ui.checkbox(
+                &mut app.panels.proxy_panel.tls_passthrough_out_of_scope,
+                "Apply TLS pass through to out-of-scope items",
+            );
+
+            // 7. Default Proxy history message display & Proxy history logging
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "Default Proxy history message display & logging");
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Default message display:");
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_history_display,
+                    0,
+                    "Original",
+                );
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_history_display,
+                    1,
+                    "Edited",
+                );
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_history_display,
+                    2,
+                    "Auto-modified",
+                );
+            });
+
+            // 8. Default Proxy interception state
+            ui.add_space(6.0);
+            heading(ui, &theme, "Default Proxy interception state");
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_interception_state,
+                    0,
+                    "Enable interception",
+                );
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_interception_state,
+                    1,
+                    "Disable interception (default)",
+                );
+                ui.radio_value(
+                    &mut app.panels.proxy_panel.default_interception_state,
+                    2,
+                    "Restore setting from last session",
+                );
+            });
+
+            // 9. Miscellaneous
+            ui.add_space(10.0);
+            ui.separator();
+            heading(ui, &theme, "Miscellaneous");
+            ui.columns(2, |cols| {
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_http10_server,
+                    "Use HTTP/1.0 in requests to server",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_http10_client,
+                    "Use HTTP/1.0 in responses to client",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_keep_alive,
+                    "Use keep-alive for HTTP/1 if the server supports it",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_resp_conn_close,
+                    "Set response header \"Connection: close\"",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_req_conn_close,
+                    "Set \"Connection: close\" on incoming requests",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_strip_proxy_headers,
+                    "Strip Proxy-* headers in incoming requests",
+                );
+                cols[0].checkbox(
+                    &mut app.panels.proxy_panel.misc_strip_unsupported_encoding,
+                    "Remove unsupported encodings from Accept-Encoding headers",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_strip_ws_extensions,
+                    "Strip Sec-WebSocket-Extensions headers in incoming requests",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_unpack_compressed_req,
+                    "Unpack compressed requests",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_unpack_compressed_resp,
+                    "Unpack compressed in responses",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_disable_portal,
+                    "Disable web interface at http://burpsuite",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_suppress_errors,
+                    "Suppress Burp error messages in browser",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.misc_dont_log_history,
+                    "Don't send items to Proxy history or live tasks",
+                );
+                cols[1].checkbox(
+                    &mut app.panels.proxy_panel.dont_log_out_of_scope,
+                    "Don't send items to Proxy history or live tasks, if out of scope",
+                );
+            });
+        });
 }
 
-/// Burp's Intercept view: the requests and responses parked for a decision.
+/// Burp's Intercept view (`quick-start-pro-intercept-on.png` & `quick-start-pro-intercepted-request.png`):
+/// - Blue `#1858A8` `Intercept is on` toggle button, Orange `#FF6633` `→ Forward` button, `Drop` button
+/// - Held queue table (`Time | Type | Direction | Host | Method | URL`)
+/// - `Request` / `Response` header + `Pretty | Raw | Hex` formatter bar (with 3px orange `#FF6633` underline,
+///   `eye-crossed-out`, `line-wrap` blue pill, `\n`, `≡`) + line-numbered (`1, 2, 3...`) syntax-highlighted HTTP editor.
 fn intercept(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
+    let has_held = !app.held.is_empty();
+
+    ui.horizontal_wrapped(|ui| {
+        let intercept_label = if app.intercepting {
+            "Intercept is on"
+        } else {
+            "Intercept is off"
+        };
+        let intercept_btn = if app.intercepting {
+            eframe::egui::Button::new(
+                eframe::egui::RichText::new(intercept_label)
+                    .color(eframe::egui::Color32::WHITE)
+                    .strong(),
+            )
+            .fill(eframe::egui::Color32::from_rgb(0x18, 0x58, 0xA8))
+            .min_size(eframe::egui::Vec2::new(136.0, 26.0))
+        } else {
+            eframe::egui::Button::new(eframe::egui::RichText::new(intercept_label).strong())
+                .min_size(eframe::egui::Vec2::new(136.0, 26.0))
+        };
+        if ui.add(intercept_btn).clicked() {
+            app.intercepting = !app.intercepting;
+            app.proxy.set_intercept(app.intercepting);
+        }
+
+        if !has_held {
+            ui.add_enabled(
+                false,
+                eframe::egui::Button::new("Forward")
+                    .min_size(eframe::egui::Vec2::new(116.0, 26.0)),
+            );
+            ui.add_enabled(
+                false,
+                eframe::egui::Button::new("Drop").min_size(eframe::egui::Vec2::new(104.0, 26.0)),
+            );
+        }
+        if ui
+            .checkbox(&mut app.intercepting_responses, "Intercept responses")
+            .changed()
+        {
+            app.proxy.set_intercept_response(app.intercepting_responses);
+        }
+        ui.label(
+            app.listening
+                .map(|port| format!("127.0.0.1:{port}"))
+                .unwrap_or_else(|| "Listener stopped".into()),
+        );
+        if has_held && ui.button("Open browser").clicked() {
+            app.open_browser();
+        }
+    });
 
     if app.held.is_empty() {
-        muted(ui, &theme, "Nothing held. Traffic passes straight through.");
+        let title = if app.intercepting {
+            "Waiting for traffic to intercept"
+        } else {
+            "Intercept is off — traffic passes through"
+        };
+        let (learn, open_browser) = empty_state(
+            ui,
+            &theme,
+            title,
+            "If you turn Intercept on, messages between Burp's browser and your target servers \
+             are held here. This enables you to analyze and modify these messages, before you \
+             forward them.",
+            true,
+            Some("Open browser"),
+        );
+        if learn {
+            app.status =
+                "Proxy Intercept: turn Intercept on to inspect and modify HTTP requests and responses"
+                    .into();
+        }
+        if open_browser {
+            app.open_browser();
+        }
         return;
     }
 
-    // Burp parks the request and shows it in an editor, so it can be changed before it is let
-    // through. The edit lives with the held item, and the row that is being edited is the one
-    // that is open.
-    ui.add_space(6.0);
-    // A selection that points at a message that is gone falls back to the first one that is
-    // still held, so the buttons always act on something real.
+    ui.add_space(4.0);
     let selected = app
         .panels
         .proxy_panel
@@ -171,35 +822,6 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         .cloned()
         .unwrap_or_else(|| app.held[0].clone());
 
-    let requests = app
-        .held
-        .iter()
-        .filter(|item| item.kind == crate::proxy::HeldKind::Request)
-        .count();
-    let responses = app.held.len() - requests;
-    ui.horizontal(|ui| {
-        ui.label(format!(
-            "{} request(s), {} response(s) held",
-            requests, responses
-        ));
-        ui.separator();
-        for item in app.held.clone() {
-            let label = match item.kind {
-                crate::proxy::HeldKind::Request => format!("{} {}", item.method, item.target),
-                crate::proxy::HeldKind::Response => format!("response {}", item.method),
-            };
-            if ui
-                .selectable_label(item.id == selected, truncate(&label, 34))
-                .clicked()
-            {
-                app.panels.proxy_panel.held_selected = Some(item.id);
-                // The edit belongs to the message that is open.
-                app.panels.proxy_panel.held_edit = None;
-            }
-        }
-    });
-
-    // The editor holds the message that will be sent.
     let mut edited = app
         .panels
         .proxy_panel
@@ -209,39 +831,175 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         .map(|(_, text)| text.clone())
         .unwrap_or_else(|| current.raw.clone());
     let is_response = current.kind == crate::proxy::HeldKind::Response;
-    ui.horizontal(|ui| {
-        if ui.button(if is_response { "Forward" } else { "Forward" }).clicked() {
+    let destination =
+        crate::http_target::request_url(&edited, current.target.starts_with("https://"));
+
+    // Action row for the currently parked message (`Forward` in orange `#FF6633`, `Drop`, `Action` buttons)
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add(
+                eframe::egui::Button::new(
+                    eframe::egui::RichText::new("Forward")
+                        .color(eframe::egui::Color32::WHITE)
+                        .strong(),
+                )
+                .fill(theme.color("ui.icon.accent"))
+                .min_size(eframe::egui::Vec2::new(116.0, 26.0)),
+            )
+            .clicked()
+        {
             app.forward_edited(selected, &edited);
         }
-        if ui.button(if is_response { "Cancel" } else { "Drop" }).clicked() {
+        if ui
+            .add(
+                eframe::egui::Button::new(if is_response { "Cancel" } else { "Drop" })
+                    .min_size(eframe::egui::Vec2::new(104.0, 26.0)),
+            )
+            .clicked()
+        {
             app.release(selected, false);
-        }
-        if !is_response && ui.button("To Repeater").clicked() {
-            app.panels.repeater.open(&current.target, &edited);
-            app.tool = 4;
-            app.status = format!("Held request #{} sent to Repeater", selected);
-        }
-        if ui.button("Reset").clicked() {
-            app.panels.proxy_panel.held_edit = None;
         }
         if ui.button("Forward all").clicked() {
             app.release_all();
         }
-    });
-    ui.add_space(4.0);
-    eframe::egui::ScrollArea::vertical()
-        .max_height(320.0)
-        .show(ui, |ui| {
-            let response = ui.add(
-                eframe::egui::TextEdit::multiline(&mut edited)
-                    .font(eframe::egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(12),
-            );
-            if response.changed() {
-                app.panels.proxy_panel.held_edit = Some((selected, edited));
+        ui.separator();
+        if !is_response && ui.button("To Repeater").clicked() {
+            match &destination {
+                Ok(target) => {
+                    app.panels.repeater.open(target, &edited);
+                    app.tool = crate::ui::app::REPEATER;
+                    app.view = 0;
+                    app.status = format!("Held request #{} sent to Repeater", selected);
+                }
+                Err(error) => app.status = error.clone(),
             }
+        }
+        if !is_response && ui.button("To Intruder").clicked() {
+            match &destination {
+                Ok(target) => app.send_to_intruder(target, &edited),
+                Err(error) => app.status = error.clone(),
+            }
+        }
+        if !is_response && ui.button("To Organizer").clicked() {
+            let host = destination.clone().unwrap_or_else(|_| current.target.clone());
+            let next = app.organizer.len() + 1;
+            super::organizer::retain(
+                app,
+                super::organizer::OrganizerItem {
+                    host,
+                    name: format!("item-{next}"),
+                    request: edited.clone(),
+                    response: String::new(),
+                    notes: String::new(),
+                },
+            );
+            app.status = format!("Held request #{} saved to Organizer", selected);
+        }
+        if ui.button("Reset").clicked() {
+            app.panels.proxy_panel.held_edit = None;
+        }
+    });
+
+    ui.add_space(4.0);
+    // Held Queue Table matching `quick-start-pro-intercepted-request.png` (`Time | Type | Direction | Host | Method | URL`)
+    eframe::egui::Frame::new()
+        .fill(theme.color("ui.background.0"))
+        .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+        .inner_margin(4.0)
+        .show(ui, |ui| {
+            eframe::egui::ScrollArea::vertical()
+                .id_salt("proxy-intercept-queue-table")
+                .max_height(88.0)
+                .show(ui, |ui| {
+                    eframe::egui::Grid::new("proxy-intercept-queue-grid")
+                        .num_columns(6)
+                        .min_col_width(80.0)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for h in ["Time", "Type", "Direction", "Host", "Method", "URL"] {
+                                ui.strong(h);
+                            }
+                            ui.end_row();
+                            for item in app.held.clone() {
+                                let is_sel = item.id == selected;
+                                let dir = match item.kind {
+                                    crate::proxy::HeldKind::Request => "→ Request",
+                                    crate::proxy::HeldKind::Response => "← Response",
+                                };
+                                let host_str = item
+                                    .target
+                                    .split("://")
+                                    .nth(1)
+                                    .and_then(|s| s.split('/').next())
+                                    .unwrap_or(&item.target);
+                                let c1 = ui.selectable_label(is_sel, format!("#{}", item.id));
+                                let c2 = ui.selectable_label(is_sel, "HTTP");
+                                let c3 = ui.selectable_label(is_sel, dir);
+                                let c4 = ui.selectable_label(is_sel, host_str);
+                                let c5 = ui.selectable_label(is_sel, &item.method);
+                                let c6 = ui.selectable_label(is_sel, truncate(&item.target, 48));
+                                if c1.clicked()
+                                    || c2.clicked()
+                                    || c3.clicked()
+                                    || c4.clicked()
+                                    || c5.clicked()
+                                    || c6.clicked()
+                                {
+                                    app.panels.proxy_panel.held_selected = Some(item.id);
+                                    app.panels.proxy_panel.held_edit = None;
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
         });
+
+    ui.add_space(6.0);
+    // Burp Message Formatter Bar (`Request` / `Response` + `Pretty | Raw | Hex` with 3px orange `#FF6633` underline + right icons)
+    super::burp_message_formatter_bar(
+        ui,
+        &theme,
+        "proxy-intercept-fmt",
+        if is_response { "Response" } else { "Request" },
+        &mut app.panels.proxy_panel.intercept_fmt_mode,
+        is_response,
+        &mut app.panels.proxy_panel.intercept_wrap,
+        &mut app.panels.proxy_panel.intercept_non_printable,
+    );
+
+    let intercept_h = app.panels.proxy_panel.intercept_height;
+    let fmt_mode = app.panels.proxy_panel.intercept_fmt_mode;
+    let (response, changed) = super::burp_numbered_message_editor(
+        ui,
+        &theme,
+        "proxy-intercept-editor",
+        intercept_h,
+        &mut edited,
+        fmt_mode,
+    );
+    if changed {
+        app.panels.proxy_panel.held_edit = Some((selected, edited.clone()));
+    }
+    let target_url = destination.clone().unwrap_or_else(|_| current.target.clone());
+    if is_response {
+        super::attach_message_context_menu(app, &response, &target_url, "", &edited);
+    } else {
+        super::attach_message_context_menu(app, &response, &target_url, &edited, "");
+    }
+    horizontal_resize_handle(
+        ui,
+        &theme,
+        "proxy-intercept-resize",
+        &mut app.panels.proxy_panel.intercept_height,
+        120.0,
+        640.0,
+        320.0,
+    );
+    if is_response {
+        super::draw_inspector(ui, &theme, "proxy-intercept-insp", "", &edited);
+    } else {
+        super::draw_inspector(ui, &theme, "proxy-intercept-insp", &edited, "");
+    }
 }
 
 /// Shortens a label so a row of held requests still fits.
@@ -294,15 +1052,29 @@ fn cookie_jar(app: &mut App, ui: &mut Ui) {
             .show(ui, |ui| {
                 for name in ["Name", "Value", "Domain", "Path", "Flags", "Expires"] {
                     ui.label(
-                        eframe::egui::RichText::new(name).strong().color(theme.color("ui.text.body")),
+                        eframe::egui::RichText::new(name)
+                            .strong()
+                            .color(theme.color("ui.text.body")),
                     );
                 }
                 ui.end_row();
                 for cookie in &cookies {
-                    ui.label(eframe::egui::RichText::new(&cookie.name).color(theme.color("ui.text.body")));
-                    ui.label(eframe::egui::RichText::new(&cookie.value).color(theme.color("ui.text.disabled")));
-                    ui.label(eframe::egui::RichText::new(&cookie.domain).color(theme.color("ui.icon.default")));
-                    ui.label(eframe::egui::RichText::new(&cookie.path).color(theme.color("ui.icon.default")));
+                    ui.label(
+                        eframe::egui::RichText::new(&cookie.name)
+                            .color(theme.color("ui.text.body")),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new(&cookie.value)
+                            .color(theme.color("ui.text.disabled")),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new(&cookie.domain)
+                            .color(theme.color("ui.icon.default")),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new(&cookie.path)
+                            .color(theme.color("ui.icon.default")),
+                    );
                     let mut flags = String::new();
                     if cookie.secure {
                         flags.push_str("Secure ");
@@ -310,124 +1082,897 @@ fn cookie_jar(app: &mut App, ui: &mut Ui) {
                     if cookie.http_only {
                         flags.push_str("HttpOnly");
                     }
-                    ui.label(eframe::egui::RichText::new(if flags.is_empty() { "-" } else { &flags })
-                        .color(theme.color("ui.icon.default")));
+                    ui.label(
+                        eframe::egui::RichText::new(if flags.is_empty() { "-" } else { &flags })
+                            .color(theme.color("ui.icon.default")),
+                    );
                     let expires = cookie
                         .expires
                         .map(|at| {
-                            let secs = at.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                            let secs = at
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
                             format!("{secs}s")
                         })
                         .unwrap_or_else(|| "session".into());
-                    ui.label(eframe::egui::RichText::new(expires).color(theme.color("ui.icon.default")));
+                    ui.label(
+                        eframe::egui::RichText::new(expires).color(theme.color("ui.icon.default")),
+                    );
                     ui.end_row();
                 }
             });
     });
 }
 
+fn highlight_colour(theme: &crate::ui::theme::Theme, code: Option<u8>, selected: bool) -> eframe::egui::Color32 {
+    match code {
+        Some(1) => theme.color("ui.issue.high"),
+        Some(2) => theme.color("ui.issue.medium"),
+        Some(3) => theme.color("ui.icon.warning"),
+        Some(4) => theme.color("ui.icon.success"),
+        Some(5) => theme.color("ui.icon.information"),
+        _ if selected => theme.color("icon.linkHover"),
+        _ => theme.color("ui.text.body"),
+    }
+}
+
 /// Burp's History view: everything the proxy has forwarded.
 fn history(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     if app.log.is_empty() {
-        muted(ui, &theme, "Nothing captured yet.");
+        let (learn, open_browser) = empty_state(
+            ui,
+            &theme,
+            "HTTP history is empty",
+            "The HTTP history displays all HTTP traffic passed through Burp's proxy. Browse \
+             using Burp's browser to populate the history.",
+            true,
+            Some("Open browser"),
+        );
+        if learn {
+            app.status =
+                "HTTP history: browse through the proxy to record HTTP requests and responses".into();
+        }
+        if open_browser {
+            app.open_browser();
+        }
         cookie_jar(app, ui);
         return;
     }
 
-    if let Some(index) = app.panels.proxy_panel.selected {
-        if let Some(tx) = app.log.get(index) {
-            ui.horizontal(|ui| {
-                ui.label(format!("{}", tx.target));
-                if ui.button("To Repeater").clicked() {
-                    app.panels.repeater.open(&tx.target, &tx.request);
-                    app.tool = 4;
-                    app.status = "Request copied to Repeater".into();
-                }
-                if ui.button("Close").clicked() {
-                    app.panels.proxy_panel.selected = None;
+    ui.horizontal_wrapped(|ui| {
+        let (funnel, _) = ui.allocate_exact_size(
+            eframe::egui::Vec2::splat(14.0),
+            eframe::egui::Sense::hover(),
+        );
+        crate::ui::icons::paint(
+            ui.painter(),
+            funnel,
+            theme.color("ui.icon.default"),
+            crate::ui::icons::Glyph::Funnel,
+        );
+        if ui
+            .button(if app.panels.proxy_panel.filter_enabled {
+                "Filter on"
+            } else {
+                "Filter off"
+            })
+            .clicked()
+        {
+            app.panels.proxy_panel.filter_enabled = !app.panels.proxy_panel.filter_enabled;
+        }
+        if ui.button("Filter settings").clicked() {
+            app.panels.proxy_panel.show_filter_window = !app.panels.proxy_panel.show_filter_window;
+        }
+        ui.label("Search:");
+        ui.add(
+            eframe::egui::TextEdit::singleline(&mut app.panels.proxy_panel.filter)
+                .hint_text("Search URL, host, method, MIME, title, notes")
+                .desired_width(190.0),
+        );
+        ui.checkbox(&mut app.panels.proxy_panel.in_scope_only, "In-scope only");
+        ui.checkbox(&mut app.panels.proxy_panel.params_only, "Params only");
+        ui.checkbox(&mut app.panels.proxy_panel.errors_only, "4xx/5xx only");
+        eframe::egui::ComboBox::from_id_salt("proxy-mime-filter")
+            .selected_text(format!("MIME: {}", app.panels.proxy_panel.mime_filter))
+            .show_ui(ui, |ui| {
+                for mime in ["All", "HTML", "JSON", "script", "CSS", "XML", "image"] {
+                    ui.selectable_value(
+                        &mut app.panels.proxy_panel.mime_filter,
+                        mime.to_string(),
+                        mime,
+                    );
                 }
             });
-            let (request, response) = (tx.request.clone(), tx.response.clone());
-            let message_bg = theme.color("ui.editor.message.background");
-            ui.columns(2, |columns| {
-                columns[0].label("Request");
-                crate::ui::highlight::show_message(&mut columns[0], &request, &theme, message_bg);
-                columns[1].label("Response");
-                crate::ui::highlight::show_message(&mut columns[1], &response, &theme, message_bg);
+        if (!app.panels.proxy_panel.filter.is_empty()
+            || app.panels.proxy_panel.in_scope_only
+            || app.panels.proxy_panel.params_only
+            || app.panels.proxy_panel.errors_only
+            || !app.panels.proxy_panel.status_2xx
+            || !app.panels.proxy_panel.status_3xx
+            || !app.panels.proxy_panel.status_4xx
+            || !app.panels.proxy_panel.status_5xx
+            || app.panels.proxy_panel.only_notes
+            || app.panels.proxy_panel.only_highlighted
+            || app.panels.proxy_panel.hide_extensions_enabled
+            || !app.panels.proxy_panel.show_extensions.trim().is_empty()
+            || app.panels.proxy_panel.mime_filter != "All")
+            && ui.button("Clear filter").clicked()
+        {
+            app.panels.proxy_panel.filter.clear();
+            app.panels.proxy_panel.in_scope_only = false;
+            app.panels.proxy_panel.params_only = false;
+            app.panels.proxy_panel.errors_only = false;
+            app.panels.proxy_panel.status_2xx = true;
+            app.panels.proxy_panel.status_3xx = true;
+            app.panels.proxy_panel.status_4xx = true;
+            app.panels.proxy_panel.status_5xx = true;
+            app.panels.proxy_panel.regex_search = false;
+            app.panels.proxy_panel.case_sensitive = false;
+            app.panels.proxy_panel.negative_search = false;
+            app.panels.proxy_panel.hide_extensions_enabled = false;
+            app.panels.proxy_panel.show_extensions.clear();
+            app.panels.proxy_panel.only_notes = false;
+            app.panels.proxy_panel.only_highlighted = false;
+            app.panels.proxy_panel.mime_filter = "All".into();
+        }
+        if ui.button("Open browser").clicked() {
+            app.open_browser();
+        }
+    });
+    ui.add_space(4.0);
+
+    if app.panels.proxy_panel.show_filter_window {
+        let mut open = true;
+        eframe::egui::Window::new("Configure filter")
+            .open(&mut open)
+            .resizable(true)
+            .default_pos([340.0, 120.0])
+            .default_width(760.0)
+            .show(ui.ctx(), |ui| {
+                let p = &mut app.panels.proxy_panel;
+                // Top row: `[ Settings mode | Bambda mode ]` segmented toggle + `?` & `⚙` icons (`filter-settings-http.png`)
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut p.filter_mode_bambda, false, "Settings mode");
+                    ui.selectable_value(&mut p.filter_mode_bambda, true, "Bambda mode");
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            super::scanner::paint_launcher_icon(
+                                ui,
+                                eframe::egui::Vec2::new(18.0, 18.0),
+                                theme.color("ui.icon.default"),
+                                super::scanner::LauncherIcon::Gear,
+                            );
+                            super::scanner::paint_launcher_icon(
+                                ui,
+                                eframe::egui::Vec2::new(18.0, 18.0),
+                                theme.color("ui.icon.default"),
+                                super::scanner::LauncherIcon::HelpCircle,
+                            );
+                        },
+                    );
+                });
+                ui.add_space(6.0);
+
+                if p.filter_mode_bambda {
+                    ui.label("Bambda filter script:");
+                    ui.add(
+                        eframe::egui::TextEdit::multiline(&mut p.filter_bambda_script)
+                            .font(eframe::egui::TextStyle::Monospace)
+                            .desired_rows(6)
+                            .desired_width(f32::INFINITY),
+                    );
+                } else {
+                    // Row 1: 3 side-by-side grouped boxes (`Filter by request type`, `Filter by MIME type`, `Filter by status code`)
+                    ui.columns(3, |cols| {
+                        eframe::egui::Frame::group(cols[0].style()).show(&mut cols[0], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by request type").strong());
+                            ui.checkbox(&mut p.in_scope_only, "Show only in-scope items");
+                            ui.checkbox(
+                                &mut p.filter_hide_no_response,
+                                "Hide items without responses",
+                            );
+                            ui.checkbox(
+                                &mut p.params_only,
+                                "Show only parameterized requests",
+                            );
+                        });
+                        eframe::egui::Frame::group(cols[1].style()).show(&mut cols[1], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by MIME type").strong());
+                            ui.columns(2, |mcols| {
+                                mcols[0].checkbox(&mut p.mime_html, "HTML");
+                                mcols[0].checkbox(&mut p.mime_script, "Script");
+                                mcols[0].checkbox(&mut p.mime_xml, "XML");
+                                mcols[0].checkbox(&mut p.mime_css, "CSS");
+                                mcols[1].checkbox(&mut p.mime_other_text, "Other text");
+                                mcols[1].checkbox(&mut p.mime_images, "Images");
+                                mcols[1].checkbox(&mut p.mime_flash, "Flash");
+                                mcols[1].checkbox(&mut p.mime_other_binary, "Other binary");
+                            });
+                        });
+                        eframe::egui::Frame::group(cols[2].style()).show(&mut cols[2], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by status code").strong());
+                            ui.checkbox(&mut p.status_2xx, "2xx [success]");
+                            ui.checkbox(&mut p.status_3xx, "3xx [redirection]");
+                            ui.checkbox(&mut p.status_4xx, "4xx [request error]");
+                            ui.checkbox(&mut p.status_5xx, "5xx [server error]");
+                        });
+                    });
+                    ui.add_space(6.0);
+
+                    // Row 2: 4 side-by-side grouped boxes (`Filter by search term`, `Filter by file extension`, `Filter by annotation`, `Filter by listener`)
+                    ui.columns(4, |cols| {
+                        eframe::egui::Frame::group(cols[0].style()).show(&mut cols[0], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by search term").strong());
+                            ui.text_edit_singleline(&mut p.filter);
+                            ui.checkbox(&mut p.regex_search, "Regex");
+                            ui.checkbox(&mut p.case_sensitive, "Case sensitive");
+                            ui.checkbox(&mut p.negative_search, "Negative search");
+                        });
+                        eframe::egui::Frame::group(cols[1].style()).show(&mut cols[1], |ui| {
+                            ui.label(
+                                eframe::egui::RichText::new("Filter by file extension").strong(),
+                            );
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut p.filter_show_extensions_enabled, "Show only:");
+                                ui.text_edit_singleline(&mut p.show_extensions);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut p.hide_extensions_enabled, "Hide:");
+                                ui.text_edit_singleline(&mut p.hide_extensions);
+                            });
+                        });
+                        eframe::egui::Frame::group(cols[2].style()).show(&mut cols[2], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by annotation").strong());
+                            ui.checkbox(&mut p.only_notes, "Show only commented items");
+                            ui.checkbox(&mut p.only_highlighted, "Show only highlighted items");
+                        });
+                        eframe::egui::Frame::group(cols[3].style()).show(&mut cols[3], |ui| {
+                            ui.label(eframe::egui::RichText::new("Filter by listener").strong());
+                            ui.horizontal(|ui| {
+                                ui.label("Port");
+                                ui.text_edit_singleline(&mut p.filter_listener_port);
+                            });
+                        });
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                // Bottom action row (`Show all`, `Hide all`, `Revert changes`, `Convert to Bambda`, `Cancel`, `Apply`)
+                ui.horizontal(|ui| {
+                    if ui.button("Show all").clicked() {
+                        p.in_scope_only = false;
+                        p.params_only = false;
+                        p.status_2xx = true;
+                        p.status_3xx = true;
+                        p.status_4xx = true;
+                        p.status_5xx = true;
+                        p.mime_html = true;
+                        p.mime_script = true;
+                        p.mime_xml = true;
+                        p.mime_css = true;
+                        p.mime_other_text = true;
+                        p.mime_images = true;
+                        p.mime_flash = true;
+                        p.mime_other_binary = true;
+                    }
+                    if ui.button("Hide all").clicked() {
+                        p.status_2xx = false;
+                        p.status_3xx = false;
+                        p.status_4xx = false;
+                        p.status_5xx = false;
+                    }
+                    if ui.button("Revert changes").clicked() {
+                        p.filter.clear();
+                        p.in_scope_only = false;
+                        p.params_only = false;
+                        p.status_2xx = true;
+                        p.status_3xx = true;
+                        p.status_4xx = true;
+                        p.status_5xx = true;
+                    }
+                    if ui.button("⇄ Convert to Bambda").clicked() {
+                        p.filter_mode_bambda = true;
+                    }
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            if crate::ui::app::primary_button(ui, &theme, "Apply").clicked() {
+                                p.show_filter_window = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                p.show_filter_window = false;
+                            }
+                        },
+                    );
+                });
             });
-            ui.add_space(4.0);
+        if !open {
+            app.panels.proxy_panel.show_filter_window = false;
         }
     }
-    eframe::egui::ScrollArea::vertical()
-        .stick_to_bottom(true)
+
+    let filter_enabled = app.panels.proxy_panel.filter_enabled;
+    let raw_needle = app.panels.proxy_panel.filter.trim().to_string();
+    let in_scope_only = app.panels.proxy_panel.in_scope_only;
+    let params_only = app.panels.proxy_panel.params_only;
+    let errors_only = app.panels.proxy_panel.errors_only;
+    let s2 = app.panels.proxy_panel.status_2xx;
+    let s3 = app.panels.proxy_panel.status_3xx;
+    let s4 = app.panels.proxy_panel.status_4xx;
+    let s5 = app.panels.proxy_panel.status_5xx;
+    let regex_search = app.panels.proxy_panel.regex_search;
+    let case_sensitive = app.panels.proxy_panel.case_sensitive;
+    let negative_search = app.panels.proxy_panel.negative_search;
+    let hide_ext_on = app.panels.proxy_panel.hide_extensions_enabled;
+    let hide_exts: Vec<String> = app
+        .panels
+        .proxy_panel
+        .hide_extensions
+        .split([',', ' '])
+        .map(|s| s.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let show_exts: Vec<String> = app
+        .panels
+        .proxy_panel
+        .show_extensions
+        .split([',', ' '])
+        .map(|s| s.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let only_notes = app.panels.proxy_panel.only_notes;
+    let only_highlighted = app.panels.proxy_panel.only_highlighted;
+    let mime_filter = app.panels.proxy_panel.mime_filter.clone();
+    let compiled_re = if regex_search && !raw_needle.is_empty() {
+        regex::RegexBuilder::new(&raw_needle)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .ok()
+    } else {
+        None
+    };
+
+    struct RowSummary {
+        index: usize,
+        host_url: String,
+        method: String,
+        target: String,
+        path_query: String,
+        has_params: bool,
+        status: u16,
+        bytes: u64,
+        truncated: bool,
+        mime: &'static str,
+        ext: String,
+        title: String,
+        secure: bool,
+        note: String,
+        highlight: Option<u8>,
+    }
+
+    let rows = app.log.len();
+    let first = rows.saturating_sub(300);
+    let mut visible: Vec<RowSummary> = (first..rows)
+        .filter_map(|index| {
+            let tx = &app.log[index];
+            let host_url = tx.host_url();
+            let path_query = tx.path_and_query();
+            let has_params = tx.has_params();
+            let mime = tx.mime_type();
+            let ext = tx.extension();
+            let title = tx.page_title();
+            let note = app
+                .panels
+                .proxy_panel
+                .notes
+                .get(&index)
+                .cloned()
+                .unwrap_or_default();
+            let highlight = app.panels.proxy_panel.highlights.get(&index).copied();
+            if filter_enabled {
+                if errors_only && tx.status < 400 {
+                    return None;
+                }
+                let status_allowed = match tx.status {
+                    200..=299 => s2,
+                    300..=399 => s3,
+                    400..=499 => s4,
+                    500..=599 => s5,
+                    _ => true,
+                };
+                if !status_allowed {
+                    return None;
+                }
+                if params_only && !has_params {
+                    return None;
+                }
+                if in_scope_only && !app.panels.target_panel.in_scope(&tx.target) {
+                    return None;
+                }
+                if mime_filter != "All" && mime != mime_filter {
+                    return None;
+                }
+                if only_notes && note.is_empty() {
+                    return None;
+                }
+                if only_highlighted && highlight.is_none() {
+                    return None;
+                }
+                if !show_exts.is_empty() && !show_exts.iter().any(|e| e == &ext) {
+                    return None;
+                }
+                if hide_ext_on && !ext.is_empty() && hide_exts.iter().any(|e| e == &ext) {
+                    return None;
+                }
+                if !raw_needle.is_empty() {
+                    let matched = if let Some(re) = &compiled_re {
+                        re.is_match(&tx.target)
+                            || re.is_match(&host_url)
+                            || re.is_match(&tx.method)
+                            || re.is_match(&title)
+                            || re.is_match(&note)
+                            || re.is_match(&tx.request)
+                            || re.is_match(&tx.response)
+                    } else if case_sensitive {
+                        tx.target.contains(&raw_needle)
+                            || host_url.contains(&raw_needle)
+                            || tx.method.contains(&raw_needle)
+                            || mime.contains(&raw_needle)
+                            || title.contains(&raw_needle)
+                            || note.contains(&raw_needle)
+                            || tx.status.to_string().contains(&raw_needle)
+                            || tx.request.contains(&raw_needle)
+                            || tx.response.contains(&raw_needle)
+                    } else {
+                        let lower_needle = raw_needle.to_lowercase();
+                        tx.target.to_lowercase().contains(&lower_needle)
+                            || host_url.to_lowercase().contains(&lower_needle)
+                            || tx.method.to_lowercase().contains(&lower_needle)
+                            || mime.to_lowercase().contains(&lower_needle)
+                            || title.to_lowercase().contains(&lower_needle)
+                            || note.to_lowercase().contains(&lower_needle)
+                            || tx.status.to_string().contains(&lower_needle)
+                            || tx.request.to_lowercase().contains(&lower_needle)
+                            || tx.response.to_lowercase().contains(&lower_needle)
+                    };
+                    if negative_search {
+                        if matched {
+                            return None;
+                        }
+                    } else if !matched {
+                        return None;
+                    }
+                }
+            }
+            Some(RowSummary {
+                index,
+                host_url,
+                method: tx.method.clone(),
+                target: tx.target.clone(),
+                path_query,
+                has_params,
+                status: tx.status,
+                bytes: tx.bytes,
+                truncated: tx.truncated,
+                mime,
+                ext,
+                title,
+                secure: tx.secure,
+                note,
+                highlight,
+            })
+        })
+        .collect();
+
+    if let Some(col) = app.panels.proxy_panel.sort_column {
+        let asc = app.panels.proxy_panel.sort_ascending;
+        visible.sort_by(|a, b| {
+            let ord = match col {
+                0 => a.index.cmp(&b.index),
+                1 => a.host_url.cmp(&b.host_url),
+                2 => a.method.cmp(&b.method),
+                3 => a.target.cmp(&b.target),
+                4 => a.has_params.cmp(&b.has_params),
+                5 => a.status.cmp(&b.status),
+                6 => a.bytes.cmp(&b.bytes),
+                7 => a.mime.cmp(b.mime),
+                8 => a.ext.cmp(&b.ext),
+                9 => a.title.cmp(&b.title),
+                10 => a.secure.cmp(&b.secure),
+                11 => a.note.cmp(&b.note),
+                _ => a.index.cmp(&b.index),
+            };
+            if asc {
+                ord
+            } else {
+                ord.reverse()
+            }
+        });
+    }
+
+    let table_h = app.panels.proxy_panel.table_height;
+    eframe::egui::ScrollArea::both()
+        .id_salt("proxy-history-scroll")
+        .max_height(table_h)
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             eframe::egui::Grid::new("proxy-history")
-                .num_columns(5)
+                .num_columns(13)
                 .striped(true)
                 .show(ui, |ui| {
-                    for name in ["Method", "Target", "Status", "Bytes", ""] {
-                        ui.label(eframe::egui::RichText::new(name).strong().color(theme.color("ui.text.body")));
+                    let columns = [
+                        "#",
+                        "Host",
+                        "Method",
+                        "URL",
+                        "Params",
+                        "Status",
+                        "Length",
+                        "MIME type",
+                        "Extension",
+                        "Title",
+                        "TLS",
+                        "Notes",
+                    ];
+                    for (col_idx, name) in columns.iter().enumerate() {
+                        let active = app.panels.proxy_panel.sort_column == Some(col_idx);
+                        let label_text = if active {
+                            if app.panels.proxy_panel.sort_ascending {
+                                format!("{name} ▲")
+                            } else {
+                                format!("{name} ▼")
+                            }
+                        } else {
+                            (*name).to_string()
+                        };
+                        let resp = ui.selectable_label(
+                            active,
+                            eframe::egui::RichText::new(label_text)
+                                .strong()
+                                .color(theme.color("ui.text.body")),
+                        );
+                        if resp.clicked() {
+                            if app.panels.proxy_panel.sort_column == Some(col_idx) {
+                                if app.panels.proxy_panel.sort_ascending {
+                                    app.panels.proxy_panel.sort_ascending = false;
+                                } else {
+                                    app.panels.proxy_panel.sort_column = None;
+                                    app.panels.proxy_panel.sort_ascending = true;
+                                }
+                            } else {
+                                app.panels.proxy_panel.sort_column = Some(col_idx);
+                                app.panels.proxy_panel.sort_ascending = true;
+                            }
+                        }
                     }
+                    ui.label("");
                     ui.end_row();
-                    let rows = app.log.len();
-                    let first = rows.saturating_sub(300);
-                    // Only the four tiny display fields are copied. Cloning whole transactions here
-                    // would copy both message bodies for every visible row, on every frame.
-                    let visible: Vec<(usize, String, String, u16, u64, bool)> = (first..rows)
-                        .map(|index| {
-                            let tx = &app.log[index];
-                            (
-                                index,
-                                tx.method.clone(),
-                                tx.target.clone(),
-                                tx.status,
-                                tx.bytes,
-                                tx.truncated,
-                            )
-                        })
-                        .collect();
-                    for (index, method, target, status, bytes, truncated) in visible {
-                        let tx_method = method;
+
+                    for row in visible {
+                        let index = row.index;
                         let selected = app.panels.proxy_panel.selected == Some(index);
+                        let row_color = highlight_colour(&theme, row.highlight, selected);
                         let method_colour = if selected {
                             theme.color("icon.linkHover")
                         } else {
                             theme.color("icon.link")
                         };
-                        // The method cell doubles as the row's click target.
-                        let response = ui.label(
-                            eframe::egui::RichText::new(&tx_method).color(method_colour),
+
+                        let c_idx = ui.selectable_label(
+                            selected,
+                            eframe::egui::RichText::new(format!("{}", index + 1))
+                                .color(theme.color("ui.icon.default")),
                         );
-                        if response.clicked() {
-                            app.panels.proxy_panel.selected = Some(index);
-                        }
-                        // Burp's right-click menu on a history row (ui/contextmenu/*).
-                        if response.secondary_clicked() {
-                            app.panels.proxy_panel.selected = Some(index);
-                            app.context_menu(&response, index);
-                        }
-                        ui.label(eframe::egui::RichText::new(&target).color(theme.color("ui.text.body")));
-                        ui.label(eframe::egui::RichText::new(status.to_string()).color(theme.color("ui.text.body")));
-                        ui.label(eframe::egui::RichText::new(if truncated {
-                            format!("{bytes}+")
-                        } else {
-                            bytes.to_string()
-                        }).color(theme.color("ui.icon.default")));
-                        if ui.button("To Repeater").clicked() {
-                            // The whole request travels, not just the URL: rewriting it by hand is
-                            // exactly what the operator does not want to do. Only on click, so the
-                            // bodies are copied once here rather than every frame.
-                            if let Some(tx) = app.log.get(index) {
-                                app.panels.repeater.open(&tx.target, &tx.request);
+                        let c_host = ui.selectable_label(
+                            selected,
+                            eframe::egui::RichText::new(&row.host_url).color(row_color),
+                        );
+                        let c_method = ui.selectable_label(
+                            selected,
+                            eframe::egui::RichText::new(&row.method).color(method_colour),
+                        );
+                        let c_url = ui
+                            .selectable_label(
+                                selected,
+                                eframe::egui::RichText::new(&row.target).color(row_color),
+                            )
+                            .on_hover_text(&row.path_query);
+                        ui.label(if row.has_params { "✓" } else { "" });
+                        let status_colour = match row.status {
+                            200..=299 => theme.color("ui.icon.success"),
+                            300..=399 => theme.color("ui.icon.information"),
+                            400..=499 => theme.color("ui.icon.warning"),
+                            500..=599 => theme.color("ui.issue.high"),
+                            _ => row_color,
+                        };
+                        let c_status = ui.label(
+                            eframe::egui::RichText::new(row.status.to_string()).color(status_colour),
+                        );
+                        ui.label(
+                            eframe::egui::RichText::new(if row.truncated {
+                                format!("{}+", row.bytes)
+                            } else {
+                                row.bytes.to_string()
+                            })
+                            .color(theme.color("ui.icon.default")),
+                        );
+                        ui.label(
+                            eframe::egui::RichText::new(row.mime)
+                                .color(theme.color("ui.icon.default")),
+                        );
+                        ui.label(
+                            eframe::egui::RichText::new(&row.ext)
+                                .color(theme.color("ui.icon.default")),
+                        );
+                        let c_title = ui.label(
+                            eframe::egui::RichText::new(&row.title).color(row_color),
+                        );
+                        ui.label(
+                            eframe::egui::RichText::new(if row.secure { "✓" } else { "" })
+                                .color(theme.color("ui.icon.default")),
+                        );
+                        ui.label(
+                            eframe::egui::RichText::new(&row.note)
+                                .color(theme.color("ui.icon.default")),
+                        );
+
+                        for cell in [&c_idx, &c_host, &c_method, &c_url, &c_status, &c_title] {
+                            if cell.clicked() || cell.secondary_clicked() {
+                                app.panels.proxy_panel.selected = Some(index);
                             }
-                            app.tool = 4;
-                            app.status = "Request copied to Repeater".into();
+                            app.context_menu(cell, index);
                         }
+
+                        ui.horizontal(|ui| {
+                            if ui.button("To Repeater").clicked() {
+                                if let Some(tx) = app.log.get(index) {
+                                    app.panels.repeater.open(&tx.target, &tx.request);
+                                }
+                                app.tool = crate::ui::app::REPEATER;
+                                app.status = "Request copied to Repeater".into();
+                            }
+                            if ui.button("To Intruder").clicked() {
+                                if let Some((target, request)) = app
+                                    .log
+                                    .get(index)
+                                    .map(|tx| (tx.target.clone(), tx.request.clone()))
+                                {
+                                    app.send_to_intruder(&target, &request);
+                                }
+                            }
+                            if ui.button("Scan").clicked() {
+                                if let Some(target) = app.log.get(index).map(|tx| tx.target.clone()) {
+                                    app.scan_url(&target, true);
+                                }
+                            }
+                        });
                         ui.end_row();
                     }
                 });
         });
+
+    horizontal_resize_handle(
+        ui,
+        &theme,
+        "proxy-history-table-resize",
+        &mut app.panels.proxy_panel.table_height,
+        120.0,
+        560.0,
+        240.0,
+    );
+
+    if let Some(index) = app.panels.proxy_panel.selected {
+        if let Some(tx) = app.log.get(index).cloned() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(eframe::egui::RichText::new(&tx.target).strong());
+                ui.radio_value(&mut app.panels.proxy_panel.hex_view, false, "Pretty");
+                ui.radio_value(&mut app.panels.proxy_panel.hex_view, true, "Hex");
+                ui.separator();
+                if ui.button("Open in window").clicked() {
+                    app.panels.proxy_panel.detached_row = Some(index);
+                }
+                if ui.button("Scan").clicked() {
+                    app.scan_url(&tx.target, true);
+                }
+                if ui.button("Passive scan").clicked() {
+                    app.passive_scan_transaction(&tx.target, &tx.response);
+                }
+                if ui.button("To Repeater").clicked() {
+                    app.panels.repeater.open(&tx.target, &tx.request);
+                    app.tool = crate::ui::app::REPEATER;
+                    app.status = "Request copied to Repeater".into();
+                }
+                if ui.button("To Intruder").clicked() {
+                    app.send_to_intruder(&tx.target, &tx.request);
+                }
+                if ui.button("To Organizer").clicked() {
+                    let next = app.organizer.len() + 1;
+                    super::organizer::retain(
+                        app,
+                        super::organizer::OrganizerItem {
+                            host: tx.host.clone(),
+                            name: format!("item-{next}"),
+                            request: tx.request.clone(),
+                            response: tx.response.clone(),
+                            notes: String::new(),
+                        },
+                    );
+                    app.status = "Saved to Organizer".into();
+                }
+                if ui.button("Copy as curl").clicked() {
+                    let curl = crate::ui::app::Transaction::to_curl_command(&tx.target, &tx.request);
+                    ui.ctx().copy_text(curl);
+                    app.status = "Copied as curl command".into();
+                }
+                if ui.button("Close").clicked() {
+                    app.panels.proxy_panel.selected = None;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Notes:");
+                let mut note = app
+                    .panels
+                    .proxy_panel
+                    .notes
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_default();
+                if ui
+                    .add(
+                        eframe::egui::TextEdit::singleline(&mut note)
+                            .hint_text("Add a note for this request…")
+                            .desired_width(340.0),
+                    )
+                    .changed()
+                {
+                    if note.trim().is_empty() {
+                        app.panels.proxy_panel.notes.remove(&index);
+                    } else {
+                        app.panels.proxy_panel.notes.insert(index, note);
+                    }
+                }
+            });
+            let (request, response) = (tx.request, tx.response);
+            if app.panels.proxy_panel.hex_view {
+                app.panels.proxy_panel.history_req_fmt_mode = 2;
+                app.panels.proxy_panel.history_resp_fmt_mode = 2;
+            }
+            let detail_h = app.panels.proxy_panel.detail_height;
+            let mut ratio = app.panels.proxy_panel.split_ratio;
+            vertical_split(
+                ui,
+                &theme,
+                "proxy-history-req-resp-split",
+                &mut ratio,
+                detail_h,
+                |side, ui| {
+                    if side == 0 {
+                        super::burp_message_formatter_bar(
+                            ui,
+                            &theme,
+                            "proxy-hist-req-fmt",
+                            "Request",
+                            &mut app.panels.proxy_panel.history_req_fmt_mode,
+                            false,
+                            &mut app.panels.proxy_panel.history_req_wrap,
+                            &mut app.panels.proxy_panel.history_req_np,
+                        );
+                        app.panels.proxy_panel.hex_view =
+                            app.panels.proxy_panel.history_req_fmt_mode == 2;
+                        let r = super::burp_numbered_message_view(
+                            ui,
+                            &theme,
+                            "proxy-hist-req-view",
+                            detail_h - 48.0,
+                            &request,
+                            app.panels.proxy_panel.history_req_fmt_mode,
+                            app.panels.proxy_panel.history_req_np,
+                        );
+                        super::attach_message_context_menu(
+                            app,
+                            &r,
+                            &tx.target,
+                            &request,
+                            &response,
+                        );
+                    } else {
+                        super::burp_message_formatter_bar(
+                            ui,
+                            &theme,
+                            "proxy-hist-resp-fmt",
+                            "Response",
+                            &mut app.panels.proxy_panel.history_resp_fmt_mode,
+                            true,
+                            &mut app.panels.proxy_panel.history_resp_wrap,
+                            &mut app.panels.proxy_panel.history_resp_np,
+                        );
+                        let r = super::burp_numbered_message_view(
+                            ui,
+                            &theme,
+                            "proxy-hist-resp-view",
+                            detail_h - 48.0,
+                            &response,
+                            app.panels.proxy_panel.history_resp_fmt_mode,
+                            app.panels.proxy_panel.history_resp_np,
+                        );
+                        super::attach_message_context_menu(
+                            app,
+                            &r,
+                            &tx.target,
+                            &request,
+                            &response,
+                        );
+                    }
+                },
+            );
+            app.panels.proxy_panel.split_ratio = ratio;
+            horizontal_resize_handle(
+                ui,
+                &theme,
+                "proxy-history-detail-resize",
+                &mut app.panels.proxy_panel.detail_height,
+                120.0,
+                640.0,
+                280.0,
+            );
+            super::draw_inspector(ui, &theme, "proxy-history-insp", &request, &response);
+        }
+    }
+
+    if let Some(detached_idx) = app.panels.proxy_panel.detached_row {
+        if let Some(tx) = app.log.get(detached_idx).cloned() {
+            let mut open = true;
+            let mut ratio = app.panels.proxy_panel.detached_split_ratio;
+            let message_bg = theme.color("ui.editor.message.background");
+            eframe::egui::Window::new(format!("Request #{} — {}", detached_idx + 1, tx.target))
+                .open(&mut open)
+                .resizable(true)
+                .default_size([860.0, 520.0])
+                .show(ui.ctx(), |ui| {
+                    let h = (ui.available_height() - 32.0).max(160.0);
+                    vertical_split(
+                        ui,
+                        &theme,
+                        "proxy-detached-split",
+                        &mut ratio,
+                        h,
+                        |side, ui| {
+                            if side == 0 {
+                                ui.label(eframe::egui::RichText::new("Request").strong());
+                                crate::ui::highlight::show_message_in(
+                                    ui,
+                                    "proxy-detached-req",
+                                    h - 24.0,
+                                    &tx.request,
+                                    &theme,
+                                    message_bg,
+                                );
+                            } else {
+                                ui.label(eframe::egui::RichText::new("Response").strong());
+                                crate::ui::highlight::show_message_in(
+                                    ui,
+                                    "proxy-detached-resp",
+                                    h - 24.0,
+                                    &tx.response,
+                                    &theme,
+                                    message_bg,
+                                );
+                            }
+                        },
+                    );
+                });
+            app.panels.proxy_panel.detached_split_ratio = ratio;
+            if !open {
+                app.panels.proxy_panel.detached_row = None;
+            }
+        }
+    }
+
+    cookie_jar(app, ui);
 }
 
 #[cfg(test)]

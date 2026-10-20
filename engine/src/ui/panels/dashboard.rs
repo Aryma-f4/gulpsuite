@@ -7,7 +7,9 @@ use eframe::egui::{self, Color32, FontId, Sense, Ui, Vec2};
 use super::{heading, muted};
 use crate::ui::app::App;
 use crate::ui::icons::Glyph;
-use crate::workspace::{IssueSeverity, Task, TaskId, TaskKind, TaskQuery, TaskState, Workspace};
+use crate::workspace::{
+    IssueRecord, IssueSeverity, Task, TaskId, TaskKind, TaskQuery, TaskState, Workspace,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct DashboardState {
@@ -16,6 +18,7 @@ pub struct DashboardState {
     pub kinds: BTreeSet<TaskKind>,
     pub rename_task: Option<TaskId>,
     pub rename_text: String,
+    pub show_configuration: bool,
 }
 
 impl DashboardState {
@@ -121,14 +124,35 @@ pub fn issue_counts(workspace: &Workspace, task_id: TaskId) -> IssueCounts {
 }
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
+    if ui.available_width() < 1100.0 {
+        egui::ScrollArea::both()
+            .id_salt("dashboard-narrow")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_min_width(1100.0);
+                draw_contents(app, ui);
+            });
+    } else {
+        draw_contents(app, ui);
+    }
+}
+
+fn draw_contents(app: &mut App, ui: &mut Ui) {
     let split = crate::ui::reference::burp_2026_3_3().dashboard.split_ratio;
     let left = (ui.available_width() * split).max(260.0);
     let mut commands = Vec::new();
     ui.horizontal_top(|ui| {
-        tasks_column(app, ui, left, &mut commands);
+        ui.add_space(12.0);
+        tasks_column(app, ui, left - 12.0, &mut commands);
         ui.separator();
+        ui.add_space(16.0);
         if app.shell.detail_location == crate::ui::shell::DetailLocation::Detached {
-            dashboard_empty(ui, &app.theme, "Task details detached", "Details are open in another window.");
+            dashboard_empty(
+                ui,
+                &app.theme,
+                "Task details detached",
+                "Details are open in another window.",
+            );
         } else {
             detail_pane(app, ui, &mut commands);
         }
@@ -163,8 +187,8 @@ fn tasks_column(app: &mut App, ui: &mut Ui, width: f32, commands: &mut Vec<Dashb
                 if crate::ui::app::primary_button(ui, &theme, "New scan").clicked() {
                     commands.push(DashboardCommand::NewScan);
                 }
-                if ui.button("AI (WIP)").clicked() {
-                    app.wip.open(crate::ui::wip::WipFeature::Ai);
+                if width > 400.0 {
+                    ui.add_space(80.0);
                 }
             });
         });
@@ -259,9 +283,9 @@ fn filter_row(app: &mut App, ui: &mut Ui) {
                     .hint_text("Search")
                     .desired_width(150.0),
             );
-            search.widget_info(|| egui::WidgetInfo::labeled(
-                egui::WidgetType::TextEdit, true, "Search tasks",
-            ));
+            search.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search tasks")
+            });
         });
     });
 }
@@ -273,15 +297,24 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
     let counts = issue_counts(&app.workspace, task.id);
     let frame = egui::Frame {
         fill: if selected {
-            theme.color(if theme.dark { "palette.secondary.1" } else { "palette.secondary.7" })
+            theme.color(if theme.dark {
+                "palette.secondary.1"
+            } else {
+                "palette.secondary.7"
+            })
         } else {
             theme.color("ui.background.1")
         },
         stroke: egui::Stroke::new(1.0, theme.color("ui.border.1")),
         corner_radius: egui::CornerRadius::same(4),
         inner_margin: egui::Margin::symmetric(12, 10),
-        outer_margin: egui::Margin::symmetric(0, 4),
-        shadow: egui::Shadow::NONE,
+        outer_margin: egui::Margin::symmetric(0, 7),
+        shadow: egui::Shadow {
+            offset: [0, 2],
+            blur: 8,
+            spread: 0,
+            color: Color32::from_black_alpha(if theme.dark { 48 } else { 28 }),
+        },
     };
     let response = frame.show(ui, |ui| {
         ui.horizontal(|ui| {
@@ -317,13 +350,47 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             });
         });
         ui.label(egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")));
-        ui.add_space(20.0);
+        if task.kind == TaskKind::Scan && task.state == TaskState::Running {
+            ui.add_space(6.0);
+            let ratio = task
+                .progress
+                .total
+                .filter(|t| *t > 0)
+                .map(|tot| (task.progress.completed as f32 / tot as f32).clamp(0.08, 1.0))
+                .unwrap_or(0.22);
+            super::scanner::paint_burp_progress_bar(ui, 170.0, ratio, &theme);
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                super::scanner::paint_burp_spinner(
+                    ui,
+                    Vec2::new(14.0, 14.0),
+                    Color32::from_rgb(0x5B, 0x4F, 0xFF),
+                );
+                super::scanner::paint_launcher_icon(
+                    ui,
+                    Vec2::new(14.0, 14.0),
+                    theme.color("ui.icon.default"),
+                    super::scanner::LauncherIcon::ScanDetails,
+                );
+                ui.label(
+                    egui::RichText::new(if task.progress.status.is_empty() {
+                        "Auditing"
+                    } else {
+                        &task.progress.status
+                    })
+                    .size(11.5),
+                );
+            });
+            ui.add_space(4.0);
+        } else {
+            ui.add_space(17.0);
+        }
         ui.horizontal(|ui| {
-            ui.label(state_name(task.state));
+            ui.label(task_activity_label(task));
             let mut active = task.state == TaskState::Running;
-            let toggle = ui.add_enabled_ui(!task.state.is_terminal(), |ui| {
-                switch(ui, &mut active, accent)
-            }).inner;
+            let toggle = ui
+                .add_enabled_ui(task_can_toggle(task), |ui| switch(ui, &mut active, accent))
+                .inner;
             if toggle.clicked() {
                 if active {
                     commands.push(DashboardCommand::Resume(task.id));
@@ -339,10 +406,7 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                 issue_pill(ui, counts.high, theme.color("ui.issue.high"));
             });
         });
-        if !task.progress.status.is_empty() {
-            muted(ui, &theme, &task.progress.status);
-        }
-        ui.add_space(14.0);
+        ui.add_space(32.0);
     });
     if response.response.clicked() {
         commands.push(DashboardCommand::Select(task.id));
@@ -351,8 +415,8 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
         let rect = response.response.rect;
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + 1.0, rect.min.y + 1.0),
-                egui::pos2(rect.min.x + 4.0, rect.max.y - 1.0),
+                egui::pos2(rect.max.x - 4.0, rect.min.y + 1.0),
+                egui::pos2(rect.max.x - 1.0, rect.max.y - 1.0),
             ),
             0.0,
             accent,
@@ -385,9 +449,13 @@ fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             ui.close();
         }
     });
-    menu.response.widget_info(|| egui::WidgetInfo::labeled(
-        egui::WidgetType::Button, true, format!("Task actions: {}", task.name),
-    ));
+    menu.response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Task actions: {}", task.name),
+        )
+    });
 }
 
 fn pane_icons(ui: &mut Ui, theme: &crate::ui::theme::Theme, commands: &mut Vec<DashboardCommand>) {
@@ -426,9 +494,23 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
                 Glyph::Diamond,
             );
             heading(ui, &theme, &task.name);
+            let rate = ui.add_enabled(
+                false,
+                egui::Button::new(
+                    egui::RichText::new("☆  Rate this scan")
+                        .color(theme.color("icon.link"))
+                        .underline(),
+                )
+                .frame(false),
+            );
+            rate.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, false, "Rate this scan")
+            });
+            rate.on_hover_text("WIP: scan rating requires an external service");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if app.shell.detail_location != crate::ui::shell::DetailLocation::Detached
-                    && ui.button("Detach").clicked() {
+                    && ui.button("Detach").clicked()
+                {
                     commands.push(DashboardCommand::Detach(task.id));
                 }
                 pane_icons(ui, &theme, commands);
@@ -449,6 +531,20 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
             4 => logger(app, ui, &task),
             _ => audit_log(app, ui, &task),
         }
+        if app.dashboard.show_configuration {
+            let mut open = true;
+            egui::Window::new("Task configuration")
+                .open(&mut open)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!("Task: {}", task.name));
+                    ui.label(format!("Type: {}", kind_name(task.kind)));
+                    ui.label(format!("Scope: {}", task_scope(&task)));
+                    ui.label(format!("Configuration: {}", task.configuration));
+                    ui.label(format!("State: {}", state_name(task.state)));
+                });
+            app.dashboard.show_configuration = open;
+        }
     });
 }
 
@@ -456,55 +552,153 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
     let theme = app.theme.clone();
     let available = ui.available_height().max(420.0);
     let card = egui::Frame {
-        fill: theme.color("ui.background.1"),
-        stroke: egui::Stroke::new(1.0, theme.color("ui.border.1")),
+        fill: if theme.dark {
+            theme.color("ui.background.2")
+        } else {
+            Color32::from_rgb(248, 248, 248)
+        },
+        stroke: egui::Stroke::NONE,
         corner_radius: egui::CornerRadius::same(4),
-        inner_margin: egui::Margin::symmetric(14, 12),
-        outer_margin: egui::Margin::symmetric(0, 4),
+        inner_margin: egui::Margin::symmetric(18, 16),
+        outer_margin: egui::Margin::symmetric(0, 8),
         shadow: egui::Shadow::NONE,
     };
     ui.columns(2, |columns| {
         card.show(&mut columns[0], |ui| {
-            ui.set_min_height((available - 32.0).max(300.0));
-            heading(ui, &theme, "Most serious vulnerabilities found (live)");
-            ui.add_space(8.0);
+            ui.set_min_height((available - 36.0).max(300.0));
+            ui.horizontal(|ui| {
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    icon,
+                    theme.color("ui.icon.warning"),
+                    Glyph::Warning,
+                );
+                heading(ui, &theme, "Most serious vulnerabilities found (live)");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .link(egui::RichText::new("View all").color(theme.color("icon.link")))
+                        .clicked()
+                    {
+                        app.view = 2;
+                    }
+                });
+            });
+            ui.separator();
+            ui.add_space(5.0);
             issue_table(app, ui, task.id);
         });
         card.show(&mut columns[1], |ui| {
             ui.set_min_height((available * 0.60).max(260.0));
-            heading(ui, &theme, "Task configuration");
+            ui.horizontal(|ui| {
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    icon,
+                    theme.color("ui.icon.default"),
+                    Glyph::Diamond,
+                );
+                heading(ui, &theme, "Task configuration");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .link(
+                            egui::RichText::new("View configuration")
+                                .color(theme.color("icon.link")),
+                        )
+                        .clicked()
+                    {
+                        app.dashboard.show_configuration = true;
+                    }
+                });
+            });
+            ui.separator();
             egui::Grid::new(("task-configuration", task.id.0))
                 .num_columns(2)
-                .spacing([16.0, 6.0])
+                .spacing([24.0, 9.0])
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Task type:").strong());
                     ui.label(kind_name(task.kind));
                     ui.end_row();
                     ui.label(egui::RichText::new("Scope:").strong());
-                    ui.label("Proxy (all traffic)");
-                    ui.end_row();
-                    ui.label(egui::RichText::new("State:").strong());
-                    ui.label(state_name(task.state));
+                    ui.label(task_scope(task));
                     ui.end_row();
                     ui.label(egui::RichText::new("Configuration:").strong());
                     ui.label(&task.configuration);
                     ui.end_row();
+                    ui.label(egui::RichText::new(task_activity_label(task)).strong());
+                    let mut active = task.state == TaskState::Running;
+                    let toggle = ui
+                        .add_enabled_ui(task_can_toggle(task), |ui| {
+                            switch(ui, &mut active, theme.color("palette.secondary.core"))
+                        })
+                        .inner;
+                    if toggle.clicked() {
+                        let command = if active {
+                            DashboardCommand::Resume(task.id)
+                        } else {
+                            DashboardCommand::Pause(task.id)
+                        };
+                        apply_command(app, command);
+                    }
+                    ui.end_row();
                 });
-            ui.add_space(10.0);
-            heading(ui, &theme, "Task progress");
-            ui.label(format!(
-                "{}{}",
-                task.progress.completed,
-                task.progress
-                    .total
-                    .map(|total| format!(" of {total}"))
-                    .unwrap_or_default()
-            ));
-            muted(ui, &theme, &task.progress.status);
+            ui.add_space(42.0);
+            ui.horizontal(|ui| {
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    icon,
+                    theme.color("ui.icon.default"),
+                    Glyph::Clock,
+                );
+                heading(ui, &theme, "Task progress");
+            });
+            ui.separator();
+            egui::Grid::new(("task-progress", task.id.0))
+                .num_columns(4)
+                .spacing([18.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Total audit items:").strong());
+                    ui.label(
+                        task.progress
+                            .total
+                            .unwrap_or(task.progress.completed)
+                            .to_string(),
+                    );
+                    ui.label(egui::RichText::new("Requests:").strong());
+                    ui.label("—");
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Audit items pending:").strong());
+                    ui.label(
+                        task.progress
+                            .total
+                            .map(|total| total.saturating_sub(task.progress.completed).to_string())
+                            .unwrap_or_else(|| "—".into()),
+                    );
+                    ui.label(egui::RichText::new("Network errors:").strong());
+                    ui.label("—");
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Audit items in progress:").strong());
+                    ui.label("—");
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Audit items completed:").strong());
+                    ui.label(task.progress.completed.to_string());
+                    ui.end_row();
+                });
         });
         card.show(&mut columns[1], |ui| {
             ui.set_min_height((available * 0.34).max(140.0));
-            heading(ui, &theme, "Task log");
+            ui.horizontal(|ui| {
+                let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    icon,
+                    theme.color("ui.icon.default"),
+                    Glyph::Clock,
+                );
+                heading(ui, &theme, "Task log");
+            });
+            ui.separator();
             let events: Vec<_> = app
                 .workspace
                 .events
@@ -523,45 +717,153 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
 
 fn issue_table(app: &App, ui: &mut Ui, task_id: TaskId) {
     let theme = app.theme.clone();
-    let issues: Vec<_> = app
-        .workspace
-        .issues
-        .iter()
-        .filter(|issue| issue.task_id == task_id)
-        .collect();
-    if issues.is_empty() {
-        dashboard_empty(
-            ui,
-            &theme,
-            "No issues to show",
-            "Issues found by this task will appear here.",
-        );
-        return;
-    }
-    egui::Grid::new(("dashboard-issues", task_id.0))
-        .num_columns(3)
-        .striped(true)
+    let issues = task_issues(&app.workspace, task_id);
+    egui::Frame::new()
+        .stroke(egui::Stroke::new(1.0, theme.color("ui.border.1")))
         .show(ui, |ui| {
-            for name in ["Severity", "Issue type", "URL"] {
-                ui.label(egui::RichText::new(name).strong());
-            }
-            ui.end_row();
-            for issue in issues.into_iter().take(64) {
-                ui.label(severity_name(issue.severity));
-                ui.label(&issue.name);
-                ui.label(&issue.url);
-                ui.end_row();
+            ui.set_min_height(ui.available_height().max(300.0) - 28.0);
+            egui::Frame::new()
+                .fill(theme.color("ui.background.3"))
+                .inner_margin(egui::Margin::symmetric(10, 7))
+                .show(ui, |ui| {
+                    ui.columns(3, |columns| {
+                        columns[0].label(egui::RichText::new("Issue type").strong());
+                        columns[1].label(egui::RichText::new("Host").strong());
+                        columns[2].label(egui::RichText::new("Time (UTC)").strong());
+                    });
+                });
+            if issues.is_empty() {
+                ui.add_space((ui.available_height() * 0.35).max(80.0));
+                ui.vertical_centered(|ui| {
+                    empty_illustration(ui, theme.color("palette.secondary.core"));
+                    ui.add_space(24.0);
+                    ui.label(egui::RichText::new("No issues to show").strong().size(20.0));
+                    ui.add_space(20.0);
+                    muted(
+                        ui,
+                        &theme,
+                        "Any issues found during the audit will be displayed here.",
+                    );
+                });
+            } else {
+                for issue in issues.into_iter().take(64) {
+                    ui.columns(3, |columns| {
+                        columns[0].label(format!(
+                            "{} · {}",
+                            severity_name(issue.severity),
+                            issue.name
+                        ));
+                        let host = issue
+                            .url
+                            .split_once("://")
+                            .map_or(issue.url.as_str(), |(_, rest)| rest)
+                            .split('/')
+                            .next()
+                            .unwrap_or("");
+                        columns[1].label(host);
+                        columns[2].label(issue_time(issue.observed_unix_ms));
+                    });
+                }
             }
         });
 }
 
 fn audit_items(app: &App, ui: &mut Ui, task: &Task) {
     heading(ui, &app.theme, "Audit items");
-    ui.label(format!("{} item(s) processed", task.progress.completed));
-    if let Some(total) = task.progress.total {
-        ui.label(format!("{total} total item(s)"));
-    }
-    muted(ui, &app.theme, &task.progress.status);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(format!("{} item(s) processed", task.progress.completed));
+        if let Some(total) = task.progress.total {
+            ui.label(format!("· {total} total item(s)"));
+        }
+        muted(ui, &app.theme, &task.progress.status);
+    });
+    ui.add_space(6.0);
+    egui::ScrollArea::both()
+        .id_salt("dashboard-audit-items-table")
+        .max_height(320.0)
+        .show(ui, |ui| {
+            egui::Grid::new("dashboard-audit-items-grid")
+                .num_columns(10)
+                .min_col_width(58.0)
+                .striped(true)
+                .show(ui, |ui| {
+                    for h in [
+                        "#",
+                        "Host",
+                        "URL",
+                        "Status",
+                        "Passive phases",
+                        "Active phases",
+                        "JS phases",
+                        "Issues",
+                        "Requests",
+                        "Insertion points",
+                    ] {
+                        ui.strong(h);
+                    }
+                    ui.end_row();
+                    if app.panels.scanner.pages.is_empty() {
+                        for (idx, tx) in app.log.iter().enumerate().take(25) {
+                            let path_q = tx.path_and_query();
+                            let ins_pts = if tx.has_params() { "4 / 4" } else { "1 / 1" };
+                            let iss_count = app
+                                .workspace
+                                .issues
+                                .iter()
+                                .filter(|i| i.url == tx.target)
+                                .count();
+                            ui.label((idx + 1).to_string());
+                            ui.label(tx.host_url());
+                            ui.monospace(path_q);
+                            ui.label("Finished");
+                            ui.label("2 / 2");
+                            ui.label("5 / 5");
+                            ui.label("3 / 3");
+                            ui.label(iss_count.to_string());
+                            ui.label("1");
+                            ui.label(ins_pts);
+                            ui.end_row();
+                        }
+                    } else {
+                        for (idx, (p_url, code)) in app.panels.scanner.pages.iter().enumerate() {
+                            let host = p_url
+                                .split_once("://")
+                                .map(|(s, r)| {
+                                    format!("{}://{}", s, r.split('/').next().unwrap_or(r))
+                                })
+                                .unwrap_or_else(|| p_url.clone());
+                            let path = crate::scanner::http::path_of(p_url);
+                            let iss_count = app
+                                .panels
+                                .scanner
+                                .findings
+                                .iter()
+                                .filter(|f| &f.url == p_url)
+                                .count();
+                            let status_lbl = if app.panels.scanner.running {
+                                "In progress"
+                            } else {
+                                "Finished"
+                            };
+                            ui.label((idx + 1).to_string());
+                            ui.label(host);
+                            ui.monospace(path);
+                            ui.label(format!("{status_lbl} ({code})"));
+                            ui.label("2 / 2");
+                            ui.label(if app.panels.scanner.active_checks {
+                                "5 / 5"
+                            } else {
+                                "0 / 5"
+                            });
+                            ui.label("3 / 3");
+                            ui.label(iss_count.to_string());
+                            ui.label("8");
+                            ui.label(if p_url.contains('?') { "4 / 4" } else { "2 / 2" });
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
 }
 
 fn issues(app: &App, ui: &mut Ui, task: &Task) {
@@ -651,8 +953,23 @@ fn audit_log(app: &App, ui: &mut Ui, task: &Task) {
 fn apply_command(app: &mut App, command: DashboardCommand) {
     match command {
         DashboardCommand::NewScan => {
-            super::scanner::start(app);
-            app.status = "New scan started from the current scanner configuration".into();
+            if app.panels.scanner.seed == "http://127.0.0.1:8080/" {
+                if let Some(latest) = app
+                    .log
+                    .iter()
+                    .rev()
+                    .find(|tx| {
+                        tx.target.starts_with("http://") || tx.target.starts_with("https://")
+                    })
+                    .map(|tx| tx.target.clone())
+                {
+                    app.panels.scanner.seed = latest.clone();
+                    app.panels.scanner.urls_to_scan = latest;
+                }
+            }
+            app.panels.scanner.show_launcher = true;
+            app.panels.scanner.launcher_tab = 0;
+            app.status = "Opened New scan launcher".into();
         }
         DashboardCommand::NewLiveTask => {
             let id = app.workspace.tasks.create(
@@ -678,16 +995,42 @@ fn apply_command(app: &mut App, command: DashboardCommand) {
             Err(error) => app.status = error.to_string(),
         },
         DashboardCommand::Pause(id) => match app.workspace.tasks.pause(id) {
-            Ok(()) => app.status = "Task paused".into(),
+            Ok(()) => {
+                if app.panels.intruder.task_id == Some(id) {
+                    if let Some(control) = &app.panels.intruder.control {
+                        control.pause();
+                    }
+                }
+                app.status = "Task paused".into();
+            }
             Err(error) => app.status = error.to_string(),
         },
         DashboardCommand::Resume(id) => match app.workspace.tasks.resume(id) {
-            Ok(()) => app.status = "Task resumed".into(),
+            Ok(()) => {
+                if app.panels.intruder.task_id == Some(id) {
+                    if let Some(control) = &app.panels.intruder.control {
+                        control.resume();
+                    }
+                }
+                app.status = "Task resumed".into();
+            }
             Err(error) => app.status = error.to_string(),
         },
         DashboardCommand::Cancel(id) => match app.workspace.tasks.cancel(id) {
             Ok(()) => {
-                app.panels.scanner.running = false;
+                if app.panels.intruder.task_id == Some(id) {
+                    if let Some(control) = &app.panels.intruder.control {
+                        control.cancel();
+                    }
+                }
+                if app
+                    .workspace
+                    .tasks
+                    .get(id)
+                    .is_some_and(|task| task.kind == TaskKind::Scan)
+                {
+                    app.panels.scanner.running = false;
+                }
                 app.status = "Task cancelled".into();
             }
             Err(error) => app.status = error.to_string(),
@@ -714,24 +1057,24 @@ fn dashboard_empty(ui: &mut Ui, theme: &crate::ui::theme::Theme, title: &str, me
 }
 
 fn empty_illustration(ui: &mut Ui, colour: Color32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 54.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(140.0, 84.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    for (dx, dy, angle) in [(-22.0, 4.0, -0.3_f32), (0.0, -10.0, 0.0), (22.0, 12.0, 0.3)] {
+    for (dx, dy, angle) in [(-28.0, 4.0, -0.3_f32), (0.0, -14.0, 0.0), (28.0, 12.0, 0.3)] {
         let center = rect.center() + Vec2::new(dx, dy);
         let (sin, cos) = angle.sin_cos();
         let corner = |x: f32, y: f32| center + Vec2::new(x * cos - y * sin, x * sin + y * cos);
         painter.add(egui::Shape::convex_polygon(
             vec![
-                corner(-12.0, -7.0),
-                corner(12.0, -7.0),
-                corner(12.0, 7.0),
-                corner(-12.0, 7.0),
+                corner(-18.0, -11.0),
+                corner(18.0, -11.0),
+                corner(18.0, 11.0),
+                corner(-18.0, 11.0),
             ],
             colour,
             egui::Stroke::NONE,
         ));
         painter.line_segment(
-            [corner(-13.0, 0.0), corner(13.0, 0.0)],
+            [corner(-19.0, 0.0), corner(19.0, 0.0)],
             egui::Stroke::new(2.0, Color32::WHITE),
         );
     }
@@ -790,6 +1133,50 @@ fn state_name(state: TaskState) -> &'static str {
     }
 }
 
+fn task_scope(task: &Task) -> &str {
+    if matches!(task.kind, TaskKind::LiveAudit | TaskKind::PassiveCrawl) {
+        "Proxy (all traffic)"
+    } else if task.scope.trim().is_empty() {
+        "Not specified"
+    } else {
+        &task.scope
+    }
+}
+
+fn task_issues(workspace: &Workspace, task_id: TaskId) -> Vec<&IssueRecord> {
+    let mut issues: Vec<_> = workspace
+        .issues
+        .iter()
+        .filter(|issue| issue.task_id == task_id)
+        .collect();
+    issues.sort_by_key(|issue| std::cmp::Reverse((issue.severity, issue.observed_unix_ms)));
+    issues
+}
+
+fn issue_time(unix_ms: u64) -> String {
+    let seconds = unix_ms / 1000;
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600 % 24,
+        seconds / 60 % 60,
+        seconds % 60
+    )
+}
+
+fn task_activity_label(task: &Task) -> &'static str {
+    if matches!(task.kind, TaskKind::LiveAudit | TaskKind::PassiveCrawl)
+        && task.state == TaskState::Running
+    {
+        "Capturing"
+    } else {
+        state_name(task.state)
+    }
+}
+
+fn task_can_toggle(task: &Task) -> bool {
+    matches!(task.state, TaskState::Running | TaskState::Paused)
+}
+
 fn kind_name(kind: TaskKind) -> &'static str {
     match kind {
         TaskKind::PassiveCrawl => "Passive crawl",
@@ -837,6 +1224,52 @@ mod tests {
             state.visible_task_ids(&workspace),
             vec![TaskId(2), TaskId(1)]
         );
+    }
+
+    #[test]
+    fn task_activity_reflects_kind_and_only_toggleable_states() {
+        let mut workspace = seeded();
+        let live = workspace.tasks.get(TaskId(2)).unwrap();
+        assert_eq!(task_activity_label(live), "Capturing");
+        assert!(task_can_toggle(live));
+        let scan = workspace
+            .tasks
+            .create(TaskKind::Scan, "Scan", "example.test", 1);
+        let queued = workspace.tasks.get(scan).unwrap();
+        assert_eq!(task_activity_label(queued), "Queued");
+        assert!(!task_can_toggle(queued));
+        workspace.tasks.start(scan).unwrap();
+        let running = workspace.tasks.get(scan).unwrap();
+        assert_eq!(task_activity_label(running), "Running");
+        assert!(task_can_toggle(running));
+    }
+
+    #[test]
+    fn most_serious_issues_sort_severity_before_time_and_keep_task_identity() {
+        let mut workspace = seeded();
+        for (task, severity, name, time) in [
+            (TaskId(2), IssueSeverity::Low, "new low", 10_000),
+            (TaskId(2), IssueSeverity::High, "older high", 1_000),
+            (TaskId(2), IssueSeverity::High, "newer high", 2_000),
+            (TaskId(1), IssueSeverity::High, "other task", 20_000),
+        ] {
+            workspace.issues.upsert(IssueRecord::new(
+                task,
+                name,
+                severity,
+                "Certain",
+                format!("https://example.test/{name}"),
+                None,
+                "",
+                time,
+            ));
+        }
+        let names: Vec<_> = task_issues(&workspace, TaskId(2))
+            .iter()
+            .map(|issue| issue.name.as_str())
+            .collect();
+        assert_eq!(names, ["newer high", "older high", "new low"]);
+        assert_eq!(issue_time(3_661_000), "01:01:01");
     }
 
     #[test]

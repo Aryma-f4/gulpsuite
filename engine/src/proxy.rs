@@ -28,6 +28,8 @@ type Out = WriteBox;
 /// How much of a body the proxy keeps for display. Beyond this the operator still sees the correct
 /// byte count, but the text is truncated, so memory stays bounded on a large transfer.
 pub const BODY_CAPTURE_LIMIT: usize = 512 * 1024;
+/// Manual tools return a full text response, so reject larger captures before allocating them.
+pub const MANUAL_RESPONSE_LIMIT: usize = 32 * 1024 * 1024;
 
 /// Everything the proxy tells its owner about.
 #[derive(Clone, Debug)]
@@ -134,6 +136,7 @@ impl MatchRules {
 }
 
 struct Inner {
+    lifecycle: Mutex<()>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The DNS capture listener, kept so the Logger panel's Stop actually ends it.
     dns_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -141,7 +144,7 @@ struct Inner {
     smtp_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The port the live listener is bound to, so a restart can report the same one.
     bound: tokio::sync::Mutex<Option<u16>>,
-    held: Mutex<HashMap<u64, Held>>,
+    held: std::sync::Mutex<HashMap<u64, Held>>,
     intercept: AtomicBool,
     /// Whether responses are parked as well.
     intercept_response: AtomicBool,
@@ -215,11 +218,12 @@ impl Proxy {
         (
             Proxy {
                 inner: Arc::new(Inner {
+                    lifecycle: Mutex::new(()),
                     task: Mutex::new(None),
                     dns_task: Mutex::new(None),
                     smtp_task: Mutex::new(None),
                     bound: tokio::sync::Mutex::new(None),
-                    held: Mutex::new(HashMap::new()),
+                    held: std::sync::Mutex::new(HashMap::new()),
                     intercept: AtomicBool::new(false),
             intercept_response: AtomicBool::new(false),
             intercept_tls: AtomicBool::new(true),
@@ -320,11 +324,23 @@ impl Proxy {
 
     /// Binds and starts accepting. Port 0 asks the OS for an ephemeral one.
     pub async fn start(&self, port: u16) -> io::Result<u16> {
+        let _guard = self.inner.lifecycle.lock().await;
+        self.start_unlocked(port, false).await
+    }
+
+    /// Atomically starts or reuses the ready listener for the integrated browser.
+    pub async fn ensure_started(&self, port: u16) -> io::Result<u16> {
+        let _guard = self.inner.lifecycle.lock().await;
+        self.start_unlocked(port, true).await
+    }
+
+    async fn start_unlocked(&self, port: u16, reuse: bool) -> io::Result<u16> {
         // Bound to a local so the guard is released before bound_port() locks it again.
         let already_running = self.inner.task.lock().await.is_some();
         if already_running {
             let existing = self.bound_port().await.unwrap_or(port);
             self.emit(Event::Listening { port: existing });
+            if reuse { return Ok(existing); }
             return Err(io::Error::other("already listening"));
         }
         let listener = match TcpListener::bind(("127.0.0.1", port)).await {
@@ -417,6 +433,8 @@ impl Proxy {
     }
 
     pub async fn stop(&self) {
+        let _guard = self.inner.lifecycle.lock().await;
+        self.release_all();
         let handle = self.inner.task.lock().await.take();
         if let Some(h) = handle {
             h.abort();
@@ -468,6 +486,16 @@ impl Proxy {
         self.inner.authority.as_ref().map(|a| a.path.clone())
     }
 
+    /// The proxy's CA certificate in PEM format.
+    pub fn authority_pem(&self) -> Option<String> {
+        self.inner.authority.as_ref().map(|a| a.pem())
+    }
+
+    pub fn browser_ca_pin(&self) -> Result<String, String> {
+        self.inner.authority.as_ref().map(|a| a.spki_pin())
+            .ok_or_else(|| "Proxy certificate authority could not be initialized".into())
+    }
+
     /// Whether an https connection is intercepted. With it off the connection is passed through
     /// as a tunnel, so nothing inside it can be seen or changed.
     pub fn set_tls_interception(&self, on: bool) {
@@ -488,7 +516,7 @@ impl Proxy {
     }
 
     pub async fn held(&self) -> Vec<HeldInfo> {
-        let held = self.inner.held.lock().await;
+        let held = self.inner.held.lock().unwrap_or_else(|error| error.into_inner());
         let mut items: Vec<HeldInfo> = held
             .iter()
             .map(|(id, h)| HeldInfo {
@@ -505,7 +533,7 @@ impl Proxy {
 
     /// Releases one parked request. Returns false when the id is unknown or already answered.
     pub async fn forward(&self, id: u64) -> bool {
-        let item = self.inner.held.lock().await.remove(&id);
+        let item = self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
         let ok = item
             .map(|i| i.decision.send(Some(i.raw)).is_ok())
             .unwrap_or(false);
@@ -515,7 +543,7 @@ impl Proxy {
 
     /// Releases one parked request with the message the operator edited.
     pub async fn forward_edited(&self, id: u64, raw: &str) -> bool {
-        let item = self.inner.held.lock().await.remove(&id);
+        let item = self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
         let ok = item
             .map(|i| i.decision.send(Some(raw.to_string())).is_ok())
             .unwrap_or(false);
@@ -525,7 +553,7 @@ impl Proxy {
 
     /// Discards one parked request instead of letting it through.
     pub async fn discard(&self, id: u64) -> bool {
-        let item = self.inner.held.lock().await.remove(&id);
+        let item = self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
         let ok = item.map(|i| i.decision.send(None).is_ok()).unwrap_or(false);
         self.emit(Event::Released { id, forwarded: false });
         ok
@@ -537,11 +565,10 @@ impl Proxy {
 
     /// Releases every parked request. Used when interception is switched off.
     pub fn release_all(&self) {
-        // Dropping the sender is how a parked request learns it was dropped.
-        if let Ok(mut held) = self.inner.held.try_lock() {
-            for (_, item) in held.drain() {
-                let _ = item.decision.send(Some(item.raw));
-            }
+        let items: Vec<_> = self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).drain().collect();
+        for (id, item) in items {
+            let forwarded = item.decision.send(Some(item.raw)).is_ok();
+            self.emit(Event::Released { id, forwarded });
         }
     }
 
@@ -562,7 +589,8 @@ impl Proxy {
         // The rules apply to every request this build sends, not only the ones that pass through
         // the listener, so Repeater, the scanner and Discover see the same rewriting.
         let raw = self.apply_rules(raw);
-        let call = one_shot(host, port, &raw, secure);
+        let roots = self.inner.extra_roots.lock().map(|roots| roots.clone()).unwrap_or_default();
+        let call = one_shot(host, port, &raw, secure, &roots);
         match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
             Ok(Ok(pair)) => Ok(pair),
             Ok(Err(e)) => Err(e.to_string()),
@@ -582,6 +610,7 @@ impl Proxy {
         self.inner.matches.store(0, Ordering::SeqCst);
         let total = requests.len();
         let cursor = Arc::new(AtomicUsize::new(0));
+        let baseline = Arc::new(AtomicUsize::new(usize::MAX));
         let workers = threads.clamp(1, 64).min(total.max(1));
 
         let mut handles = Vec::with_capacity(workers);
@@ -591,7 +620,7 @@ impl Proxy {
             let requests = requests.clone();
             let rules = rules.clone();
             let proxy = self.clone();
-            let baseline = Arc::new(AtomicUsize::new(usize::MAX));
+            let baseline = baseline.clone();
             handles.push(tokio::spawn(async move {
                 loop {
                     let index = cursor.fetch_add(1, Ordering::SeqCst);
@@ -671,6 +700,10 @@ impl Proxy {
         // While intercepting, the body is read in as well, so the whole message can be edited
         // before it goes out. A body too large to hold is streamed on untouched.
         let mut head = head;
+        let capture_target = crate::http_target::request_url(&head, secure).unwrap_or_else(|_| target.to_owned());
+        if self.serve_portal(&mut client, &capture_target).await {
+            return;
+        }
         let mut held_body: Option<Vec<u8>> = None;
         if self.inner.intercept.load(Ordering::SeqCst) {
             if let Some(length) = content_length(&head) {
@@ -687,22 +720,30 @@ impl Proxy {
             };
             let (decision, wait) = oneshot::channel();
             let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
-            self.inner.held.lock().await.insert(
+            let queued = {
+            let mut held = self.inner.held.lock().unwrap_or_else(|error| error.into_inner());
+            if self.inner.intercept.load(Ordering::SeqCst) {
+            held.insert(
                 id,
                 Held {
                     kind: HeldKind::Request,
                     method: method.to_string(),
-                    target: target.to_string(),
+                    target: capture_target.clone(),
                     raw: raw.clone(),
                     decision,
                 },
             );
+            true
+            } else { let _ = decision.send(Some(raw.clone())); false }
+            };
+            if queued {
             self.emit(Event::Held {
                 id,
                 method: method.to_string(),
-                target: target.to_string(),
+                target: capture_target,
                 raw,
             });
+            }
             match wait.await {
                 Ok(Some(edited)) => {
                     // The operator may have changed the request line, the headers or the body.
@@ -713,17 +754,29 @@ impl Proxy {
                     }
                 }
                 _ => {
-                    self.inner.held.lock().await.remove(&id);
+                    self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
                     self.emit(Event::Dropped { id });
                     return;
                 }
             }
         }
 
-        let Some((host, port)) = host_port(&head, target) else {
-            self.emit(Event::Error(format!("cannot resolve target: {target}")));
-            return;
+        let method = head.split_whitespace().next().unwrap_or(method).to_owned();
+        let target_address = match crate::http_target::request_url(&head, secure) {
+            Ok(address) => address,
+            Err(error) => {
+                let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n").await;
+                self.emit(Event::Error(error));
+                return;
+            }
         };
+        let service = match crate::http_target::HttpTarget::parse(&target_address) {
+            Ok(service) => service,
+            Err(error) => { self.emit(Event::Error(error)); return; }
+        };
+        let target = target_address.as_str();
+        let method = method.as_str();
+        let (host, port, secure) = (service.host, service.port, service.secure);
         let roots = self.inner.extra_roots.lock().map(|r| r.clone()).unwrap_or_default();
         let mut upstream = match connect_upstream(&host, port, secure, &roots).await {
             Ok(s) => s,
@@ -812,38 +865,40 @@ impl Proxy {
 
         // Never wait for client EOF: a keep-alive client does not send one. When the body was
         // read in while intercepting it has already been sent, so there is nothing left to copy.
-        if held_body.is_none() {
+        if held_body.is_none() && (content_length(&head).is_some_and(|length| length > 0) || header_has_token(&head, "transfer-encoding", "chunked")) {
             let mut out: Out = Box::new(up_write);
+            let body_head = head.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 16384];
-                loop {
-                    match reader.read(&mut buf).await {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => {
-                            if out.write_all(&buf[..n]).await.is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
+                let _ = copy_framed_body(&mut reader, &mut out, &body_head, "POST", 200).await;
             });
         }
 
         let mut up_reader = BufReader::new(Box::new(up_read) as ReadBox);
 
-        if self.inner.intercept_response.load(Ordering::SeqCst) {
+        if self.inner.intercept.load(Ordering::SeqCst) && self.inner.intercept_response.load(Ordering::SeqCst) {
             // The whole response head is read in, because the length of the body is only known
             // once the headers have been seen.
-            let (head_status, head_text, head_bytes) = read_response_head(&mut up_reader).await;
+            let (head_status, head_text, head_bytes) = loop {
+                let (status, head, bytes) = read_response_head(&mut up_reader).await;
+                if status == 0 { self.emit(Event::Error("Invalid response headers".into())); return; }
+                if (100..200).contains(&status) && status != 101 {
+                    if client.write_all(&bytes).await.is_err() { return; }
+                    continue;
+                }
+                break (status, head, bytes);
+            };
             // A response without a known length is not held, because reading it to the end would
             // wait for the origin to close.
-            if let Some(length) = content_length(&head_text).filter(|n| *n <= MAX_HELD_BODY) {
+            if let Some(length) = content_length(&head_text).filter(|n| *n <= MAX_HELD_BODY && response_has_body(method, head_status)) {
                 let mut body = vec![0u8; length];
                 if up_reader.read_exact(&mut body).await.is_ok() {
                     let raw = format!("{head_text}{}", String::from_utf8_lossy(&body));
                     let (decision, wait) = oneshot::channel();
                     let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
-                    self.inner.held.lock().await.insert(
+                    let queued = {
+                    let mut held = self.inner.held.lock().unwrap_or_else(|error| error.into_inner());
+                    if self.inner.intercept.load(Ordering::SeqCst) && self.inner.intercept_response.load(Ordering::SeqCst) {
+                    held.insert(
                         id,
                         Held {
                             kind: HeldKind::Response,
@@ -853,11 +908,16 @@ impl Proxy {
                             decision,
                         },
                     );
+                    true
+                    } else { let _ = decision.send(Some(raw.clone())); false }
+                    };
+                    if queued {
                     self.emit(Event::HeldResponse {
                         id,
                         status: head_status,
                         raw,
                     });
+                    }
                     match wait.await {
                         Ok(Some(edited)) => {
                             // The changed response is what the client gets, with the length kept
@@ -888,7 +948,7 @@ impl Proxy {
                             return;
                         }
                         _ => {
-                            self.inner.held.lock().await.remove(&id);
+                            self.inner.held.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
                             self.emit(Event::Dropped { id });
                             return;
                         }
@@ -899,8 +959,12 @@ impl Proxy {
             if client.write_all(&head_bytes).await.is_err() {
                 return;
             }
-            let (bytes, captured) = copy_across(&mut up_reader, &mut client).await;
+            let (bytes, captured) = match copy_framed_body(&mut up_reader, &mut client, &head_text, method, head_status).await {
+                Ok(body) => body,
+                Err(error) => { self.emit(Event::Error(format!("Incomplete response: {error}"))); return; }
+            };
             let _ = client.flush().await;
+            let _ = client.shutdown().await;
             let mut response = String::from_utf8_lossy(&head_bytes).into_owned();
             response.push_str(&String::from_utf8_lossy(&captured));
             for cookie in crate::cookies::parse_set_cookie_headers(&response) {
@@ -919,16 +983,26 @@ impl Proxy {
             return;
         }
 
-        // Not intercepting responses: the status line is read and the rest is streamed.
-        let (status, status_line) = take_status_line(&mut up_reader).await;
-        if client.write_all(&status_line).await.is_err() {
+        let (status, response_head, head_bytes) = loop {
+            let (status, head, bytes) = read_response_head(&mut up_reader).await;
+            if status == 0 { self.emit(Event::Error("Invalid response headers".into())); return; }
+            if (100..200).contains(&status) && status != 101 {
+                if client.write_all(&bytes).await.is_err() { return; }
+                continue;
+            }
+            break (status, head, bytes);
+        };
+        if client.write_all(&head_bytes).await.is_err() {
             return;
         }
-        let (body, captured) = copy_across(&mut up_reader, &mut client).await;
+        let (body, captured) = match copy_framed_body(&mut up_reader, &mut client, &response_head, method, status).await {
+            Ok(body) => body,
+            Err(error) => { self.emit(Event::Error(format!("Incomplete response: {error}"))); return; }
+        };
         let _ = client.flush().await;
         let _ = client.shutdown().await;
 
-        let mut response = String::from_utf8_lossy(&status_line).into_owned();
+        let mut response = String::from_utf8_lossy(&head_bytes).into_owned();
         response.push_str(&String::from_utf8_lossy(&captured));
         for cookie in crate::cookies::parse_set_cookie_headers(&response) {
             self.inner.cookies.store(&host, &cookie);
@@ -951,6 +1025,89 @@ impl Proxy {
     ///
     /// The client is told to trust the proxy's own authority, which is why a browser has to be
     /// told about that certificate before https works through the proxy.
+    /// Built-in Burp-compatible proxy portal (`http://burp/`, `http://burpsuite/`, `/cert`, `/cert.pem`).
+    /// Served before the hold queue so browser certificate downloads never deadlock on Intercept.
+    async fn serve_portal(&self, client: &mut Out, capture_target: &str) -> bool {
+        let Ok(url) = url::Url::parse(capture_target) else {
+            return false;
+        };
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let is_portal_host = host.eq_ignore_ascii_case("burp")
+            || host.eq_ignore_ascii_case("burpsuite")
+            || host.eq_ignore_ascii_case("burp.local");
+        if !is_portal_host {
+            return false;
+        }
+        match url.path() {
+            "/cert" | "/cacert.der" => {
+                let Some(cert) = self.authority_certificate() else {
+                    return false;
+                };
+                let bytes = cert.as_ref();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: application/x-x509-ca-cert\r\n\
+                     Content-Disposition: attachment; filename=\"cacert.der\"\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = client.write_all(header.as_bytes()).await;
+                let _ = client.write_all(bytes).await;
+                let _ = client.flush().await;
+                let _ = client.shutdown().await;
+                true
+            }
+            "/cert.pem" | "/gulpsuite-proxy-ca.pem" => {
+                let Some(pem) = self.authority_pem() else {
+                    return false;
+                };
+                let bytes = pem.as_bytes();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: application/x-pem-file\r\n\
+                     Content-Disposition: attachment; filename=\"gulpsuite-proxy-ca.pem\"\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = client.write_all(header.as_bytes()).await;
+                let _ = client.write_all(bytes).await;
+                let _ = client.flush().await;
+                let _ = client.shutdown().await;
+                true
+            }
+            _ => {
+                let body = concat!(
+                    "<!doctype html><html><head><meta charset=\"utf-8\">",
+                    "<title>Gulpsuite Proxy</title>",
+                    "<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:48px auto;max-width:640px;color:#2b2b2b;line-height:1.5}",
+                    ".bar{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #ff6633;padding-bottom:12px;margin-bottom:24px}",
+                    "a.btn{display:inline-block;background:#ff6633;color:#fff;text-decoration:none;padding:8px 16px;border-radius:6px;font-weight:600;margin-right:12px}",
+                    "a.sec{display:inline-block;background:#eee;color:#2b2b2b;text-decoration:none;padding:8px 16px;border-radius:6px;font-weight:600}</style>",
+                    "</head><body><div class=\"bar\"><h2>Gulpsuite Professional Proxy</h2>",
+                    "<div><a class=\"btn\" href=\"/cert\">CA Certificate (DER)</a>",
+                    "<a class=\"sec\" href=\"/cert.pem\">CA Certificate (PEM)</a></div></div>",
+                    "<p>Welcome to Gulpsuite Proxy. Your browser is routing HTTP and HTTPS traffic through this listener.</p>",
+                    "</body></html>"
+                );
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\n\
+                     Content-Type: text/html; charset=utf-8\r\n\
+                     Content-Length: {}\r\n\
+                     Connection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = client.write_all(header.as_bytes()).await;
+                let _ = client.flush().await;
+                let _ = client.shutdown().await;
+                true
+            }
+        }
+    }
+
     async fn serve_tls(self, mut stream: TcpStream, head: String) {
         let authority = head
             .lines()
@@ -970,7 +1127,7 @@ impl Proxy {
             self.emit(Event::Error("no certificate authority available".into()));
             return;
         };
-        let config = match signer.server_config(&host) {
+        let config = match signer.server_config_arc(&host) {
             Ok(c) => c,
             Err(e) => {
                 self.emit(Event::Error(format!("certificate for {host}: {e}")));
@@ -984,7 +1141,7 @@ impl Proxy {
         {
             return;
         }
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let acceptor = tokio_rustls::TlsAcceptor::from(config);
         let tls = match acceptor.accept(stream).await {
             Ok(t) => t,
             Err(e) => {
@@ -1296,35 +1453,39 @@ fn fix_content_length(head: &str, body: Option<&str>) -> String {
 }
 
 
-/// Reads the status line and the headers of a response, up to the blank line that ends them.
-async fn read_response_head(reader: &mut Io) -> (u16, String, Vec<u8>) {
+async fn read_bounded_line<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R, limit: usize) -> io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() { return Ok(line); }
+        let count = available.iter().position(|byte| *byte == b'\n').map_or(available.len(), |index| index + 1);
+        if count > limit.saturating_sub(line.len()) { return Err(io::Error::other("HTTP metadata line exceeds its size limit")); }
+        let ended = available[count - 1] == b'\n';
+        line.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if ended { return Ok(line); }
+    }
+}
+
+async fn read_http_head(reader: &mut Io) -> io::Result<(u16, String, Vec<u8>)> {
     let mut raw = Vec::new();
     loop {
-        let mut byte = [0u8; 1];
-        match reader.read_exact(&mut byte).await {
-            Ok(_) => {}
-            Err(_) => break,
-        }
-        raw.push(byte[0]);
-        let len = raw.len();
-        if len >= 4 && &raw[len - 4..] == b"\r\n\r\n" {
-            break;
-        }
-        if len >= 2 && &raw[len - 2..] == b"\n\n" {
-            break;
-        }
-        if len >= 64 * 1024 {
-            break;
-        }
+        let line = read_bounded_line(reader, 65536usize.saturating_sub(raw.len())).await?;
+        if line.is_empty() { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete response headers")); }
+        let done = line == b"\r\n" || line == b"\n";
+        raw.extend_from_slice(&line);
+        if done { break; }
     }
     let text = String::from_utf8_lossy(&raw).into_owned();
-    let status = text
-        .lines()
-        .next()
+    let status = text.lines().next().filter(|line| line.starts_with("HTTP/"))
         .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse().ok())
-        .unwrap_or(0);
-    (status, text, raw)
+        .and_then(|code| code.parse::<u16>().ok()).filter(|code| (100..600).contains(code))
+        .ok_or_else(|| io::Error::other("invalid HTTP response status"))?;
+    Ok((status, text, raw))
+}
+
+async fn read_response_head(reader: &mut Io) -> (u16, String, Vec<u8>) {
+    read_http_head(reader).await.unwrap_or_default()
 }
 
 
@@ -1352,20 +1513,39 @@ async fn connect_upstream(
 /// A buffered reader would take more off the wire than the head, and those bytes are lost when
 /// the reader is dropped. The first request of a connection is read this way, because a `CONNECT`
 /// has to leave the socket whole for the TLS handshake that follows it.
+/// Reads a request head without consuming any bytes past the terminating blank line.
+///
+/// Uses `TcpStream::peek` so the entire header block is read in one kernel call instead of one
+/// syscall per byte, while still leaving the socket positioned at the exact start of the TLS
+/// handshake (for `CONNECT`) or request body.
 async fn read_head_exact(stream: &mut TcpStream) -> io::Result<String> {
-    let mut head = String::new();
+    let mut raw = Vec::with_capacity(1024);
+    let mut peek_buf = [0u8; 8192];
     loop {
-        let mut byte = [0u8; 1];
-        match stream.read_exact(&mut byte).await {
-            Ok(_) => {}
-            Err(e) => return Err(e),
+        let n = stream.peek(&mut peek_buf).await?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection closed before request head completed",
+            ));
         }
-        head.push_str(&String::from_utf8_lossy(&byte));
-        if head.ends_with("\r\n\r\n") || head.ends_with("\n\n") {
-            return Ok(head);
+        let mut take = n;
+        let mut found_end = false;
+        for i in 0..n {
+            raw.push(peek_buf[i]);
+            if raw.ends_with(b"\r\n\r\n") || raw.ends_with(b"\n\n") {
+                take = i + 1;
+                found_end = true;
+                break;
+            }
+            if raw.len() > 64 * 1024 {
+                return Err(io::Error::other("request head too large"));
+            }
         }
-        if head.len() > 64 * 1024 {
-            return Err(io::Error::other("request head too large"));
+        let mut discard = vec![0u8; take];
+        stream.read_exact(&mut discard).await?;
+        if found_end {
+            return Ok(String::from_utf8_lossy(&raw).into_owned());
         }
     }
 }
@@ -1418,40 +1598,164 @@ async fn copy_across(from: &mut Io, to: &mut Out) -> (u64, Vec<u8>) {
     }
 }
 
-async fn one_shot(host: &str, port: u16, raw: &str, secure: bool) -> io::Result<(u16, String)> {
-    let mut stream = connect_upstream(host, port, secure, &[]).await?;
+fn response_has_body(method: &str, status: u16) -> bool {
+    !method.eq_ignore_ascii_case("HEAD") && !(100..200).contains(&status) && !matches!(status, 204 | 304)
+}
+
+fn capture_part(kept: &mut Vec<u8>, bytes: &[u8]) {
+    let room = BODY_CAPTURE_LIMIT.saturating_sub(kept.len());
+    kept.extend_from_slice(&bytes[..bytes.len().min(room)]);
+}
+
+async fn copy_exact_body(from: &mut Io, to: &mut Out, mut length: u64, kept: &mut Vec<u8>) -> io::Result<u64> {
+    let total = length;
+    let mut buffer = [0u8; 16384];
+    while length > 0 {
+        let count = length.min(buffer.len() as u64) as usize;
+        from.read_exact(&mut buffer[..count]).await?;
+        to.write_all(&buffer[..count]).await?;
+        capture_part(kept, &buffer[..count]);
+        length -= count as u64;
+    }
+    Ok(total)
+}
+
+async fn copy_framed_body(from: &mut Io, to: &mut Out, head: &str, method: &str, status: u16) -> io::Result<(u64, Vec<u8>)> {
+    if !response_has_body(method, status) { return Ok((0, Vec::new())); }
+    let mut kept = Vec::new();
+    if header_has_token(head, "transfer-encoding", "chunked") {
+        let mut total = 0;
+        loop {
+            let line = read_bounded_line(from, 8192).await?;
+            if line.is_empty() { return Err(io::Error::other("invalid chunk header")); }
+            let size = u64::from_str_radix(String::from_utf8_lossy(&line).split(';').next().unwrap_or("").trim(), 16).map_err(|_| io::Error::other("invalid chunk size"))?;
+            to.write_all(&line).await?; capture_part(&mut kept, &line); total += line.len() as u64;
+            if size == 0 {
+                let mut trailer_size = 0;
+                loop {
+                    let line = read_bounded_line(from, 65536usize.saturating_sub(trailer_size)).await?;
+                    if line.is_empty() { return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete chunk trailers")); }
+                    trailer_size += line.len();
+                    if trailer_size > 65536 { return Err(io::Error::other("chunk trailers too large")); }
+                    let done = line == b"\r\n" || line == b"\n";
+                    to.write_all(&line).await?; capture_part(&mut kept, &line); total += line.len() as u64;
+                    if done { return Ok((total, kept)); }
+                }
+            }
+            total += copy_exact_body(from, to, size, &mut kept).await?;
+            let mut ending = [0; 2]; from.read_exact(&mut ending).await?;
+            if ending != *b"\r\n" { return Err(io::Error::other("invalid chunk terminator")); }
+            to.write_all(&ending).await?; capture_part(&mut kept, &ending); total += 2;
+        }
+    } else if let Some(length) = content_length(head) {
+        let total = copy_exact_body(from, to, length as u64, &mut kept).await?;
+        Ok((total, kept))
+    } else {
+        Ok(copy_across(from, to).await)
+    }
+}
+
+async fn one_shot(host: &str, port: u16, raw: &str, secure: bool, roots: &[rustls::pki_types::CertificateDer<'static>]) -> io::Result<(u16, String)> {
+    let mut stream = connect_upstream(host, port, secure, roots).await?;
     stream.write_all(normalise_newlines(raw).as_bytes()).await?;
     stream.flush().await?;
     let (read, _write) = tokio::io::split(stream);
     let mut reader = BufReader::new(Box::new(read) as ReadBox);
-    let (status, status_line) = take_status_line(&mut reader).await;
-    let mut full = status_line;
-    let mut buf = vec![0u8; 16384];
-    loop {
-        match reader.read(&mut buf).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => full.extend_from_slice(&buf[..n]),
+    let method = raw.split_whitespace().next().unwrap_or("");
+    let mut interim = 0;
+    let (status, head, mut full) = loop {
+        let (status, head, bytes) = read_http_head(&mut reader).await?;
+        if (100..200).contains(&status) && status != 101 {
+            interim += 1;
+            if interim > 16 { return Err(io::Error::other("too many interim responses")); }
+            continue;
         }
+        break (status, head, bytes);
+    };
+    if method.eq_ignore_ascii_case("HEAD") || matches!(status, 101 | 204 | 304) {
+        return Ok((status, head));
+    }
+    if header_has_token(&head, "transfer-encoding", "chunked") {
+        loop {
+            let line = read_bounded_line(&mut reader, 8192).await?;
+            if line.is_empty() {
+                return Err(io::Error::other("invalid chunk header"));
+            }
+            let text = String::from_utf8_lossy(&line);
+            let size = usize::from_str_radix(text.split(';').next().unwrap_or("").trim(), 16)
+                .map_err(|_| io::Error::other("invalid chunk size"))?;
+            if size > MANUAL_RESPONSE_LIMIT.saturating_sub(full.len() + line.len() + 2) {
+                return Err(io::Error::other("response exceeds the 32 MiB manual capture limit"));
+            }
+            full.extend_from_slice(&line);
+            if size == 0 {
+                let mut trailer_size = 0;
+                loop {
+                    let trailer = read_bounded_line(&mut reader, 65536usize.saturating_sub(trailer_size)).await?;
+                    if trailer.is_empty() {
+                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete chunk trailers"));
+                    }
+                    trailer_size += trailer.len();
+                    if trailer_size > 65536 { return Err(io::Error::other("chunk trailers too large")); }
+                    let done = trailer == b"\r\n" || trailer == b"\n";
+                    full.extend_from_slice(&trailer);
+                    if done { break; }
+                }
+                break;
+            }
+            let mut chunk = vec![0; size.checked_add(2).ok_or_else(|| io::Error::other("chunk too large"))?];
+            reader.read_exact(&mut chunk).await?;
+            if !chunk.ends_with(b"\r\n") { return Err(io::Error::other("invalid chunk terminator")); }
+            full.extend_from_slice(&chunk);
+        }
+    } else if let Some(length) = content_length(&head) {
+        if length > MANUAL_RESPONSE_LIMIT.saturating_sub(full.len()) {
+            return Err(io::Error::other("response exceeds the 32 MiB manual capture limit"));
+        }
+        let start = full.len();
+        full.resize(start.checked_add(length).ok_or_else(|| io::Error::other("response too large"))?, 0);
+        reader.read_exact(&mut full[start..]).await?;
+    } else {
+        let remaining = MANUAL_RESPONSE_LIMIT.saturating_sub(full.len()) + 1;
+        reader.take(remaining as u64).read_to_end(&mut full).await?;
+        if full.len() > MANUAL_RESPONSE_LIMIT { return Err(io::Error::other("response exceeds the 32 MiB manual capture limit")); }
     }
     Ok((status, String::from_utf8_lossy(&full).into_owned()))
 }
 
+fn header_has_token(head: &str, name: &str, token: &str) -> bool {
+    head.lines().filter_map(|line| line.split_once(':'))
+        .any(|(key, value)| key.trim().eq_ignore_ascii_case(name) && value.split(',').any(|part| part.trim().eq_ignore_ascii_case(token)))
+}
+
 /// CRLF-normalises a request and guarantees the terminating blank line.
 fn normalise_newlines(raw: &str) -> String {
-    let s = raw.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n");
+    let (head, body) = split_message(raw);
+    let s = head.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n");
     // The head already ends in at most one CRLF; the blank line needs exactly one more, so
     // appending a full CRLFCRLF emitted a stray empty line.
-    if s.ends_with("\r\n\r\n") {
+    let mut head = if s.ends_with("\r\n\r\n") {
         s
     } else if s.ends_with("\r\n") {
         format!("{s}\r\n")
     } else {
         format!("{s}\r\n\r\n")
+    };
+    if let Some(body) = body {
+        if !header_has_token(&head, "transfer-encoding", "chunked") {
+            head = fix_content_length(&head, Some(&body));
+            if !body.is_empty() && content_length(&head).is_none() {
+                head.truncate(head.len() - 2);
+                head.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
+            }
+        }
+        head.push_str(&body);
     }
+    head
 }
 
 /// Decides whether one response counts as a hit.
-fn apply_rules(rules: &MatchRules, baseline: &AtomicUsize, status: u16, body: &str) -> bool {
+pub(crate) fn apply_rules(rules: &MatchRules, baseline: &AtomicUsize, status: u16, body: &str) -> bool {
     if !rules.negative_status.is_empty() && rules.negative_status.contains(&status) {
         return false;
     }
@@ -1464,13 +1768,10 @@ fn apply_rules(rules: &MatchRules, baseline: &AtomicUsize, status: u16, body: &s
         return false;
     }
     if rules.length {
-        let previous = baseline.load(Ordering::SeqCst);
-        if previous == usize::MAX {
-            // The first response defines the baseline and never matches itself.
-            baseline.store(body.len(), Ordering::SeqCst);
-            return false;
-        }
-        return body.len() != previous;
+        return match baseline.compare_exchange(usize::MAX, body.len(), Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => false,
+            Err(previous) => body.len() != previous,
+        };
     }
     true
 }
@@ -1587,7 +1888,7 @@ mod tests {
                 .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
                 .await;
         });
-        let (status, body) = one_shot("127.0.0.1", port, "GET / HTTP/1.1\nHost: x\n\n", false)
+        let (status, body) = one_shot("127.0.0.1", port, "GET / HTTP/1.1\nHost: x\n\n", false, &[])
             .await
             .unwrap();
         assert_eq!(status, 204);

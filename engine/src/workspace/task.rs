@@ -51,6 +51,8 @@ pub struct Task {
     pub kind: TaskKind,
     pub name: String,
     pub configuration: String,
+    #[serde(default)]
+    pub scope: String,
     pub state: TaskState,
     pub progress: TaskProgress,
     pub created_unix_ms: u64,
@@ -135,6 +137,7 @@ impl TaskManager {
             kind,
             name: name.into(),
             configuration: configuration.into(),
+            scope: String::new(),
             state: TaskState::Queued,
             progress: TaskProgress::default(),
             created_unix_ms,

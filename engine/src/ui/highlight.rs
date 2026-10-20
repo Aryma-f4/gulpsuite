@@ -552,30 +552,133 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
     out
 }
 
-/// Renders the spans as an egui text job.
+/// Renders the spans as an egui text job, caching recent `(hash, LayoutJob)` pairs per thread so
+/// 60 FPS redraws of unchanged HTTP messages do zero re-tokenization or heap allocations.
 pub fn layout(message: &str, theme: &Theme) -> LayoutJob {
-    layout_job(spans(message, theme))
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    theme.dark.hash(&mut hasher);
+    message.hash(&mut hasher);
+    let key = hasher.finish();
+
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::VecDeque<(u64, LayoutJob)>> =
+            std::cell::RefCell::new(std::collections::VecDeque::with_capacity(16));
+    }
+
+    if let Some(cached) = CACHE.with(|cache| {
+        cache
+            .borrow()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, job)| job.clone())
+    }) {
+        return cached;
+    }
+
+    let job = layout_job(spans(message, theme));
+    CACHE.with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard.len() >= 16 {
+            guard.pop_front();
+        }
+        guard.push_back((key, job.clone()));
+    });
+    job
 }
 
 /// Renders pre-computed spans, so callers that colour incrementally can skip the parse.
+/// Any `§...§` Intruder payload markers receive a `#CFE8DF` mint-green background highlight
+/// and `#A31515` foreground.
 pub fn layout_job(spans: Vec<Span>) -> LayoutJob {
     let mut job = LayoutJob::default();
+    let mut in_marker = false;
+    let marker_bg = Color32::from_rgb(0xCF, 0xE8, 0xDF);
+    let marker_fg = Color32::from_rgb(0xA3, 0x15, 0x15);
+
     for span in spans {
-        job.append(
-            &span.text,
-            0.0,
-            TextFormat {
-                font_id: FontId::new(12.0, FontFamily::Monospace),
-                color: span.colour,
-                // Underline stands in for bold, which a monospace layout job cannot express.
-                underline: if span.bold {
-                    Stroke::new(1.0, span.colour)
-                } else {
-                    Stroke::NONE
+        if !span.text.contains('§') && !in_marker {
+            job.append(
+                &span.text,
+                0.0,
+                TextFormat {
+                    font_id: FontId::new(12.0, FontFamily::Monospace),
+                    color: span.colour,
+                    underline: if span.bold {
+                        Stroke::new(1.0_f32, span.colour)
+                    } else {
+                        Stroke::NONE
+                    },
+                    ..Default::default()
                 },
-                ..Default::default()
-            },
-        );
+            );
+            continue;
+        }
+        let mut buf = String::new();
+        for ch in span.text.chars() {
+            if ch == '§' {
+                if in_marker {
+                    buf.push('§');
+                    job.append(
+                        &buf,
+                        0.0,
+                        TextFormat {
+                            font_id: FontId::new(12.0, FontFamily::Monospace),
+                            color: marker_fg,
+                            background: marker_bg,
+                            ..Default::default()
+                        },
+                    );
+                    buf.clear();
+                    in_marker = false;
+                } else {
+                    if !buf.is_empty() {
+                        job.append(
+                            &buf,
+                            0.0,
+                            TextFormat {
+                                font_id: FontId::new(12.0, FontFamily::Monospace),
+                                color: span.colour,
+                                underline: if span.bold {
+                                    Stroke::new(1.0_f32, span.colour)
+                                } else {
+                                    Stroke::NONE
+                                },
+                                ..Default::default()
+                            },
+                        );
+                        buf.clear();
+                    }
+                    buf.push('§');
+                    in_marker = true;
+                }
+            } else {
+                buf.push(ch);
+            }
+        }
+        if !buf.is_empty() {
+            job.append(
+                &buf,
+                0.0,
+                TextFormat {
+                    font_id: FontId::new(12.0, FontFamily::Monospace),
+                    color: if in_marker { marker_fg } else { span.colour },
+                    background: if in_marker {
+                        marker_bg
+                    } else {
+                        Color32::TRANSPARENT
+                    },
+                    underline: if span.bold && !in_marker {
+                        Stroke::new(1.0_f32, span.colour)
+                    } else {
+                        Stroke::NONE
+                    },
+                    ..Default::default()
+                },
+            );
+        }
     }
     job
 }
@@ -728,18 +831,41 @@ pub fn show_message(
     theme: &Theme,
     background: eframe::egui::Color32,
 ) {
+    show_message_in(ui, "msg-default", 260.0, message, theme, background);
+}
+
+/// Renders a syntax-highlighted HTTP message inside a scroll area of explicit `height`.
+pub fn show_message_in(
+    ui: &mut eframe::egui::Ui,
+    id: &str,
+    height: f32,
+    message: &str,
+    theme: &Theme,
+    background: eframe::egui::Color32,
+) -> eframe::egui::Response {
     let job = layout(message, theme);
     let frame = eframe::egui::Frame::new()
         .fill(background)
         .inner_margin(6.0)
         .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.background.3")));
-    frame.show(ui, |ui| {
-        eframe::egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            ui.add(
-                eframe::egui::Label::new(job).selectable(true),
-            );
-        });
+    let frame_out = frame.show(ui, |ui| {
+        ui.set_min_height(height.max(80.0));
+        eframe::egui::ScrollArea::both()
+            .id_salt(id)
+            .max_height(height.max(80.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add(
+                    eframe::egui::Label::new(job)
+                        .selectable(true)
+                        .sense(eframe::egui::Sense::click()),
+                )
+            })
+            .inner
     });
+    let mut resp = frame_out.inner;
+    resp.rect = frame_out.response.rect;
+    resp
 }
 
 /// Renders an editable message, coloured by highlighting the text around the caret.
@@ -752,18 +878,42 @@ pub fn show_editable(
     theme: &Theme,
     background: eframe::egui::Color32,
 ) {
-    eframe::egui::Frame::new()
+    let _ = show_editable_in(ui, "edit-default", 260.0, text, theme, background);
+}
+
+/// Renders an editable HTTP message inside a scroll area of explicit `height`.
+pub fn show_editable_in(
+    ui: &mut eframe::egui::Ui,
+    id: &str,
+    height: f32,
+    text: &mut String,
+    theme: &Theme,
+    background: eframe::egui::Color32,
+) -> eframe::egui::Response {
+    let rows = ((height / 16.0) as usize).clamp(6, 60);
+    let frame_out = eframe::egui::Frame::new()
         .fill(background)
         .inner_margin(6.0)
         .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.background.3")))
         .show(ui, |ui| {
-            ui.add(
-                eframe::egui::TextEdit::multiline(text)
-                    .font(eframe::egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(10),
-            );
+            ui.set_min_height(height.max(80.0));
+            eframe::egui::ScrollArea::vertical()
+                .id_salt(id)
+                .max_height(height.max(80.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add(
+                        eframe::egui::TextEdit::multiline(text)
+                            .font(eframe::egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(rows),
+                    )
+                })
+                .inner
         });
+    let mut resp = frame_out.inner;
+    resp.rect = frame_out.response.rect;
+    resp
 }
 
 #[cfg(test)]

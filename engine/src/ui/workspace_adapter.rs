@@ -31,14 +31,18 @@ impl Default for WorkspaceAdapter {
 
 impl WorkspaceAdapter {
     pub fn begin_scan(&mut self, workspace: &mut Workspace, seed: &str) -> TaskId {
-        begin_task(
+        let id = begin_task(
             workspace,
             &mut self.scan_task,
             TaskKind::Scan,
             format!("Scan of {seed}"),
             "Crawl and audit",
             None,
-        )
+        );
+        if let Some(task) = workspace.tasks.get_mut(id) {
+            task.scope = seed.into();
+        }
+        id
     }
 
     pub fn begin_discover(&mut self, workspace: &mut Workspace, total: usize) -> TaskId {
@@ -58,14 +62,18 @@ impl WorkspaceAdapter {
         target: &str,
         total: usize,
     ) -> TaskId {
-        begin_task(
+        let id = begin_task(
             workspace,
             &mut self.attack_task,
             TaskKind::Intruder,
             format!("Intruder attack against {target}"),
             "Sniper attack",
             Some(total as u64),
-        )
+        );
+        if let Some(task) = workspace.tasks.get_mut(id) {
+            task.scope = target.into();
+        }
+        id
     }
 
     pub fn apply_proxy(&mut self, workspace: &mut Workspace, event: &Event) {
@@ -74,10 +82,24 @@ impl WorkspaceAdapter {
                 method,
                 target,
                 status,
+                response,
                 ..
             } => {
                 increment_task(workspace, self.passive_crawl, "response captured");
                 increment_task(workspace, self.live_audit, "item processed");
+                if workspace
+                    .tasks
+                    .get(self.live_audit)
+                    .is_some_and(|task| task.state == TaskState::Running)
+                    && !response.is_empty()
+                {
+                    let parsed = scanner::http::parse_response(response);
+                    for finding in scanner::passive::inspect(target, &parsed) {
+                        workspace
+                            .issues
+                            .upsert(issue_from_finding(self.live_audit, &finding));
+                    }
+                }
                 workspace.events.push(
                     now_ms(),
                     EventLevel::Info,
@@ -132,6 +154,24 @@ impl WorkspaceAdapter {
                 workspace
                     .events
                     .push(now_ms(), EventLevel::Info, "Scanner", status, Some(task_id));
+            }
+            ScanUpdate::Live {
+                status,
+                completed,
+                total,
+                findings,
+                ..
+            } => {
+                for finding in findings {
+                    workspace
+                        .issues
+                        .upsert(issue_from_finding(task_id, finding));
+                }
+                if let Some(task) = workspace.tasks.get_mut(task_id) {
+                    task.progress.completed = *completed as u64;
+                    task.progress.total = Some((*total).max(1) as u64);
+                    task.progress.status = status.clone();
+                }
             }
             ScanUpdate::Done { findings, pages } => {
                 for finding in findings {

@@ -6,7 +6,7 @@
 use eframe::egui::Ui;
 
 use crate::ui::app::{clip, App, ORGANIZER_BODY_LIMIT, ORGANIZER_CAPACITY};
-use crate::ui::panels::{heading, muted};
+use crate::ui::panels::{empty_state, heading, muted};
 use crate::ui::theme::Theme;
 
 /// One saved item. Notes are the operator's own text; messages come from live traffic.
@@ -35,139 +35,241 @@ impl OrganizerItem {
 pub struct OrganizerPanel {
     /// Index of the item shown in the detail pane.
     pub selected: Option<usize>,
+    /// Case-insensitive filter over saved items.
+    pub search: String,
+    pub req_fmt_mode: usize,
+    pub resp_fmt_mode: usize,
+    pub req_wrap: bool,
+    pub resp_wrap: bool,
+    pub req_np: bool,
+    pub resp_np: bool,
 }
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme: Theme = app.theme.clone();
-    heading(ui, &theme, "Collections");
+    let mut remove = None;
 
-    ui.horizontal(|ui| {
-        if ui.button("Save Repeater request").clicked() {
-            let (host, name) = (
-                app.panels.repeater.active().host.clone(),
-                app.panels.repeater.active().raw.clone(),
-            );
-            if name.trim().is_empty() {
-                app.status = "Nothing to save: the Repeater request is empty".into();
-            } else {
-                let next = app.organizer.len() + 1;
-                retain(
-                    app,
-                    OrganizerItem {
-                        host,
-                        name: format!("item-{next}"),
-                        request: name,
-                        response: app.panels.repeater.active().response.clone(),
-                        notes: String::new(),
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(240.0);
+            ui.horizontal(|ui| {
+                super::scanner::paint_launcher_icon(
+                    ui,
+                    eframe::egui::Vec2::new(16.0, 16.0),
+                    theme.color("ui.icon.default"),
+                    super::scanner::LauncherIcon::Folder,
+                );
+                heading(ui, &theme, "Collections");
+                ui.with_layout(
+                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                    |ui| {
+                        if ui.button("+ New").on_hover_text("Save Repeater request to Inbox").clicked()
+                            || ui.button("Save Repeater request").clicked()
+                        {
+                            let (host, name) = (
+                                app.panels.repeater.active().host.clone(),
+                                app.panels.repeater.active().raw.clone(),
+                            );
+                            if name.trim().is_empty() {
+                                app.status = "Nothing to save: the Repeater request is empty".into();
+                            } else {
+                                let next = app.organizer.len() + 1;
+                                retain(
+                                    app,
+                                    OrganizerItem {
+                                        host,
+                                        name: format!("item-{next}"),
+                                        request: name,
+                                        response: app.panels.repeater.active().response.clone(),
+                                        notes: String::new(),
+                                    },
+                                );
+                                app.status = "Saved to Organizer".into();
+                            }
+                        }
                     },
                 );
-                app.status = "Saved to Organizer".into();
-            }
-        }
-        if ui.button("Clear").clicked() {
-            let count = app.organizer.len();
-            app.organizer.clear();
-            app.status = format!("Cleared {count} organizer items");
-        }
-        ui.separator();
-        muted(
-            ui,
-            &theme,
-            &format!(
-                "{} item{} (max {})",
-                app.organizer.len(),
-                if app.organizer.len() == 1 { "" } else { "s" },
-                ORGANIZER_CAPACITY
-            ),
-        );
-    });
-
-    ui.add_space(4.0);
-
-    if app.organizer.is_empty() {
-        muted(ui, &theme, "No saved items. Save the Repeater request to start a collection.");
-        return;
-    }
-
-    let selected = app.panels.organizer.selected;
-    let mut remove = None;
-    ui.columns(2, |columns| {
-        columns[0].label(eframe::egui::RichText::new("Items").strong());
-        eframe::egui::ScrollArea::vertical().show(&mut columns[0], |ui| {
-            for index in 0..app.organizer.len() {
-                // Only the short summary is copied per frame, not the stored messages.
-                let summary = app.organizer[index].summary();
-                let name = app.organizer[index].name.clone();
-                let response = ui.selectable_label(
-                    selected == Some(index),
-                    eframe::egui::RichText::new(format!("{name}\n{summary}"))
-                        .color(theme.color("ui.text.body")),
-                );
-                if response.clicked() {
-                    app.panels.organizer.selected = Some(index);
-                }
-                ui.horizontal(|ui| {
-                    if ui.small_button("To Repeater").clicked() {
-                        load_into_repeater(app, index);
-                    }
-                    if ui.small_button("Delete").clicked() {
-                        remove = Some(index);
-                    }
-                });
+            });
+            ui.add_space(4.0);
+            ui.add(
+                eframe::egui::TextEdit::singleline(&mut app.panels.organizer.search)
+                    .hint_text("Search")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(4.0);
+            let _ = ui.selectable_label(
+                true,
+                eframe::egui::RichText::new(format!(
+                    "Inbox ({} / max {})",
+                    app.organizer.len(),
+                    ORGANIZER_CAPACITY
+                ))
+                .color(theme.color("ui.text.body")),
+            );
+            if !app.organizer.is_empty() && ui.button("Clear").clicked() {
+                let count = app.organizer.len();
+                app.organizer.clear();
+                app.status = format!("Cleared {count} organizer items");
             }
         });
 
-        columns[1].label(eframe::egui::RichText::new("Item").strong());
-        if let Some(index) = selected.filter(|i| *i < app.organizer.len()) {
-            // Cloning for display keeps the borrow checker happy; only one item is ever copied.
-            let item = app.organizer[index].clone();
-            let mut name = app.organizer[index].name.clone();
-            let mut host = app.organizer[index].host.clone();
-            let mut notes = app.organizer[index].notes.clone();
-            columns[1].horizontal(|ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(&mut name);
-            });
-            columns[1].horizontal(|ui| {
-                ui.label("Host");
-                ui.text_edit_singleline(&mut host);
-            });
-            columns[1].label("Notes");
-            columns[1].add(
-                eframe::egui::TextEdit::multiline(&mut notes)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
-            columns[1].horizontal(|ui| {
-                if ui.button("To Repeater").clicked() {
-                    load_into_repeater(app, index);
+        ui.separator();
+
+        ui.vertical(|ui| {
+            if app.organizer.is_empty() {
+                let (learn, _) = empty_state(
+                    ui,
+                    &theme,
+                    "Organizer inbox is empty",
+                    "To get started, send a message to Organizer from anywhere in Burp.",
+                    true,
+                    None,
+                );
+                if learn {
+                    app.status =
+                        "Organizer: right-click a Proxy history row or save from Repeater to store items".into();
                 }
-                if ui.button("Delete").clicked() {
-                    remove = Some(index);
+                return;
+            }
+
+            let selected = app.panels.organizer.selected;
+            let needle = app.panels.organizer.search.trim().to_lowercase();
+            ui.columns(2, |columns| {
+                columns[0].label(eframe::egui::RichText::new("Items").strong());
+                eframe::egui::ScrollArea::vertical().show(&mut columns[0], |ui| {
+                    for index in 0..app.organizer.len() {
+                        // Only the short summary is copied per frame, not the stored messages.
+                        let summary = app.organizer[index].summary();
+                        let name = app.organizer[index].name.clone();
+                        let host = app.organizer[index].host.clone();
+                        if !needle.is_empty()
+                            && !format!("{name} {host} {summary}")
+                                .to_lowercase()
+                                .contains(&needle)
+                        {
+                            continue;
+                        }
+                        let response = ui.selectable_label(
+                            selected == Some(index),
+                            eframe::egui::RichText::new(format!("{name}\n{summary}"))
+                                .color(theme.color("ui.text.body")),
+                        );
+                        if response.clicked() || response.secondary_clicked() {
+                            app.panels.organizer.selected = Some(index);
+                        }
+                        let (item_req, item_resp) = (
+                            app.organizer[index].request.clone(),
+                            app.organizer[index].response.clone(),
+                        );
+                        super::attach_message_context_menu(
+                            app,
+                            &response,
+                            &host,
+                            &item_req,
+                            &item_resp,
+                        );
+                        ui.horizontal(|ui| {
+                            if ui.small_button("To Repeater").clicked() {
+                                load_into_repeater(app, index);
+                            }
+                            if ui.small_button("Delete").clicked() {
+                                remove = Some(index);
+                            }
+                        });
+                    }
+                });
+
+                columns[1].label(eframe::egui::RichText::new("Item").strong());
+                if let Some(index) = selected.filter(|i| *i < app.organizer.len()) {
+                    // Cloning for display keeps the borrow checker happy; only one item is ever copied.
+                    let item = app.organizer[index].clone();
+                    let mut name = app.organizer[index].name.clone();
+                    let mut host = app.organizer[index].host.clone();
+                    let mut notes = app.organizer[index].notes.clone();
+                    columns[1].horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut name);
+                    });
+                    columns[1].horizontal(|ui| {
+                        ui.label("Host");
+                        ui.text_edit_singleline(&mut host);
+                    });
+                    columns[1].label("Notes");
+                    columns[1].add(
+                        eframe::egui::TextEdit::multiline(&mut notes)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    );
+                    columns[1].horizontal(|ui| {
+                        if ui.button("To Repeater").clicked() {
+                            load_into_repeater(app, index);
+                        }
+                        if ui.button("Delete").clicked() {
+                            remove = Some(index);
+                        }
+                    });
+                    columns[1].add_space(4.0);
+                    super::burp_message_formatter_bar(
+                        &mut columns[1],
+                        &theme,
+                        "org-req-fmt",
+                        "Request",
+                        &mut app.panels.organizer.req_fmt_mode,
+                        false,
+                        &mut app.panels.organizer.req_wrap,
+                        &mut app.panels.organizer.req_np,
+                    );
+                    let r_req = super::burp_numbered_message_view(
+                        &mut columns[1],
+                        &theme,
+                        "org-req",
+                        190.0,
+                        &item.request,
+                        app.panels.organizer.req_fmt_mode,
+                        app.panels.organizer.req_np,
+                    );
+                    super::attach_message_context_menu(
+                        app,
+                        &r_req,
+                        &item.host,
+                        &item.request,
+                        &item.response,
+                    );
+                    super::burp_message_formatter_bar(
+                        &mut columns[1],
+                        &theme,
+                        "org-resp-fmt",
+                        "Response",
+                        &mut app.panels.organizer.resp_fmt_mode,
+                        true,
+                        &mut app.panels.organizer.resp_wrap,
+                        &mut app.panels.organizer.resp_np,
+                    );
+                    let r_resp = super::burp_numbered_message_view(
+                        &mut columns[1],
+                        &theme,
+                        "org-resp",
+                        190.0,
+                        &item.response,
+                        app.panels.organizer.resp_fmt_mode,
+                        app.panels.organizer.resp_np,
+                    );
+                    super::attach_message_context_menu(
+                        app,
+                        &r_resp,
+                        &item.host,
+                        &item.request,
+                        &item.response,
+                    );
+                    // Written back after the closure so the borrow of the item list ends cleanly.
+                    app.organizer[index].name = name;
+                    app.organizer[index].host = host;
+                    app.organizer[index].notes = notes;
+                } else {
+                    muted(&mut columns[1], &theme, "Select an item to view it.");
                 }
             });
-            columns[1].add_space(4.0);
-            columns[1].label("Request");
-            crate::ui::highlight::show_message(
-                &mut columns[1],
-                &item.request,
-                &theme,
-                theme.color("ui.editor.message.background"),
-            );
-            columns[1].label("Response");
-            crate::ui::highlight::show_message(
-                &mut columns[1],
-                &item.response,
-                &theme,
-                theme.color("ui.editor.message.background"),
-            );
-            // Written back after the closure so the borrow of the item list ends cleanly.
-            app.organizer[index].name = name;
-            app.organizer[index].host = host;
-            app.organizer[index].notes = notes;
-        } else {
-            muted(&mut columns[1], &theme, "Select an item to view it.");
-        }
+        });
     });
 
     if let Some(index) = remove {
