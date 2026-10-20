@@ -3726,7 +3726,7 @@ impl App {
     fn panel(&mut self, ui: &mut Ui, rect: Rect) {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.theme.color("ui.background.2"));
-        let inset = if matches!(self.tool, INTRUDER | REPEATER) {
+        let inset = if matches!(self.tool, TARGET | INTRUDER | REPEATER) {
             0.0
         } else {
             PANEL_INSET

@@ -1011,81 +1011,418 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Renders `Target -> Site map` matching `Pro-QSG-5-site-map.png` and `site-map-populated.png` 100%.
-fn draw_site_map(app: &mut App, ui: &mut Ui) {
-    let theme = app.theme.clone();
+/// Paints the exact `resources/Media/svg/light/site-map.svg` (`90 x 63` viewBox) 3-isometric-diamonds icon.
+fn paint_site_map_empty_icon(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 63.0), egui::Sense::hover());
+    let p = ui.painter_at(rect);
+    let o = rect.min;
+    let shadow_col = Color32::from_rgb(0xE6, 0xE6, 0xE6);
+    let branch_col = Color32::from_rgb(0x92, 0xB1, 0xCE);
+    let card_col = Color32::from_rgb(0x26, 0x64, 0x9D);
 
-    // Top row: `[ URL view | Crawl paths view ]` segmented pill + Burp Filter bar (`site-map-populated.png`)
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(&mut app.panels.target_panel.crawl_paths_view, false, "URL view");
-        ui.selectable_value(
-            &mut app.panels.target_panel.crawl_paths_view,
-            true,
-            "Crawl paths view",
+    let iso_diamond = |cx: f32, cy: f32, rx: f32, ry: f32| -> Vec<egui::Pos2> {
+        vec![
+            egui::pos2(o.x + cx, o.y + cy - ry),
+            egui::pos2(o.x + cx + rx, o.y + cy),
+            egui::pos2(o.x + cx, o.y + cy + ry),
+            egui::pos2(o.x + cx - rx, o.y + cy),
+        ]
+    };
+
+    // Shadow branches & isometric cards (`#E6E6E6`)
+    p.line_segment(
+        [egui::pos2(o.x + 32.0, o.y + 27.0), egui::pos2(o.x + 64.0, o.y + 42.0)],
+        Stroke::new(2.0_f32, shadow_col),
+    );
+    p.line_segment(
+        [egui::pos2(o.x + 48.0, o.y + 34.5), egui::pos2(o.x + 58.0, o.y + 29.5)],
+        Stroke::new(2.0_f32, shadow_col),
+    );
+    for (cx, cy) in [(23.8f32, 33.5f32), (67.5, 24.9), (53.1, 50.5)] {
+        p.add(egui::Shape::convex_polygon(
+            iso_diamond(cx, cy, 18.0, 10.5),
+            shadow_col,
+            Stroke::NONE,
+        ));
+    }
+
+    // Connecting branches (`#92B1CE`)
+    p.line_segment(
+        [egui::pos2(o.x + 32.0, o.y + 22.0), egui::pos2(o.x + 64.0, o.y + 37.0)],
+        Stroke::new(2.0_f32, branch_col),
+    );
+    p.line_segment(
+        [egui::pos2(o.x + 48.0, o.y + 29.5), egui::pos2(o.x + 58.0, o.y + 24.5)],
+        Stroke::new(2.0_f32, branch_col),
+    );
+
+    // 3 blue isometric cards (`#26649D`) + 2 white lines inside each card
+    for (cx, cy) in [(22.9f32, 28.4f32), (66.7, 19.8), (52.3, 45.4)] {
+        p.add(egui::Shape::convex_polygon(
+            iso_diamond(cx, cy, 18.5, 11.0),
+            card_col,
+            Stroke::NONE,
+        ));
+        p.line_segment(
+            [
+                egui::pos2(o.x + cx - 4.0, o.y + cy - 3.0),
+                egui::pos2(o.x + cx + 4.5, o.y + cy + 1.8),
+            ],
+            Stroke::new(1.9_f32, Color32::WHITE),
         );
-        ui.separator();
-        let (funnel, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-        crate::ui::icons::paint(
-            ui.painter(),
-            funnel,
-            theme.color("ui.icon.default"),
-            crate::ui::icons::Glyph::Funnel,
+        p.line_segment(
+            [
+                egui::pos2(o.x + cx - 8.0, o.y + cy - 0.5),
+                egui::pos2(o.x + cx + 0.5, o.y + cy + 4.3),
+            ],
+            Stroke::new(1.9_f32, Color32::WHITE),
         );
-        ui.label(
-            RichText::new(
-                "Filter: Hiding not found items; hiding CSS, image and general binary content; hiding 4xx responses; hiding empty folders",
-            )
-            .size(11.5)
-            .color(theme.color("ui.text.body")),
-        );
-        ui.add(
-            egui::TextEdit::singleline(&mut app.panels.target_panel.filter)
-                .hint_text("Filter host or path…")
-                .desired_width(150.0),
-        );
-        if !app.panels.target_panel.filter.is_empty() && ui.button("Clear").clicked() {
-            app.panels.target_panel.filter.clear();
-        }
+    }
+}
+
+/// Draws a single row in the left Site map tree with vector connector lines, `#CFE0F5` selection highlight,
+/// chevron (`⌄`/`›`), node icon, and label (`Pro-QSG-5-site-map.png` & `site-map-populated.png`).
+#[allow(clippy::too_many_arguments)]
+fn draw_sitemap_tree_row(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    id_salt: impl std::hash::Hash,
+    depth: usize,
+    has_children: bool,
+    expanded: bool,
+    icon: SiteMapIcon,
+    dot_color: Option<Color32>,
+    label: &str,
+    selected: bool,
+    muted_text: bool,
+) -> egui::Response {
+    let row_w = ui.available_width().max(180.0);
+    let row_h = 22.0;
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(row_w, row_h),
+        egui::Sense::click(),
+    );
+    let _ = id_salt;
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            label,
+        )
     });
 
+    let p = ui.painter_at(rect);
+    if selected {
+        let sel_fill = if theme.dark {
+            Color32::from_rgb(0x2A, 0x3E, 0x5C)
+        } else {
+            Color32::from_rgb(0xCF, 0xE0, 0xF5)
+        };
+        p.rect_filled(rect.shrink2(egui::vec2(2.0, 0.5)), 4.0, sel_fill);
+    } else if resp.hovered() {
+        let hov_fill = if theme.dark {
+            Color32::from_rgb(0x25, 0x29, 0x30)
+        } else {
+            Color32::from_rgb(0xF1, 0xF5, 0xFA)
+        };
+        p.rect_filled(rect.shrink2(egui::vec2(2.0, 0.5)), 4.0, hov_fill);
+    }
+
+    let line_col = if theme.dark {
+        Color32::from_rgb(0x55, 0x5B, 0x66)
+    } else {
+        Color32::from_rgb(0xB4, 0xBA, 0xC4)
+    };
+    let cy = rect.center().y;
+    let base_x = rect.min.x + 10.0;
+
+    // Draw vertical trunk lines for ancestor depths + branch connector to this node
+    for d in 0..depth {
+        let tx = base_x + (d as f32) * 18.0;
+        p.line_segment(
+            [egui::pos2(tx, rect.min.y), egui::pos2(tx, rect.max.y)],
+            Stroke::new(1.0_f32, line_col),
+        );
+    }
+    let node_x = base_x + (depth as f32) * 18.0;
+    if depth > 0 {
+        let parent_x = base_x + ((depth - 1) as f32) * 18.0;
+        p.line_segment(
+            [egui::pos2(parent_x, cy), egui::pos2(node_x, cy)],
+            Stroke::new(1.0_f32, line_col),
+        );
+    }
+    // Small filled circle node anchor (`•`) on the tree line (`site-map-populated.png`)
+    p.circle_filled(egui::pos2(node_x, cy), 2.5, line_col);
+
+    // Chevron (`⌄` or `›`) for expandable nodes
+    let mut cursor_x = node_x + 7.0;
+    if has_children {
+        let chev_col = theme.color("ui.icon.default");
+        if expanded {
+            p.line_segment(
+                [egui::pos2(cursor_x, cy - 1.5), egui::pos2(cursor_x + 3.5, cy + 2.0)],
+                Stroke::new(1.3_f32, chev_col),
+            );
+            p.line_segment(
+                [egui::pos2(cursor_x + 3.5, cy + 2.0), egui::pos2(cursor_x + 7.0, cy - 1.5)],
+                Stroke::new(1.3_f32, chev_col),
+            );
+        } else {
+            p.line_segment(
+                [egui::pos2(cursor_x + 1.5, cy - 3.5), egui::pos2(cursor_x + 5.0, cy)],
+                Stroke::new(1.3_f32, chev_col),
+            );
+            p.line_segment(
+                [egui::pos2(cursor_x + 5.0, cy), egui::pos2(cursor_x + 1.5, cy + 3.5)],
+                Stroke::new(1.3_f32, chev_col),
+            );
+        }
+        cursor_x += 11.0;
+    }
+
+    // Node SVG icon (`16 x 16`)
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(cursor_x, cy - 8.0),
+        Vec2::new(16.0, 16.0),
+    );
+    let mut icon_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(icon_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    paint_sitemap_node_icon(&mut icon_ui, icon, dot_color);
+    cursor_x += 20.0;
+
+    // Node text label
+    let txt_col = if muted_text {
+        theme.color("ui.icon.disabled")
+    } else {
+        theme.color("ui.text.heading")
+    };
+    p.text(
+        egui::pos2(cursor_x, cy),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(12.0),
+        txt_col,
+    );
+
+    resp
+}
+
+/// Renders `Target -> Site map` matching `/tmp/ref_Target_s.png`, `Pro-QSG-5-site-map.png`,
+/// `site-map-populated.png`, and `site-map-filters.png` 100%.
+fn draw_site_map(app: &mut App, ui: &mut Ui) {
+    let theme = app.theme.clone();
+    let bg0 = theme.color("ui.background.0");
+    let border_col = theme.color("ui.border.1");
     let tree = tree(app);
+
+    // Top row: `[ URL view | Crawl paths view ]` segmented pill + Burp Filter bar (`site-map-filters.png`)
+    egui::Frame::new()
+        .fill(bg0)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let pill_track = if theme.dark {
+                    Color32::from_rgb(0x32, 0x36, 0x3E)
+                } else {
+                    Color32::from_rgb(0xE0, 0xE0, 0xE0)
+                };
+                let active_blue = Color32::from_rgb(0x1B, 0x56, 0x99);
+                let inactive_fg = if theme.dark {
+                    Color32::from_rgb(0xD8, 0xDC, 0xE2)
+                } else {
+                    Color32::from_rgb(0x2B, 0x2B, 0x2B)
+                };
+
+                egui::Frame::new()
+                    .fill(pill_track)
+                    .corner_radius(4.0)
+                    .inner_margin(egui::Margin::same(0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        for (is_crawl, label) in [(false, "URL view"), (true, "Crawl paths view")] {
+                            let active = app.panels.target_panel.crawl_paths_view == is_crawl;
+                            let fill = if active { active_blue } else { Color32::TRANSPARENT };
+                            let fg = if active { Color32::WHITE } else { inactive_fg };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(label).color(fg).size(11.5).strong(),
+                                    )
+                                    .fill(fill)
+                                    .stroke(Stroke::NONE)
+                                    .corner_radius(3.0)
+                                    .min_size(Vec2::new(64.0, 22.0)),
+                                )
+                                .clicked()
+                            {
+                                app.panels.target_panel.crawl_paths_view = is_crawl;
+                            }
+                        }
+                    });
+
+                if !tree.is_empty() {
+                    ui.add_space(6.0);
+                    let filter_pill_bg = if theme.dark {
+                        Color32::from_rgb(0x28, 0x2C, 0x33)
+                    } else {
+                        Color32::from_rgb(0xEE, 0xF0, 0xF3)
+                    };
+                    egui::Frame::new()
+                        .fill(filter_pill_bg)
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::symmetric(8, 3))
+                        .show(ui, |ui| {
+                            ui.set_min_width((ui.available_width() - 8.0).max(200.0));
+                            ui.horizontal(|ui| {
+                                let (funnel, _) =
+                                    ui.allocate_exact_size(Vec2::splat(13.0), egui::Sense::hover());
+                                crate::ui::icons::paint(
+                                    ui.painter(),
+                                    funnel,
+                                    theme.color("ui.icon.default"),
+                                    crate::ui::icons::Glyph::Funnel,
+                                );
+                                ui.label(
+                                    RichText::new(
+                                        "Site map filter: Hiding not found items; hiding CSS, image and general binary content; hiding 4xx responses; hiding empty folders",
+                                    )
+                                    .size(11.5)
+                                    .color(theme.color("ui.text.body")),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if !app.panels.target_panel.filter.is_empty()
+                                            && ui.small_button("Clear").clicked()
+                                        {
+                                            app.panels.target_panel.filter.clear();
+                                        }
+                                        ui.add(
+                                            egui::TextEdit::singleline(
+                                                &mut app.panels.target_panel.filter,
+                                            )
+                                            .hint_text("Filter host or path…")
+                                            .desired_width(140.0),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                }
+            });
+        });
+
     if tree.is_empty() {
+        let avail = ui.available_size();
         let title = if app.panels.target_panel.crawl_paths_view {
             "Site map crawl paths view is empty"
         } else {
             "Site map URL view is empty"
         };
-        let (learn, open_browser) = empty_state(
-            ui,
-            &theme,
-            title,
-            "The site map displays information about the contents of your target applications, \
-             along with any issues that have been discovered. The URL view shows your targets as \
-             a tree of URLs, organized hierarchically by domain and directory. To populate the \
-             URL view, run a scan or browse using Burp's browser.",
-            true,
-            Some("Open browser"),
-        );
-        if learn {
-            app.status =
-                "Site map: browse through the proxy or run a scan to populate target URLs".into();
-        }
-        if open_browser {
-            app.open_browser();
-        }
+        egui::Frame::new()
+            .fill(bg0)
+            .inner_margin(egui::Margin::same(0))
+            .show(ui, |ui| {
+                ui.set_min_size(avail);
+                let top_pad = ((avail.y - 260.0) * 0.42).max(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.add_space(top_pad);
+                    paint_site_map_empty_icon(ui);
+                    ui.add_space(16.0);
+                    ui.label(
+                        RichText::new(title)
+                            .size(16.0)
+                            .strong()
+                            .color(theme.color("ui.text.heading")),
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(
+                            "The site map displays information about the contents of your target applications,\n\
+                             along with any issues that have been discovered. The URL view shows your targets as\n\
+                             a tree of URLs, organized hierarchically by domain and directory. To populate the\n\
+                             URL view, run a scan or browse using Burp's browser.",
+                        )
+                        .size(12.0)
+                        .color(theme.color("ui.text.body")),
+                    );
+                    ui.add_space(18.0);
+                    let learn_bg = if theme.dark {
+                        Color32::from_rgb(0x32, 0x36, 0x3E)
+                    } else {
+                        Color32::from_rgb(0xEA, 0xEA, 0xEA)
+                    };
+                    let learn_border = if theme.dark {
+                        Color32::from_rgb(0x48, 0x4D, 0x56)
+                    } else {
+                        Color32::from_rgb(0xD8, 0xD8, 0xD8)
+                    };
+                    let total_btn_w = 108.0 + 10.0 + 114.0;
+                    let left_pad = ((ui.available_width() - total_btn_w) * 0.5).max(0.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(left_pad);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Learn more")
+                                        .size(12.0)
+                                        .strong()
+                                        .color(theme.color("ui.text.heading")),
+                                )
+                                .fill(learn_bg)
+                                .stroke(Stroke::new(1.0_f32, learn_border))
+                                .corner_radius(4.0)
+                                .min_size(Vec2::new(108.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            app.status =
+                                "Site map: browse through the proxy or run a scan to populate target URLs".into();
+                        }
+                        ui.add_space(10.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Open browser")
+                                        .size(12.0)
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
+                                .stroke(Stroke::NONE)
+                                .corner_radius(4.0)
+                                .min_size(Vec2::new(114.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            app.open_browser();
+                        }
+                    });
+                });
+            });
         return;
     }
 
-    ui.separator();
+    let sep_rect = egui::Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), 1.0),
+    );
+    ui.painter().rect_filled(sep_rect, 0.0, border_col);
+    ui.add_space(1.0);
 
     // Auto-select the first host if none is selected yet
     if app.panels.target_panel.host.is_none() {
         app.panels.target_panel.host = tree.keys().next().cloned();
     }
 
-    let avail_h = ui.available_height().max(320.0);
+    let avail_h = ui.available_height().max(340.0);
     let mut tree_ratio = app.panels.target_panel.tree_split_ratio;
-    let mut load_to_repeater: Option<(String, String)> = None;
 
     super::vertical_split(
         ui,
@@ -1095,15 +1432,18 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
         avail_h,
         |side, ui| {
             if side == 0 {
-                // LEFT PANE: Hierarchical Host / Folder / Endpoint Tree (`Pro-QSG-5-site-map.png` & `site-map-populated.png`)
+                // LEFT PANE: Full-Height Hierarchical Host / Folder / Endpoint Tree (`Pro-QSG-5-site-map.png` & `site-map-populated.png`)
                 egui::Frame::new()
-                    .fill(theme.color("ui.background.0"))
-                    .inner_margin(6.0)
+                    .fill(bg0)
+                    .inner_margin(egui::Margin::symmetric(6, 6))
                     .show(ui, |ui| {
+                        ui.set_min_height((avail_h - 12.0).max(200.0));
                         egui::ScrollArea::vertical()
                             .id_salt("target-sitemap-left-tree")
-                            .max_height(avail_h - 12.0)
+                            .max_height((avail_h - 12.0).max(200.0))
+                            .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
                                 for (host, paths) in &tree {
                                     if !app.panels.target_panel.matches(host)
                                         && !paths.keys().any(|p| app.panels.target_panel.matches(p))
@@ -1125,118 +1465,105 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         Some(Color32::from_rgb(0x18, 0x58, 0xA8))
                                     };
 
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new("• ▾")
-                                                .size(11.0)
-                                                .color(theme.color("ui.icon.default")),
-                                        );
-                                        paint_sitemap_node_icon(
-                                            ui,
-                                            if is_https {
-                                                SiteMapIcon::SecureHost
-                                            } else {
-                                                SiteMapIcon::InsecureHost
-                                            },
-                                            host_dot,
-                                        );
-                                        let host_resp =
-                                            ui.selectable_label(selected_host, host.clone());
-                                        if host_resp.clicked() {
-                                            app.panels.target_panel.host = Some(host.clone());
-                                            app.panels.target_panel.path = None;
+                                    let host_resp = draw_sitemap_tree_row(
+                                        ui,
+                                        &theme,
+                                        ("host", host),
+                                        0,
+                                        true,
+                                        true,
+                                        if is_https {
+                                            SiteMapIcon::SecureHost
+                                        } else {
+                                            SiteMapIcon::InsecureHost
+                                        },
+                                        host_dot,
+                                        host,
+                                        selected_host,
+                                        false,
+                                    );
+                                    if host_resp.clicked() || host_resp.secondary_clicked() {
+                                        app.panels.target_panel.host = Some(host.clone());
+                                        app.panels.target_panel.path = None;
+                                    }
+                                    // Host right-click context menu (`Pro-QSG-7-Report-for-host.png`)
+                                    super::show_persistent_context_menu(&host_resp, |ui| {
+                                        ui.set_min_width(220.0);
+                                        ui.label(RichText::new(host).strong());
+                                        ui.separator();
+                                        if ui.button("Add to scope").clicked() {
+                                            if !app.panels.target_panel.scope.contains(host) {
+                                                if !app.panels.target_panel.scope.trim().is_empty()
+                                                {
+                                                    app.panels.target_panel.scope.push_str(", ");
+                                                }
+                                                app.panels.target_panel.scope.push_str(host);
+                                            }
+                                            ui.close();
                                         }
-                                        // Host right-click context menu (`Pro-QSG-7-Report-for-host.png`)
-                                        host_resp.context_menu(|ui| {
-                                            ui.label(RichText::new(host).strong());
-                                            ui.separator();
-                                            if ui.button("Add to scope").clicked() {
-                                                if !app.panels.target_panel.scope.contains(host) {
-                                                    if !app.panels.target_panel.scope.trim().is_empty()
-                                                    {
-                                                        app.panels.target_panel.scope.push_str(", ");
-                                                    }
-                                                    app.panels.target_panel.scope.push_str(host);
-                                                }
+                                        if ui.button("Scan").clicked() {
+                                            app.panels.scanner.seed = format!("{host}/");
+                                            app.panels.scanner.urls_to_scan = format!("{host}/");
+                                            app.panels.scanner.show_launcher = true;
+                                            ui.close();
+                                        }
+                                        if ui.button("Passively scan this host").clicked() {
+                                            app.scan_url(&format!("{host}/"), false);
+                                            ui.close();
+                                        }
+                                        if ui.button("Actively scan this host").clicked() {
+                                            app.scan_url(&format!("{host}/"), true);
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                        ui.menu_button("Issues", |ui| {
+                                            if ui.button("Report issues for this host").clicked() {
+                                                app.panels.scanner.report_host_filter =
+                                                    host.clone();
+                                                app.panels.scanner.show_report_wizard = true;
                                                 ui.close();
                                             }
-                                            if ui.button("Scan").clicked() {
-                                                app.panels.scanner.seed = format!("{host}/");
-                                                app.panels.scanner.urls_to_scan = format!("{host}/");
-                                                app.panels.scanner.show_launcher = true;
-                                                ui.close();
-                                            }
-                                            if ui.button("Passively scan this host").clicked() {
-                                                app.scan_url(&format!("{host}/"), false);
-                                                ui.close();
-                                            }
-                                            if ui.button("Actively scan this host").clicked() {
-                                                app.scan_url(&format!("{host}/"), true);
-                                                ui.close();
-                                            }
-                                            ui.separator();
-                                            ui.menu_button("Issues", |ui| {
-                                                if ui.button("Report issues for this host").clicked()
-                                                {
-                                                    app.panels.scanner.report_host_filter =
-                                                        host.clone();
-                                                    app.panels.scanner.show_report_wizard = true;
-                                                    ui.close();
-                                                }
-                                                if ui.button("Delete issues for this host").clicked()
-                                                {
-                                                    app.status = format!(
-                                                        "Cleared issues filter for {host}"
-                                                    );
-                                                    ui.close();
-                                                }
-                                            });
-                                            if ui.button("Copy URLs in this host").clicked() {
-                                                let urls: Vec<String> = paths
-                                                    .keys()
-                                                    .map(|p| format!("{host}{p}"))
-                                                    .collect();
-                                                ui.ctx().copy_text(urls.join("\n"));
+                                            if ui.button("Delete issues for this host").clicked() {
+                                                app.status =
+                                                    format!("Cleared issues filter for {host}");
                                                 ui.close();
                                             }
                                         });
+                                        if ui.button("Copy URLs in this host").clicked() {
+                                            let urls: Vec<String> = paths
+                                                .keys()
+                                                .map(|p| format!("{host}{p}"))
+                                                .collect();
+                                            ui.ctx().copy_text(urls.join("\n"));
+                                            ui.close();
+                                        }
                                     });
 
-                                    // Collect unique top-level folders to show Yellow Folder nodes (`site-map-folder-open.svg`)
-                                    let mut folders = std::collections::BTreeSet::new();
-                                    for path in paths.keys() {
-                                        let trimmed = path.trim_start_matches('/');
-                                        if let Some((dir, rest)) = trimmed.split_once('/') {
-                                            if !dir.is_empty() && !rest.is_empty() {
-                                                folders.insert(dir.to_string());
-                                            }
-                                        }
-                                    }
-                                    for folder in &folders {
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(16.0);
-                                        ui.label(
-                                            RichText::new("• ▼")
-                                                .monospace()
-                                                .size(11.0)
-                                                .color(theme.color("ui.icon.default")),
-                                        );
-                                            paint_sitemap_node_icon(
-                                                ui,
-                                                SiteMapIcon::FolderOpen,
-                                                None,
-                                            );
-                                            if ui.selectable_label(false, folder).clicked() {
-                                                app.panels.target_panel.host = Some(host.clone());
-                                            }
-                                        });
-                                    }
-
-                                    // Render path nodes with exact Burp icons (`DynPage`, `QueryPage`, `DefaultPage`)
+                                    // Group paths into top-level folders and direct root leaves (`site-map-populated.png`)
+                                    let mut folders: std::collections::BTreeMap<
+                                        String,
+                                        Vec<(String, usize)>,
+                                    > = std::collections::BTreeMap::new();
+                                    let mut root_leaves: Vec<(String, usize)> = Vec::new();
                                     for (path, count) in paths {
                                         if !app.panels.target_panel.matches(path) {
                                             continue;
                                         }
+                                        let trimmed = path.trim_start_matches('/');
+                                        if let Some((dir, rest)) = trimmed.split_once('/') {
+                                            if !dir.is_empty() && !rest.is_empty() {
+                                                folders
+                                                    .entry(dir.to_string())
+                                                    .or_default()
+                                                    .push((path.clone(), *count));
+                                                continue;
+                                            }
+                                        }
+                                        root_leaves.push((path.clone(), *count));
+                                    }
+
+                                    // 1. Direct root leaves (e.g. `/`, `about`, `my-account?id=carlos`)
+                                    for (path, _count) in &root_leaves {
                                         let selected = app.panels.target_panel.path.as_deref()
                                             == Some(path.as_str())
                                             && app.panels.target_panel.host.as_deref()
@@ -1247,55 +1574,163 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         } else {
                                             SiteMapIcon::DefaultPage
                                         };
-                                        let mut clicked = false;
-                                        ui.horizontal(|ui| {
-                                            ui.add_space(16.0);
-                                            ui.label(
-                                                RichText::new("├─ ▶")
-                                                    .monospace()
-                                                    .size(11.0)
-                                                    .color(theme.color("ui.icon.default")),
-                                            );
-                                            paint_sitemap_node_icon(
+                                        let display_lbl = if path == "/" {
+                                            "/"
+                                        } else {
+                                            path.trim_start_matches('/')
+                                        };
+                                        let leaf_resp = draw_sitemap_tree_row(
+                                            ui,
+                                            &theme,
+                                            ("root-leaf", host, path),
+                                            1,
+                                            false,
+                                            false,
+                                            icon,
+                                            Some(Color32::from_rgb(0x18, 0x58, 0xA8)),
+                                            display_lbl,
+                                            selected,
+                                            false,
+                                        );
+                                        if leaf_resp.clicked() || leaf_resp.secondary_clicked() {
+                                            app.panels.target_panel.host = Some(host.clone());
+                                            app.panels.target_panel.path = Some(path.clone());
+                                        }
+                                        let full_url = format!("{host}{path}");
+                                        let sample_tx = app
+                                            .log
+                                            .iter()
+                                            .rev()
+                                            .find(|t| {
+                                                t.host_url() == *host && t.target.ends_with(path)
+                                            })
+                                            .cloned();
+                                        let (sample_req, sample_resp) = sample_tx
+                                            .map(|t| (t.request, t.response))
+                                            .unwrap_or_default();
+                                        super::attach_message_context_menu(
+                                            app,
+                                            &leaf_resp,
+                                            &full_url,
+                                            &sample_req,
+                                            &sample_resp,
+                                        );
+                                    }
+
+                                    // 2. Folder nodes + nested children (`site-map-populated.png`)
+                                    for (folder, children) in &folders {
+                                        let folder_prefix = format!("/{folder}");
+                                        let folder_sel = app.panels.target_panel.host.as_deref()
+                                            == Some(host.as_str())
+                                            && app.panels.target_panel.path.as_deref()
+                                                == Some(folder_prefix.as_str());
+                                        let folder_resp = draw_sitemap_tree_row(
+                                            ui,
+                                            &theme,
+                                            ("folder", host, folder),
+                                            1,
+                                            true,
+                                            true,
+                                            SiteMapIcon::FolderOpen,
+                                            None,
+                                            folder,
+                                            folder_sel,
+                                            false,
+                                        );
+                                        if folder_resp.clicked() {
+                                            app.panels.target_panel.host = Some(host.clone());
+                                            app.panels.target_panel.path = Some(folder_prefix);
+                                        }
+                                        for (full_path, _cnt) in children {
+                                            let selected = app.panels.target_panel.path.as_deref()
+                                                == Some(full_path.as_str())
+                                                && app.panels.target_panel.host.as_deref()
+                                                    == Some(host.as_str());
+                                            let rel_name = full_path
+                                                .trim_start_matches('/')
+                                                .strip_prefix(folder.as_str())
+                                                .unwrap_or(full_path)
+                                                .trim_start_matches('/');
+                                            let has_query = full_path.contains('?');
+                                            let icon = if has_query {
+                                                SiteMapIcon::DynPage
+                                            } else {
+                                                SiteMapIcon::DefaultPage
+                                            };
+                                            let child_resp = draw_sitemap_tree_row(
                                                 ui,
+                                                &theme,
+                                                ("child", host, full_path),
+                                                2,
+                                                has_query,
+                                                true,
                                                 icon,
                                                 Some(Color32::from_rgb(0x18, 0x58, 0xA8)),
+                                                rel_name.split('?').next().unwrap_or(rel_name),
+                                                selected && !has_query,
+                                                false,
                                             );
-                                            let path_resp = ui
-                                                .selectable_label(
-                                                    selected,
-                                                    RichText::new(path).color(theme.color("ui.text.body")),
-                                                )
-                                                .on_hover_text(format!("{count} request(s)"));
-                                            clicked = path_resp.clicked() || path_resp.secondary_clicked();
-                                            let full_url = format!("{host}{path}");
+                                            if child_resp.clicked()
+                                                || child_resp.secondary_clicked()
+                                            {
+                                                app.panels.target_panel.host = Some(host.clone());
+                                                app.panels.target_panel.path =
+                                                    Some(full_path.clone());
+                                            }
+                                            let full_url = format!("{host}{full_path}");
                                             let sample_tx = app
                                                 .log
                                                 .iter()
                                                 .rev()
-                                                .find(|t| t.host_url() == *host && t.target.ends_with(path))
+                                                .find(|t| {
+                                                    t.host_url() == *host
+                                                        && t.target.ends_with(full_path)
+                                                })
                                                 .cloned();
                                             let (sample_req, sample_resp) = sample_tx
                                                 .map(|t| (t.request, t.response))
                                                 .unwrap_or_default();
                                             super::attach_message_context_menu(
                                                 app,
-                                                &path_resp,
+                                                &child_resp,
                                                 &full_url,
                                                 &sample_req,
                                                 &sample_resp,
                                             );
-                                            if selected && ui.small_button("To Repeater").clicked() {
-                                                load_to_repeater = Some((host.clone(), path.clone()));
+
+                                            // If query string exists, also render the `? query` child node (`site-map-populated.png`)
+                                            if let Some((_, q_part)) = full_path.split_once('?') {
+                                                let q_resp = draw_sitemap_tree_row(
+                                                    ui,
+                                                    &theme,
+                                                    ("query-child", host, full_path),
+                                                    3,
+                                                    false,
+                                                    false,
+                                                    SiteMapIcon::QueryPage,
+                                                    None,
+                                                    q_part,
+                                                    selected,
+                                                    false,
+                                                );
+                                                if q_resp.clicked() || q_resp.secondary_clicked() {
+                                                    app.panels.target_panel.host =
+                                                        Some(host.clone());
+                                                    app.panels.target_panel.path =
+                                                        Some(full_path.clone());
+                                                }
+                                                super::attach_message_context_menu(
+                                                    app,
+                                                    &q_resp,
+                                                    &full_url,
+                                                    &sample_req,
+                                                    &sample_resp,
+                                                );
                                             }
-                                        });
-                                        if clicked {
-                                            app.panels.target_panel.host = Some(host.clone());
-                                            app.panels.target_panel.path = Some(path.clone());
                                         }
                                     }
 
-                                    // Unvisited discovered links in muted gray (`site-map-populated.png`)
+                                    // 3. Unvisited discovered links in muted gray (`site-map-populated.png`)
                                     if let Some(found) = app.discovered.get(host) {
                                         for path in found {
                                             if paths.contains_key(path)
@@ -1303,27 +1738,24 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                             {
                                                 continue;
                                             }
-                                            ui.horizontal(|ui| {
-                                                ui.add_space(16.0);
-                                                ui.label(
-                                                    RichText::new("└─ •")
-                                                        .monospace()
-                                                        .size(11.0)
-                                                        .color(theme.color("ui.icon.disabled")),
-                                                );
-                                                paint_sitemap_node_icon(
-                                                    ui,
-                                                    SiteMapIcon::DefaultPage,
-                                                    None,
-                                                );
-                                                ui.selectable_label(
-                                                    app.panels.target_panel.path.as_deref()
-                                                        == Some(path.as_str()),
-                                                    RichText::new(path)
-                                                        .color(theme.color("ui.icon.disabled")),
-                                                )
-                                                .on_hover_text("found in a response, not visited");
-                                            });
+                                            let u_resp = draw_sitemap_tree_row(
+                                                ui,
+                                                &theme,
+                                                ("unvisited", host, path),
+                                                1,
+                                                false,
+                                                false,
+                                                SiteMapIcon::DefaultPage,
+                                                None,
+                                                path.trim_start_matches('/'),
+                                                app.panels.target_panel.path.as_deref()
+                                                    == Some(path.as_str()),
+                                                true,
+                                            );
+                                            if u_resp.clicked() {
+                                                app.panels.target_panel.host = Some(host.clone());
+                                                app.panels.target_panel.path = Some(path.clone());
+                                            }
                                         }
                                     }
                                     ui.add_space(4.0);
@@ -1331,258 +1763,360 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                             });
                     });
             } else {
-                // RIGHT PANE: `Contents | Issues` sub-tabs + Contents table + `Request | Response` (`Pro-QSG-5-site-map.png`)
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        for (idx, name) in ["Contents", "Issues"].iter().enumerate() {
-                            let active = app.panels.target_panel.right_sub_tab == idx;
-                            let resp = ui.selectable_label(
-                                active,
-                                RichText::new(*name).size(13.0).strong(),
-                            );
-                            if active {
-                                let r = resp.rect;
-                                ui.painter().rect_filled(
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(r.min.x, r.max.y - 2.0),
-                                        egui::pos2(r.max.x, r.max.y + 1.0),
-                                    ),
-                                    0.0,
-                                    theme.color("ui.icon.accent"),
-                                );
-                            }
-                            if resp.clicked() {
-                                app.panels.target_panel.right_sub_tab = idx;
-                            }
-                        }
-                    });
-                    ui.separator();
-
-                    if app.panels.target_panel.right_sub_tab == 1 {
-                        draw_issues_view(app, ui);
-                        return;
-                    }
-
-                    // Filter transactions matching the selected host/path in the left tree
-                    let sel_host = app.panels.target_panel.host.clone();
-                    let sel_path = app.panels.target_panel.path.clone();
-                    let matching_txs: Vec<(usize, crate::ui::app::Transaction)> = app
-                        .log
-                        .iter()
-                        .cloned()
-                        .enumerate()
-                        .filter(|(_, tx)| {
-                            let host_key = tx.host_url();
-                            sel_host.as_deref().map_or(true, |h| h == host_key)
-                                && sel_path
-                                    .as_deref()
-                                    .map_or(true, |p| tx.target.ends_with(p))
-                        })
-                        .collect();
-
-                    // Top Contents Table (`Host | Method | URL | Params | Status Code | Length | MIME type | Title`)
-                    let tbl_h = app.panels.target_panel.contents_table_height;
-                    egui::ScrollArea::both()
-                        .id_salt("target-sitemap-contents-table")
-                        .max_height(tbl_h)
-                        .show(ui, |ui| {
-                            egui::Grid::new("target-sitemap-contents-grid")
-                                .num_columns(8)
-                                .min_col_width(60.0)
-                                .striped(true)
+                // RIGHT PANE: `Contents | Issues` sub-tabs + Flat Bordered Contents Table + Full-Height `Request | Response` (`Pro-QSG-5-site-map.png`)
+                egui::Frame::new()
+                    .fill(bg0)
+                    .inner_margin(egui::Margin::same(0))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            // 1. `Contents | Issues` tab bar
+                            egui::Frame::new()
+                                .fill(bg0)
+                                .inner_margin(egui::Margin::symmetric(12, 5))
                                 .show(ui, |ui| {
-                                    for col in [
-                                        "Host",
-                                        "Method",
-                                        "URL",
-                                        "Params",
-                                        "Status Code",
-                                        "Length",
-                                        "MIME type",
-                                        "Title",
-                                    ] {
-                                        ui.strong(col);
-                                    }
-                                    ui.end_row();
-                                    for (idx, tx) in &matching_txs {
-                                        ui.push_id(("target-contents-row", *idx), |ui| {
-                                            let path_q = tx.path_and_query();
-                                            let is_sel = app.panels.target_panel.path.as_deref()
-                                                == Some(path_q.as_str());
-                                            let c1 = ui.selectable_label(is_sel, tx.host_url());
-                                            let c2 = ui.selectable_label(is_sel, &tx.method);
-                                            let c3 = ui.selectable_label(is_sel, &path_q);
-                                            let c4 = ui.selectable_label(
-                                                is_sel,
-                                                if tx.has_params() { "✓" } else { "" },
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 18.0;
+                                        for (idx, name) in ["Contents", "Issues"].iter().enumerate()
+                                        {
+                                            let active =
+                                                app.panels.target_panel.right_sub_tab == idx;
+                                            let fg = if active {
+                                                theme.color("ui.text.heading")
+                                            } else {
+                                                theme.color("ui.text.body")
+                                            };
+                                            let resp = ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(*name).size(12.5).color(fg),
+                                                )
+                                                .sense(egui::Sense::click()),
                                             );
-                                            let c5 =
-                                                ui.selectable_label(is_sel, tx.status.to_string());
-                                            let c6 =
-                                                ui.selectable_label(is_sel, tx.bytes.to_string());
-                                            let c7 = ui.selectable_label(is_sel, tx.mime_type());
-                                            let c8 = ui.selectable_label(is_sel, tx.page_title());
-                                            for cell in [&c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8] {
-                                                if cell.clicked() || cell.secondary_clicked() {
-                                                    app.panels.target_panel.host =
-                                                        Some(tx.host_url());
-                                                    app.panels.target_panel.path =
-                                                        Some(path_q.clone());
-                                                }
-                                                app.context_menu(cell, *idx);
+                                            if active {
+                                                let r = resp.rect;
+                                                ui.painter().rect_filled(
+                                                    egui::Rect::from_min_max(
+                                                        egui::pos2(r.min.x - 4.0, r.max.y + 2.0),
+                                                        egui::pos2(r.max.x + 4.0, r.max.y + 5.0),
+                                                    ),
+                                                    0.0,
+                                                    theme.color("ui.icon.accent"),
+                                                );
+                                            }
+                                            if resp.clicked() {
+                                                app.panels.target_panel.right_sub_tab = idx;
+                                            }
+                                        }
+                                    });
+                                });
+                            let sub_sep = egui::Rect::from_min_size(
+                                ui.cursor().min,
+                                Vec2::new(ui.available_width(), 1.0),
+                            );
+                            ui.painter().rect_filled(sub_sep, 0.0, border_col);
+                            ui.add_space(1.0);
+
+                            if app.panels.target_panel.right_sub_tab == 1 {
+                                egui::Frame::new()
+                                    .fill(bg0)
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        draw_issues_view(app, ui);
+                                    });
+                                return;
+                            }
+
+                            // Filter transactions matching the selected host/path in the left tree
+                            let sel_host = app.panels.target_panel.host.clone();
+                            let sel_path = app.panels.target_panel.path.clone();
+                            let matching_txs: Vec<(usize, crate::ui::app::Transaction)> = app
+                                .log
+                                .iter()
+                                .cloned()
+                                .enumerate()
+                                .filter(|(_, tx)| {
+                                    let host_key = tx.host_url();
+                                    sel_host.as_deref().map_or(true, |h| h == host_key)
+                                        && sel_path
+                                            .as_deref()
+                                            .map_or(true, |p| tx.path_and_query().starts_with(p))
+                                })
+                                .collect();
+
+                            // 2. Flat Bordered Contents Table (`Host | Method | URL ▲ | Params | Status Code | Length | MIME type | Title`)
+                            let tbl_h = app.panels.target_panel.contents_table_height;
+                            let cols = [
+                                ("Host", 170.0f32),
+                                ("Method", 64.0),
+                                ("URL ▲", 220.0),
+                                ("Params", 56.0),
+                                ("Status Code", 84.0),
+                                ("Length", 68.0),
+                                ("MIME type", 76.0),
+                                ("Title", 200.0),
+                            ];
+                            let total_w = cols
+                                .iter()
+                                .map(|(_, w)| *w)
+                                .sum::<f32>()
+                                .max(ui.available_width());
+
+                            egui::ScrollArea::horizontal()
+                                .id_salt("target-contents-hscroll")
+                                .show(ui, |ui| {
+                                    ui.set_min_width(total_w);
+                                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                    // Header bar (`#EBEBEB` / `ui.background.2`)
+                                    let (hdr_rect, _) = ui.allocate_exact_size(
+                                        Vec2::new(total_w, 24.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        hdr_rect,
+                                        0.0,
+                                        theme.color("ui.background.2"),
+                                    );
+                                    let mut hx = hdr_rect.left();
+                                    for (col_name, col_w) in cols {
+                                        let cell_r = egui::Rect::from_min_size(
+                                            egui::pos2(hx, hdr_rect.top()),
+                                            Vec2::new(col_w, hdr_rect.height()),
+                                        );
+                                        ui.painter().text(
+                                            egui::pos2(cell_r.left() + 6.0, cell_r.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            col_name,
+                                            egui::FontId::proportional(11.5),
+                                            theme.color("ui.text.heading"),
+                                        );
+                                        ui.painter().vline(
+                                            cell_r.right(),
+                                            hdr_rect.y_range(),
+                                            Stroke::new(1.0_f32, border_col),
+                                        );
+                                        hx = cell_r.right();
+                                    }
+                                    ui.painter().hline(
+                                        hdr_rect.x_range(),
+                                        hdr_rect.bottom(),
+                                        Stroke::new(1.0_f32, border_col),
+                                    );
+
+                                    // Table rows
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("target-sitemap-contents-table")
+                                        .max_height(tbl_h)
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                                            for (row_ord, (idx, tx)) in
+                                                matching_txs.iter().enumerate()
+                                            {
+                                                let path_q = tx.path_and_query();
+                                                let is_sel = app
+                                                    .panels
+                                                    .target_panel
+                                                    .path
+                                                    .as_deref()
+                                                    == Some(path_q.as_str())
+                                                    || (app.panels.target_panel.path.is_none()
+                                                        && row_ord + 1 == matching_txs.len());
+                                                ui.push_id(("target-contents-row", *idx), |ui| {
+                                                    let (row_rect, _) = ui.allocate_exact_size(
+                                                        Vec2::new(total_w, 22.0),
+                                                        egui::Sense::hover(),
+                                                    );
+                                                    let row_fill = if is_sel {
+                                                        if theme.dark {
+                                                            Color32::from_rgb(0x2A, 0x3E, 0x5C)
+                                                        } else {
+                                                            Color32::from_rgb(0xC3, 0xD9, 0xF6)
+                                                        }
+                                                    } else if row_ord % 2 == 1 {
+                                                        theme.color("ui.background.1")
+                                                    } else {
+                                                        bg0
+                                                    };
+                                                    ui.painter().rect_filled(
+                                                        row_rect,
+                                                        0.0,
+                                                        row_fill,
+                                                    );
+                                                    if is_sel {
+                                                        ui.painter().rect_stroke(
+                                                            row_rect.shrink(0.5),
+                                                            0.0,
+                                                            Stroke::new(
+                                                                1.0_f32,
+                                                                Color32::from_rgb(0x2B, 0x57, 0x9A),
+                                                            ),
+                                                            egui::StrokeKind::Inside,
+                                                        );
+                                                    }
+                                                    let vals = [
+                                                        tx.host_url(),
+                                                        tx.method.clone(),
+                                                        path_q.clone(),
+                                                        if tx.has_params() { "✓" } else { "" }
+                                                            .to_string(),
+                                                        tx.status.to_string(),
+                                                        tx.bytes.to_string(),
+                                                        tx.mime_type().to_string(),
+                                                        tx.page_title(),
+                                                    ];
+                                                    let mut cx = row_rect.left();
+                                                    for (c_i, ((_, cw), val)) in
+                                                        cols.iter().zip(vals.iter()).enumerate()
+                                                    {
+                                                        let c_rect = egui::Rect::from_min_size(
+                                                            egui::pos2(cx, row_rect.top()),
+                                                            Vec2::new(*cw, row_rect.height()),
+                                                        );
+                                                        let c_resp = ui.interact(
+                                                            c_rect,
+                                                            ui.id().with(("sitemap-cell", c_i)),
+                                                            egui::Sense::click(),
+                                                        );
+                                                        c_resp.widget_info(|| {
+                                                            egui::WidgetInfo::selected(
+                                                                egui::WidgetType::SelectableLabel,
+                                                                ui.is_enabled(),
+                                                                is_sel,
+                                                                val,
+                                                            )
+                                                        });
+                                                        let clip_p = ui.painter().with_clip_rect(
+                                                            c_rect
+                                                                .shrink2(egui::vec2(4.0, 0.0))
+                                                                .intersect(ui.clip_rect()),
+                                                        );
+                                                        clip_p.text(
+                                                            egui::pos2(
+                                                                c_rect.left() + 6.0,
+                                                                c_rect.center().y,
+                                                            ),
+                                                            egui::Align2::LEFT_CENTER,
+                                                            val,
+                                                            egui::FontId::proportional(12.0),
+                                                            theme.color("ui.text.heading"),
+                                                        );
+                                                        if c_resp.clicked()
+                                                            || c_resp.secondary_clicked()
+                                                        {
+                                                            app.panels.target_panel.host =
+                                                                Some(tx.host_url());
+                                                            app.panels.target_panel.path =
+                                                                Some(path_q.clone());
+                                                        }
+                                                        app.context_menu(&c_resp, *idx);
+                                                        cx = c_rect.right();
+                                                    }
+                                                });
                                             }
                                         });
-                                        ui.end_row();
-                                    }
                                 });
-                        });
 
-                    super::horizontal_resize_handle(
-                        ui,
-                        &theme,
-                        "target-contents-tbl-resize",
-                        &mut app.panels.target_panel.contents_table_height,
-                        90.0,
-                        360.0,
-                        175.0,
-                    );
+                            super::horizontal_resize_handle(
+                                ui,
+                                &theme,
+                                "target-contents-tbl-resize",
+                                &mut app.panels.target_panel.contents_table_height,
+                                90.0,
+                                360.0,
+                                175.0,
+                            );
 
-                    // Selected transaction (or first matching transaction for the selected host)
-                    let active_tx = matching_txs.last().map(|(_, tx)| tx.clone());
-                    if let Some(tx) = active_tx {
-                        let selected_path = app
-                            .panels
-                            .target_panel
-                            .path
-                            .clone()
-                            .unwrap_or_else(|| tx.path_and_query());
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(&tx.target).monospace());
-                            if ui.button("To Repeater").clicked() {
-                                app.panels.repeater.open(&tx.target, &tx.request);
-                                app.tool = crate::ui::app::REPEATER;
-                                app.status = format!("Sent {selected_path} to Repeater");
-                            }
-                            if ui.button("To Intruder").clicked() {
-                                app.send_to_intruder(&tx.target, &tx.request);
-                            }
-                            if ui.button("To Organizer").clicked() {
-                                let next = app.organizer.len() + 1;
-                                super::organizer::retain(
-                                    app,
-                                    super::organizer::OrganizerItem {
-                                        host: tx.host.clone(),
-                                        name: format!("item-{next}"),
-                                        request: tx.request.clone(),
-                                        response: tx.response.clone(),
-                                        notes: String::new(),
+                            // 3. Full-height 50/50 `Request | Response` split panes directly below the Contents table (`Pro-QSG-5-site-map.png`)
+                            let active_tx = app
+                                .panels
+                                .target_panel
+                                .path
+                                .as_deref()
+                                .and_then(|p| {
+                                    matching_txs
+                                        .iter()
+                                        .rev()
+                                        .find(|(_, t)| t.path_and_query() == p)
+                                        .map(|(_, t)| t.clone())
+                                })
+                                .or_else(|| matching_txs.last().map(|(_, tx)| tx.clone()));
+                            if let Some(tx) = active_tx {
+                                let rem_h = ui.available_height().max(200.0);
+                                let mut ratio = app.panels.target_panel.split_ratio;
+                                super::vertical_split(
+                                    ui,
+                                    &theme,
+                                    "target-sitemap-req-resp-split",
+                                    &mut ratio,
+                                    rem_h,
+                                    |pane_side, ui| {
+                                        if pane_side == 0 {
+                                            burp_message_formatter_bar(
+                                                ui,
+                                                &theme,
+                                                "target-req-fmt",
+                                                "Request",
+                                                &mut app.panels.target_panel.req_fmt_mode,
+                                                false,
+                                                &mut app.panels.target_panel.req_wrap,
+                                                &mut app.panels.target_panel.req_non_printable,
+                                            );
+                                            let r = burp_numbered_message_view_wrapped(
+                                                ui,
+                                                &theme,
+                                                "target-req-view",
+                                                (rem_h - 38.0).max(120.0),
+                                                &tx.request,
+                                                app.panels.target_panel.req_fmt_mode,
+                                                app.panels.target_panel.req_non_printable,
+                                                app.panels.target_panel.req_wrap,
+                                            );
+                                            super::attach_message_context_menu(
+                                                app,
+                                                &r,
+                                                &tx.target,
+                                                &tx.request,
+                                                &tx.response,
+                                            );
+                                        } else {
+                                            burp_message_formatter_bar(
+                                                ui,
+                                                &theme,
+                                                "target-resp-fmt",
+                                                "Response",
+                                                &mut app.panels.target_panel.resp_fmt_mode,
+                                                true,
+                                                &mut app.panels.target_panel.resp_wrap,
+                                                &mut app.panels.target_panel.resp_non_printable,
+                                            );
+                                            let r = burp_numbered_message_view_wrapped(
+                                                ui,
+                                                &theme,
+                                                "target-resp-view",
+                                                (rem_h - 38.0).max(120.0),
+                                                &tx.response,
+                                                app.panels.target_panel.resp_fmt_mode,
+                                                app.panels.target_panel.resp_non_printable,
+                                                app.panels.target_panel.resp_wrap,
+                                            );
+                                            super::attach_message_context_menu(
+                                                app,
+                                                &r,
+                                                &tx.target,
+                                                &tx.request,
+                                                &tx.response,
+                                            );
+                                        }
                                     },
                                 );
-                                app.status = "Saved to Organizer".into();
+                                app.panels.target_panel.split_ratio = ratio;
                             }
                         });
-
-                        let detail_h = app.panels.target_panel.detail_height;
-                        let mut ratio = app.panels.target_panel.split_ratio;
-                        super::vertical_split(
-                            ui,
-                            &theme,
-                            "target-sitemap-req-resp-split",
-                            &mut ratio,
-                            detail_h,
-                            |pane_side, ui| {
-                                if pane_side == 0 {
-                                    burp_message_formatter_bar(
-                                        ui,
-                                        &theme,
-                                        "target-req-fmt",
-                                        "Request",
-                                        &mut app.panels.target_panel.req_fmt_mode,
-                                        false,
-                                        &mut app.panels.target_panel.req_wrap,
-                                        &mut app.panels.target_panel.req_non_printable,
-                                    );
-                                    let r = burp_numbered_message_view_wrapped(
-                                        ui,
-                                        &theme,
-                                        "target-req-view",
-                                        detail_h - 48.0,
-                                        &tx.request,
-                                        app.panels.target_panel.req_fmt_mode,
-                                        app.panels.target_panel.req_non_printable,
-                                        app.panels.target_panel.req_wrap,
-                                    );
-                                    super::attach_message_context_menu(
-                                        app,
-                                        &r,
-                                        &tx.target,
-                                        &tx.request,
-                                        &tx.response,
-                                    );
-                                } else {
-                                    burp_message_formatter_bar(
-                                        ui,
-                                        &theme,
-                                        "target-resp-fmt",
-                                        "Response",
-                                        &mut app.panels.target_panel.resp_fmt_mode,
-                                        true,
-                                        &mut app.panels.target_panel.resp_wrap,
-                                        &mut app.panels.target_panel.resp_non_printable,
-                                    );
-                                    let r = burp_numbered_message_view_wrapped(
-                                        ui,
-                                        &theme,
-                                        "target-resp-view",
-                                        detail_h - 48.0,
-                                        &tx.response,
-                                        app.panels.target_panel.resp_fmt_mode,
-                                        app.panels.target_panel.resp_non_printable,
-                                        app.panels.target_panel.resp_wrap,
-                                    );
-                                    super::attach_message_context_menu(
-                                        app,
-                                        &r,
-                                        &tx.target,
-                                        &tx.request,
-                                        &tx.response,
-                                    );
-                                }
-                            },
-                        );
-                        app.panels.target_panel.split_ratio = ratio;
-                        super::horizontal_resize_handle(
-                            ui,
-                            &theme,
-                            "target-detail-resize",
-                            &mut app.panels.target_panel.detail_height,
-                            120.0,
-                            600.0,
-                            250.0,
-                        );
-                    }
-                });
+                    });
             }
         },
     );
     app.panels.target_panel.tree_split_ratio = tree_ratio;
-
-    if let Some((host, path)) = load_to_repeater {
-        let found = app
-            .log
-            .iter()
-            .rev()
-            .find(|tx| tx.host_url() == host && tx.target.ends_with(&path))
-            .map(|tx| (tx.request.clone(), tx.target.clone()));
-        match found {
-            Some((request, target)) => {
-                app.panels.repeater.open(&target, &request);
-                app.tool = crate::ui::app::REPEATER;
-                app.status = format!("Sent {path} to Repeater");
-            }
-            None => app.status = "That path is no longer in the history".into(),
-        }
-    }
 }
 
 #[cfg(test)]

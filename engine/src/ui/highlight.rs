@@ -300,11 +300,16 @@ fn markup_spans(body: &str, theme: &Theme) -> Vec<Span> {
         if let Some(at) = rest.find("<![CDATA[") {
             push_plain(&mut out, &rest[..at], value);
             let tail = &rest[at..];
-            let end = tail.find("]]>").map(|e| e + 3).unwrap_or(tail.len());
             out.push(Span::new("<![CDATA[".to_string(), delimiter));
-            out.push(Span::new(tail[9..end.saturating_sub(3)].to_string(), cdata));
-            out.push(Span::new("]]>".to_string(), delimiter));
-            rest = &tail[end..];
+            if let Some(close_rel) = tail[9..].find("]]>") {
+                let cdata_end = 9 + close_rel;
+                out.push(Span::new(tail[9..cdata_end].to_string(), cdata));
+                out.push(Span::new("]]>".to_string(), delimiter));
+                rest = &tail[cdata_end + 3..];
+            } else {
+                out.push(Span::new(tail[9..].to_string(), cdata));
+                rest = "";
+            }
             continue;
         }
         if rest.starts_with("<?") || rest.starts_with("<!") {
@@ -506,9 +511,9 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
                     break;
                 }
             }
-            let taken: usize = literal.chars().count();
+            let taken_bytes: usize = quote.len_utf8() + literal.len();
             out.push(Span::new(format!("{quote}{literal}"), string));
-            rest = &rest[(1 + taken).min(rest.len())..];
+            rest = &rest[taken_bytes.min(rest.len())..];
             continue;
         }
         if first == '@' {
@@ -539,13 +544,16 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
             rest = &rest[consumed..];
             continue;
         }
-        // Always advance: a zero-width step here would loop forever while appending spans, which
-        // hangs the UI and eats all available memory.
-        let step = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$' || c == '"' || c == '\'' || c == '`'))
-            .unwrap_or(rest.len())
-            .max(1)
-            .min(rest.len());
+        // Advance by at least `first.len_utf8()` bytes so multi-byte UTF-8 symbols (e.g. '', '—', emojis)
+        // never slice mid-codepoint.
+        let min_step = first.len_utf8();
+        let step = rest[min_step..]
+            .find(|c: char| {
+                c.is_alphanumeric()
+                    || matches!(c, '_' | '$' | '"' | '\'' | '`' | '/' | '@')
+            })
+            .map(|off| min_step + off)
+            .unwrap_or(rest.len());
         out.push(Span::new(rest[..step].to_string(), string));
         rest = &rest[step..];
     }
@@ -1062,6 +1070,19 @@ mod burp_key_tests {
                 theme.color("ui.icon.default"),
                 "background.1 unresolved"
             );
+        }
+    }
+
+    #[test]
+    fn script_and_markup_highlighting_never_panics_on_multibyte_utf8_or_binary_replacement_chars() {
+        let theme = Theme::load(false);
+        for msg in [
+            "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n\u{FFFD}X9\u{FFFD}Q\u{FFFD}{\u{FFFD} \"hello\u{FFFD}world\" /*\u{FFFD}*/ //\u{FFFD}\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<![CDATA[\u{FFFD}unclosed<div data-\u{FFFD}=\"\u{FFFD}\">\u{FFFD}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"k\u{FFFD}\": \"v\u{FFFD}\", \"n\": 123}",
+        ] {
+            let out = spans(msg, &theme);
+            assert!(!out.is_empty());
         }
     }
 }
