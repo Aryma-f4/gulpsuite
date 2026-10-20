@@ -273,7 +273,7 @@ pub async fn crawl(
 
         on_progress(Progress::Fetching(url.clone()));
         let Some((host, port, tls, raw)) =
-            super::active::InjectionPoint::query(&url, "x").request("x")
+            super::active::InjectionPoint::baseline_request(&url)
         else {
             continue;
         };

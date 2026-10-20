@@ -15,7 +15,7 @@ pub mod scanner;
 pub mod replayer;
 pub(crate) mod sequencer;
 mod websocket;
-mod target;
+pub mod target;
 
 use std::sync::Arc;
 

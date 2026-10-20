@@ -94,7 +94,13 @@ impl WorkspaceAdapter {
                     && !response.is_empty()
                 {
                     let parsed = scanner::http::parse_response(response);
-                    for finding in scanner::passive::inspect(target, &parsed) {
+                    for mut finding in scanner::passive::inspect(target, &parsed) {
+                        if scanner::passive::is_host_wide_passive_issue(&finding.name) {
+                            if let Some((scheme, rest)) = finding.url.split_once("://") {
+                                let host = rest.split('/').next().unwrap_or(rest);
+                                finding.url = format!("{scheme}://{host}/");
+                            }
+                        }
                         workspace
                             .issues
                             .upsert(issue_from_finding(self.live_audit, &finding));

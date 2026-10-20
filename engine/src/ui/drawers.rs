@@ -245,18 +245,64 @@ fn draw_issues(ui: &mut Ui, state: &mut DrawerState, workspace: &Workspace, them
             .selected
             .and_then(|id| workspace.issues.iter().find(|issue| issue.id.0 == id))
         {
-            columns[1].label(RichText::new(&issue.name).strong());
-            columns[1].label(format!(
-                "{} severity · {} confidence",
-                issue_severity_name(issue.severity),
-                issue.confidence
-            ));
-            columns[1].label(RichText::new(&issue.url).monospace());
-            if let Some(parameter) = &issue.parameter {
-                columns[1].label(format!("Parameter: {parameter}"));
-            }
-            columns[1].separator();
-            columns[1].label(&issue.evidence);
+            let link_fg = if theme.dark {
+                eframe::egui::Color32::from_rgb(0x58, 0xA6, 0xFF)
+            } else {
+                eframe::egui::Color32::from_rgb(0x00, 0x5C, 0xC5)
+            };
+            let body_fg = theme.color("ui.text.body");
+            eframe::egui::ScrollArea::vertical()
+                .id_salt("drawer-issue-detail-scroll")
+                .show(&mut columns[1], |ui| {
+                    ui.label(RichText::new(&issue.name).strong());
+                    ui.label(format!(
+                        "{} severity · {} confidence",
+                        issue_severity_name(issue.severity),
+                        issue.confidence
+                    ));
+                    ui.hyperlink_to(
+                        RichText::new(&issue.url)
+                            .monospace()
+                            .color(link_fg)
+                            .underline(),
+                        &issue.url,
+                    );
+                    if let Some(parameter) = &issue.parameter {
+                        ui.label(format!("Parameter: {parameter}"));
+                    }
+                    ui.separator();
+                    crate::ui::panels::target::render_formatted_issue_text(
+                        ui,
+                        &issue.evidence,
+                        body_fg,
+                        link_fg,
+                        12.0,
+                    );
+                    if let Some(def) = crate::issue_definitions::find_by_name(&issue.name) {
+                        if !def.classifications.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Vulnerability classifications").strong());
+                            crate::ui::panels::target::render_issue_reference_links(
+                                ui,
+                                &def.classifications,
+                                body_fg,
+                                link_fg,
+                                11.5,
+                            );
+                        }
+                        if !def.references.is_empty() {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("References").strong());
+                            crate::ui::panels::target::render_issue_reference_links(
+                                ui,
+                                &def.references,
+                                body_fg,
+                                link_fg,
+                                11.5,
+                            );
+                        }
+                    }
+                });
         } else {
             empty_state(&mut columns[1], "Select an issue to inspect it.", theme);
         }

@@ -471,6 +471,11 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
 /// the discovered `Issues` table & `Advisory | Request | Response` viewer (`Pro-QSG-6-view-issues.png`).
 pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
+    let link_fg = if theme.dark {
+        Color32::from_rgb(0x58, 0xA6, 0xFF)
+    } else {
+        Color32::from_rgb(0x00, 0x5C, 0xC5)
+    };
     let all_defs = crate::issue_definitions::all();
     let card_bg = if theme.dark {
         Color32::from_rgb(0x1E, 0x20, 0x24)
@@ -673,16 +678,54 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                         .monospace()
                                                         .color(row_txt_col),
                                                 );
-                                                let c_cwe = ui.selectable_label(
-                                                    is_sel,
-                                                    RichText::new(def.cwe_summary())
-                                                        .monospace()
-                                                        .color(row_txt_col),
-                                                );
+                                                let mut cwe_clicked = false;
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                                    if def.classifications.is_empty() {
+                                                        if ui
+                                                            .selectable_label(
+                                                                is_sel,
+                                                                RichText::new("—")
+                                                                    .monospace()
+                                                                    .color(row_txt_col),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            cwe_clicked = true;
+                                                        }
+                                                    } else {
+                                                        for (ci, c) in
+                                                            def.classifications.iter().enumerate()
+                                                        {
+                                                            let short_id = c
+                                                                .title
+                                                                .split(':')
+                                                                .next()
+                                                                .unwrap_or(&c.title)
+                                                                .trim();
+                                                            let suffix = if ci + 1
+                                                                < def.classifications.len()
+                                                            {
+                                                                format!("{short_id},")
+                                                            } else {
+                                                                short_id.to_string()
+                                                            };
+                                                            ui.hyperlink_to(
+                                                                RichText::new(suffix)
+                                                                    .monospace()
+                                                                    .size(11.5)
+                                                                    .color(link_fg)
+                                                                    .underline(),
+                                                                &c.url,
+                                                            )
+                                                            .on_hover_text(&c.title);
+                                                        }
+                                                    }
+                                                });
                                                 if c_name.clicked()
                                                     || c_sev.clicked()
                                                     || c_idx.clicked()
-                                                    || c_cwe.clicked()
+                                                    || cwe_clicked
                                                 {
                                                     app.panels.target_panel.selected_kb_def =
                                                         *orig_idx;
@@ -745,10 +788,12 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     .color(heading_fg),
                                             );
                                             ui.add_space(2.0);
-                                            ui.label(
-                                                RichText::new(&def.description)
-                                                    .size(12.0)
-                                                    .color(body_fg),
+                                            render_formatted_issue_text(
+                                                ui,
+                                                &def.description,
+                                                body_fg,
+                                                link_fg,
+                                                12.0,
                                             );
                                             ui.add_space(8.0);
                                         }
@@ -760,10 +805,12 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     .color(heading_fg),
                                             );
                                             ui.add_space(2.0);
-                                            ui.label(
-                                                RichText::new(&def.remediation)
-                                                    .size(12.0)
-                                                    .color(body_fg),
+                                            render_formatted_issue_text(
+                                                ui,
+                                                &def.remediation,
+                                                body_fg,
+                                                link_fg,
+                                                12.0,
                                             );
                                             ui.add_space(8.0);
                                         }
@@ -774,16 +821,14 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     .strong()
                                                     .color(heading_fg),
                                             );
-                                            for r in &def.references {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "• {} ({})",
-                                                        r.title, r.url
-                                                    ))
-                                                    .size(12.0)
-                                                    .color(body_fg),
-                                                );
-                                            }
+                                            ui.add_space(2.0);
+                                            render_issue_reference_links(
+                                                ui,
+                                                &def.references,
+                                                body_fg,
+                                                link_fg,
+                                                12.0,
+                                            );
                                             ui.add_space(8.0);
                                         }
                                         if !def.classifications.is_empty() {
@@ -793,16 +838,14 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     .strong()
                                                     .color(heading_fg),
                                             );
-                                            for c in &def.classifications {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "• {} ({})",
-                                                        c.title, c.url
-                                                    ))
-                                                    .size(12.0)
-                                                    .color(body_fg),
-                                                );
-                                            }
+                                            ui.add_space(2.0);
+                                            render_issue_reference_links(
+                                                ui,
+                                                &def.classifications,
+                                                body_fg,
+                                                link_fg,
+                                                12.0,
+                                            );
                                         }
                                     });
                             });
@@ -1011,18 +1054,80 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                             egui::pos2(cx, row_rect.top()),
                                             Vec2::new(*cw, row_rect.height()),
                                         );
-                                        let clip_p = ui.painter().with_clip_rect(
-                                            cell_r
-                                                .shrink2(egui::vec2(4.0, 0.0))
-                                                .intersect(ui.clip_rect()),
-                                        );
-                                        clip_p.text(
-                                            egui::pos2(cell_r.left() + pad_left, cell_r.center().y),
-                                            egui::Align2::LEFT_CENTER,
-                                            val,
-                                            egui::FontId::proportional(12.0),
-                                            txt_col,
-                                        );
+                                        if c_i == 5 {
+                                            if let Some(def) =
+                                                kb_def.filter(|d| !d.classifications.is_empty())
+                                            {
+                                                let mut cwe_ui = ui.new_child(
+                                                    egui::UiBuilder::new()
+                                                        .max_rect(
+                                                            cell_r.shrink2(egui::vec2(6.0, 2.0)),
+                                                        )
+                                                        .layout(egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        )),
+                                                );
+                                                cwe_ui.spacing_mut().item_spacing.x = 4.0;
+                                                for (ci, c) in
+                                                    def.classifications.iter().take(3).enumerate()
+                                                {
+                                                    let short_id = c
+                                                        .title
+                                                        .split(':')
+                                                        .next()
+                                                        .unwrap_or(&c.title)
+                                                        .trim();
+                                                    let lbl = if ci + 1
+                                                        < def.classifications.len().min(3)
+                                                    {
+                                                        format!("{short_id},")
+                                                    } else {
+                                                        short_id.to_string()
+                                                    };
+                                                    cwe_ui
+                                                        .hyperlink_to(
+                                                            RichText::new(lbl)
+                                                                .size(11.5)
+                                                                .color(link_fg)
+                                                                .underline(),
+                                                            &c.url,
+                                                        )
+                                                        .on_hover_text(&c.title);
+                                                }
+                                            } else {
+                                                let clip_p = ui.painter().with_clip_rect(
+                                                    cell_r
+                                                        .shrink2(egui::vec2(4.0, 0.0))
+                                                        .intersect(ui.clip_rect()),
+                                                );
+                                                clip_p.text(
+                                                    egui::pos2(
+                                                        cell_r.left() + pad_left,
+                                                        cell_r.center().y,
+                                                    ),
+                                                    egui::Align2::LEFT_CENTER,
+                                                    val,
+                                                    egui::FontId::proportional(12.0),
+                                                    txt_col,
+                                                );
+                                            }
+                                        } else {
+                                            let clip_p = ui.painter().with_clip_rect(
+                                                cell_r
+                                                    .shrink2(egui::vec2(4.0, 0.0))
+                                                    .intersect(ui.clip_rect()),
+                                            );
+                                            clip_p.text(
+                                                egui::pos2(
+                                                    cell_r.left() + pad_left,
+                                                    cell_r.center().y,
+                                                ),
+                                                egui::Align2::LEFT_CENTER,
+                                                val,
+                                                egui::FontId::proportional(12.0),
+                                                txt_col,
+                                            );
+                                        }
                                         cx = cell_r.right();
                                     }
 
@@ -1230,11 +1335,14 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     ui.label(
                                                         RichText::new("Host:").color(body_fg),
                                                     );
-                                                    ui.label(
+                                                    ui.hyperlink_to(
                                                         RichText::new(&host_part)
                                                             .strong()
-                                                            .color(heading_fg),
-                                                    );
+                                                            .color(link_fg)
+                                                            .underline(),
+                                                        &issue.url,
+                                                    )
+                                                    .on_hover_text(&issue.url);
                                                     ui.end_row();
                                                     ui.label(
                                                         RichText::new("Path:").color(body_fg),
@@ -1257,6 +1365,75 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                         );
                                                         ui.end_row();
                                                     }
+                                                    if let Some(def) = kb_def {
+                                                        if !def.classifications.is_empty() {
+                                                            ui.label(
+                                                                RichText::new("CWE:")
+                                                                    .color(body_fg),
+                                                            );
+                                                            ui.horizontal_wrapped(|ui| {
+                                                                ui.spacing_mut().item_spacing.x =
+                                                                    6.0;
+                                                                for (ci, c) in def
+                                                                    .classifications
+                                                                    .iter()
+                                                                    .enumerate()
+                                                                {
+                                                                    let short_id = c
+                                                                        .title
+                                                                        .split(':')
+                                                                        .next()
+                                                                        .unwrap_or(&c.title)
+                                                                        .trim();
+                                                                    let lbl = if ci + 1
+                                                                        < def.classifications.len()
+                                                                    {
+                                                                        format!("{short_id},")
+                                                                    } else {
+                                                                        short_id.to_string()
+                                                                    };
+                                                                    ui.hyperlink_to(
+                                                                        RichText::new(lbl)
+                                                                            .strong()
+                                                                            .color(link_fg)
+                                                                            .underline(),
+                                                                        &c.url,
+                                                                    )
+                                                                    .on_hover_text(&c.title);
+                                                                }
+                                                            });
+                                                            ui.end_row();
+                                                        }
+                                                        if !def.references.is_empty() {
+                                                            ui.label(
+                                                                RichText::new("References:")
+                                                                    .color(body_fg),
+                                                            );
+                                                            ui.horizontal_wrapped(|ui| {
+                                                                ui.spacing_mut().item_spacing.x =
+                                                                    8.0;
+                                                                for (ri, r) in
+                                                                    def.references.iter().enumerate()
+                                                                {
+                                                                    let lbl = if ri + 1
+                                                                        < def.references.len()
+                                                                    {
+                                                                        format!("{} ·", r.title)
+                                                                    } else {
+                                                                        r.title.clone()
+                                                                    };
+                                                                    ui.hyperlink_to(
+                                                                        RichText::new(lbl)
+                                                                            .color(link_fg)
+                                                                            .underline(),
+                                                                        &r.url,
+                                                                    )
+                                                                    .on_hover_text(&r.url);
+                                                                }
+                                                            });
+                                                            ui.end_row();
+                                                        }
+                                                    }
                                                 });
                                             ui.separator();
                                             ui.add_space(6.0);
@@ -1276,11 +1453,12 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                     ui.set_min_width(
                                                         (ui.available_width() - 12.0).max(160.0),
                                                     );
-                                                    ui.label(
-                                                        RichText::new(&issue.evidence)
-                                                            .monospace()
-                                                            .size(12.0)
-                                                            .color(heading_fg),
+                                                    render_formatted_issue_text(
+                                                        ui,
+                                                        &issue.evidence,
+                                                        heading_fg,
+                                                        link_fg,
+                                                        12.0,
                                                     );
                                                 });
 
@@ -1294,10 +1472,12 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                             .color(heading_fg),
                                                     );
                                                     ui.add_space(3.0);
-                                                    ui.label(
-                                                        RichText::new(&def.description)
-                                                            .size(12.5)
-                                                            .color(body_fg),
+                                                    render_formatted_issue_text(
+                                                        ui,
+                                                        &def.description,
+                                                        body_fg,
+                                                        link_fg,
+                                                        12.5,
                                                     );
                                                 }
                                                 if !def.remediation.is_empty() {
@@ -1309,10 +1489,12 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                             .color(heading_fg),
                                                     );
                                                     ui.add_space(3.0);
-                                                    ui.label(
-                                                        RichText::new(&def.remediation)
-                                                            .size(12.5)
-                                                            .color(body_fg),
+                                                    render_formatted_issue_text(
+                                                        ui,
+                                                        &def.remediation,
+                                                        body_fg,
+                                                        link_fg,
+                                                        12.5,
                                                     );
                                                 }
                                                 if !def.references.is_empty() {
@@ -1324,16 +1506,13 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                             .color(heading_fg),
                                                     );
                                                     ui.add_space(3.0);
-                                                    for r in &def.references {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "• {} ({})",
-                                                                r.title, r.url
-                                                            ))
-                                                            .size(12.0)
-                                                            .color(body_fg),
-                                                        );
-                                                    }
+                                                    render_issue_reference_links(
+                                                        ui,
+                                                        &def.references,
+                                                        body_fg,
+                                                        link_fg,
+                                                        12.5,
+                                                    );
                                                 }
                                                 if !def.classifications.is_empty() {
                                                     ui.add_space(10.0);
@@ -1346,16 +1525,13 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                                         .color(heading_fg),
                                                     );
                                                     ui.add_space(3.0);
-                                                    for c in &def.classifications {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "• {} ({})",
-                                                                c.title, c.url
-                                                            ))
-                                                            .size(12.0)
-                                                            .color(body_fg),
-                                                        );
-                                                    }
+                                                    render_issue_reference_links(
+                                                        ui,
+                                                        &def.classifications,
+                                                        body_fg,
+                                                        link_fg,
+                                                        12.5,
+                                                    );
                                                 }
                                             }
                                         });
@@ -1365,6 +1541,163 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                 }
             }
         });
+}
+
+/// Renders a bulleted list of clickable `IssueReference` hyperlinks (`References` & `Vulnerability classifications`).
+pub fn render_issue_reference_links(
+    ui: &mut Ui,
+    items: &[crate::issue_definitions::IssueReference],
+    body_fg: Color32,
+    link_fg: Color32,
+    font_size: f32,
+) {
+    for item in items {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(RichText::new("•").size(font_size).strong().color(body_fg));
+            ui.hyperlink_to(
+                RichText::new(&item.title)
+                    .size(font_size)
+                    .color(link_fg)
+                    .underline(),
+                &item.url,
+            )
+            .on_hover_text(&item.url);
+        });
+    }
+}
+
+/// Renders formatted issue paragraphs, hanging bullet points (`• ...`), and inline clickable
+/// hyperlinks for URLs (`https://...`), CWEs (`CWE-89`), CAPECs (`CAPEC-66`), CVEs (`CVE-2021-41773`),
+/// and RFCs (`RFC 6797`).
+pub fn render_formatted_issue_text(
+    ui: &mut Ui,
+    text: &str,
+    body_fg: Color32,
+    link_fg: Color32,
+    font_size: f32,
+) {
+    let blocks: Vec<&str> = text.split("\n\n").collect();
+    for (b_idx, raw_block) in blocks.iter().enumerate() {
+        let block = raw_block.trim();
+        if block.is_empty() {
+            continue;
+        }
+        if b_idx > 0 {
+            ui.add_space(5.0);
+        }
+        if let Some(bullet_body) = block
+            .strip_prefix("• ")
+            .or_else(|| block.strip_prefix("- "))
+        {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new("•").size(font_size).strong().color(body_fg));
+                ui.vertical(|ui| {
+                    render_paragraph_with_inline_links(
+                        ui,
+                        bullet_body.trim(),
+                        body_fg,
+                        link_fg,
+                        font_size,
+                    );
+                });
+            });
+        } else {
+            render_paragraph_with_inline_links(ui, block, body_fg, link_fg, font_size);
+        }
+    }
+}
+
+fn inline_token_url(token: &str) -> Option<(&str, String, &str)> {
+    let trimmed = token.trim_end_matches([',', '.', ';', ')', ']', '"', '\'']);
+    let suffix = &token[trimmed.len()..];
+    let (prefix, core) = if let Some(rest) = trimmed.strip_prefix(['(', '[', '"', '\'']) {
+        (&trimmed[..1], rest)
+    } else {
+        ("", trimmed)
+    };
+    if core.starts_with("https://") || core.starts_with("http://") {
+        return Some((prefix, core.to_string(), suffix));
+    }
+    if let Some(num) = core.strip_prefix("CWE-") {
+        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+            return Some((
+                prefix,
+                format!("https://cwe.mitre.org/data/definitions/{num}.html"),
+                suffix,
+            ));
+        }
+    }
+    if let Some(num) = core.strip_prefix("CAPEC-") {
+        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+            return Some((
+                prefix,
+                format!("https://capec.mitre.org/data/definitions/{num}.html"),
+                suffix,
+            ));
+        }
+    }
+    if let Some(rest) = core.strip_prefix("CVE-") {
+        if rest.contains('-') && rest.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            return Some((
+                prefix,
+                format!("https://nvd.nist.gov/vuln/detail/{core}"),
+                suffix,
+            ));
+        }
+    }
+    if let Some(num) = core.strip_prefix("GHSA-") {
+        if !num.is_empty() {
+            return Some((
+                prefix,
+                format!("https://github.com/advisories/{core}"),
+                suffix,
+            ));
+        }
+    }
+    None
+}
+
+fn render_paragraph_with_inline_links(
+    ui: &mut Ui,
+    paragraph: &str,
+    body_fg: Color32,
+    link_fg: Color32,
+    font_size: f32,
+) {
+    let has_any_link = paragraph
+        .split_whitespace()
+        .any(|tok| inline_token_url(tok).is_some());
+    if !has_any_link {
+        ui.label(RichText::new(paragraph).size(font_size).color(body_fg));
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for word in paragraph.split_whitespace() {
+            if let Some((prefix, url, suffix)) = inline_token_url(word) {
+                let core_end = word.len() - suffix.len();
+                let core = &word[prefix.len()..core_end];
+                if !prefix.is_empty() {
+                    ui.label(RichText::new(prefix).size(font_size).color(body_fg));
+                }
+                ui.hyperlink_to(
+                    RichText::new(core)
+                        .size(font_size)
+                        .color(link_fg)
+                        .underline(),
+                    &url,
+                )
+                .on_hover_text(&url);
+                if !suffix.is_empty() {
+                    ui.label(RichText::new(suffix).size(font_size).color(body_fg));
+                }
+            } else {
+                ui.label(RichText::new(word).size(font_size).color(body_fg));
+            }
+        }
+    });
 }
 
 /// Paints the exact `resources/Media/svg/light/site-map.svg` (`90 x 63` viewBox) 3-isometric-diamonds icon.

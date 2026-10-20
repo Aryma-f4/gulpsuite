@@ -2967,6 +2967,7 @@ pub(crate) fn start(app: &mut App) {
         )
     };
     let run_active = scan_type != 1 && app.panels.scanner.active_checks;
+    let audit_preset = app.panels.scanner.config_preset;
     let concurrency = app.panels.scanner.resource_pool_concurrency.clamp(1, 32);
     let delay_ms = app.panels.scanner.resource_pool_delay_ms;
     let auto_throttle = app.panels.scanner.resource_pool_auto_throttle;
@@ -3055,11 +3056,28 @@ pub(crate) fn start(app: &mut App) {
                     }
                 }
                 let mut batch_findings = Vec::new();
-                for f in coverage.findings {
+                for mut f in coverage.findings {
+                    // If `Audit checks - critical issues only` (preset 0) is selected, skip Info/Low noise
+                    if audit_preset == 0
+                        && matches!(
+                            f.severity,
+                            crate::scanner::Severity::Info | crate::scanner::Severity::Low
+                        )
+                    {
+                        continue;
+                    }
+                    // Consolidate host-wide passive issues (`consolidate_passive_issues: true`) once per origin
+                    let host_wide = crate::scanner::passive::is_host_wide_passive_issue(&f.name);
+                    if host_wide {
+                        if let Some((scheme, rest)) = f.url.split_once("://") {
+                            let host = rest.split('/').next().unwrap_or(rest);
+                            f.url = format!("{scheme}://{host}/");
+                        }
+                    }
                     let dup = findings.iter().any(|existing: &crate::scanner::Finding| {
                         existing.name == f.name
                             && existing.url == f.url
-                            && existing.parameter == f.parameter
+                            && (host_wide || existing.parameter == f.parameter)
                     });
                     if !dup {
                         findings.push(f.clone());
@@ -3102,7 +3120,7 @@ pub(crate) fn start(app: &mut App) {
                         continue;
                     }
                     let Some((host, port, tls, raw)) =
-                        crate::scanner::active::InjectionPoint::query(url, "x").request("x")
+                        crate::scanner::active::InjectionPoint::baseline_request(url)
                     else {
                         continue;
                     };

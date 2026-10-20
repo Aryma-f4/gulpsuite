@@ -41,21 +41,68 @@ const SECURITY_HEADERS: [(&str, Severity, &str); 6] = [
     ),
 ];
 
+/// True if `url` or `response` is a static sub-resource (`.js`, `.css`, image, font, etc.)
+/// where document-level framing/CSP headers do not apply.
+pub fn is_static_subresource(url: &str, response: &Response) -> bool {
+    let path = url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
+    if [
+        ".js", ".mjs", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".woff",
+        ".woff2", ".ttf", ".eot", ".otf", ".map", ".mp4", ".webm", ".pdf", ".zip",
+    ]
+    .iter()
+    .any(|ext| path.ends_with(ext))
+    {
+        return true;
+    }
+    if let Some(ct) = response.header("Content-Type") {
+        let ctl = ct.to_ascii_lowercase();
+        if ctl.starts_with("image/")
+            || ctl.starts_with("font/")
+            || ctl.starts_with("audio/")
+            || ctl.starts_with("video/")
+            || ctl.contains("javascript")
+            || ctl.contains("text/css")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if a passive finding is host-wide (should be consolidated once per origin in live/crawl scans,
+/// matching `consolidate_passive_issues: true` in `Audit coverage - thorough.json`).
+pub fn is_host_wide_passive_issue(finding_name: &str) -> bool {
+    finding_name.starts_with("Missing ")
+        || finding_name.starts_with("Version disclosure")
+        || finding_name.starts_with("Cookie without ")
+        || finding_name == "Session cookie in a response"
+        || finding_name == "Vulnerable JavaScript dependency"
+}
+
 /// Inspects one response and returns everything it proves.
 pub fn inspect(url: &str, response: &Response) -> Vec<Finding> {
     let mut findings = Vec::new();
     let body = &response.body;
 
-    for (header, severity, why) in SECURITY_HEADERS {
-        if response.header(header).is_none() {
-            findings.push(Finding::new(
-                &format!("Missing {header}"),
-                severity,
-                url,
-                None,
-                &format!("header `{header}` absent"),
-                why,
-            ));
+    // Only flag missing document security headers on 2xx HTML/document responses, not redirects,
+    // 404/500 errors, or static sub-resources (`.js`, `.css`, images, fonts).
+    let is_2xx = (200..300).contains(&response.status);
+    if is_2xx && !is_static_subresource(url, response) {
+        for (header, severity, why) in SECURITY_HEADERS {
+            if response.header(header).is_none() {
+                findings.push(Finding::new(
+                    &format!("Missing {header}"),
+                    severity,
+                    url,
+                    None,
+                    &format!("header `{header}` absent"),
+                    why,
+                ));
+            }
         }
     }
 
@@ -195,7 +242,7 @@ fn version_disclosure(url: &str, response: &Response) -> Vec<Finding> {
                 .any(|part| {
                     let digits = part.chars().filter(|c| c.is_ascii_digit()).count();
                     let dots = part.chars().filter(|c| *c == '.').count();
-                    digits >= 2 && (dots == 0 || dots >= 1)
+                    digits >= 2 && dots >= 1
                 });
             if looks_like_version {
                 let cve_note = lookup_server_cves(value);
@@ -431,8 +478,8 @@ pub fn vulnerable_js_dependencies(url: &str, body: &str) -> Vec<Finding> {
 
 /// Static JavaScript DOM taint analysis (`auditing.html#javascript-analysis-phase`):
 /// Detects attacker-controllable DOM sources (`location.search`, `location.hash`, `document.referrer`,
-/// `window.name`) flowing into dangerous DOM sinks (`innerHTML`, `outerHTML`, `document.write`, `eval`,
-/// `location.href`, `location.replace`).
+/// `window.name`) flowing directly into dangerous DOM sinks (`innerHTML`, `outerHTML`, `document.write`, `eval`,
+/// `location.href`, `location.replace`) within the same script block or statement without sanitization.
 fn dom_taint_analysis(url: &str, body: &str) -> Vec<Finding> {
     if !body.contains("<script") && !url.ends_with(".js") {
         return Vec::new();
@@ -458,29 +505,44 @@ fn dom_taint_analysis(url: &str, body: &str) -> Vec<Finding> {
     ];
 
     let lower = body.to_ascii_lowercase();
-    let Some(&src) = SOURCES.iter().find(|&&s| lower.contains(s)) else {
-        return Vec::new();
-    };
     let mut found = Vec::new();
-    if let Some(&sink) = XSS_SINKS.iter().find(|&&k| lower.contains(k)) {
-        found.push(Finding::new(
-            "Cross-site scripting (DOM-based)",
-            Severity::High,
-            url,
-            Some(src.to_string()),
-            &format!("DOM source `{src}` reaches sink `{sink}`"),
-            "Static JavaScript AST/taint analysis detected an untrusted DOM source flowing into an HTML/code execution sink (CWE-79, Type 0x00200320).",
-        ));
-    }
-    if let Some(&sink) = REDIRECT_SINKS.iter().find(|&&k| lower.contains(k)) {
-        found.push(Finding::new(
-            "Open redirection (DOM-based)",
-            Severity::Medium,
-            url,
-            Some(src.to_string()),
-            &format!("DOM source `{src}` reaches navigation sink `{sink}`"),
-            "Static JavaScript taint analysis detected an untrusted DOM source controlling a navigation sink (CWE-601, Type 0x00500120).",
-        ));
+
+    for &src in &SOURCES {
+        let Some(src_pos) = lower.find(src) else {
+            continue;
+        };
+        // Inspect a bounded local window (<= 240 chars) after the DOM source so unrelated
+        // sources and sinks across large bundles do not produce false positives.
+        let win_end = (src_pos + 240).min(lower.len());
+        let window = &lower[src_pos..win_end];
+        if window.contains("encodeuricomponent(")
+            || window.contains("dompurify.sanitize(")
+            || window.contains("textcontent")
+        {
+            continue;
+        }
+        if let Some(&sink) = XSS_SINKS.iter().find(|&&k| window.contains(k)) {
+            found.push(Finding::new(
+                "Cross-site scripting (DOM-based)",
+                Severity::High,
+                url,
+                Some(src.to_string()),
+                &format!("DOM source `{src}` reaches sink `{sink}`"),
+                "Static JavaScript AST/taint analysis detected an untrusted DOM source flowing into an HTML/code execution sink (CWE-79, Type 0x00200310).",
+            ));
+            break;
+        }
+        if let Some(&sink) = REDIRECT_SINKS.iter().find(|&&k| window.contains(k)) {
+            found.push(Finding::new(
+                "Open redirection (DOM-based)",
+                Severity::Low,
+                url,
+                Some(src.to_string()),
+                &format!("DOM source `{src}` reaches navigation sink `{sink}`"),
+                "Static JavaScript taint analysis detected an untrusted DOM source controlling a navigation sink (CWE-601, Type 0x00500110).",
+            ));
+            break;
+        }
     }
     found
 }
@@ -555,13 +617,17 @@ fn secrets(url: &str, body: &str) -> Vec<Finding> {
             let after_eq = index + needle.len();
             search_from = after_eq;
 
-            // Ignore HTML attributes (`name="password="`, `<input`) or URL query links (`?password=&`)
-            let prefix = &lower_body[index.saturating_sub(16)..index];
+            // Ignore HTML attributes (`name="password"`, `<input`), URL query links (`?password=&`), or JS code
+            let prefix = &lower_body[index.saturating_sub(24)..index];
             if prefix.contains("name=")
                 || prefix.contains("type=")
                 || prefix.contains("placeholder=")
                 || prefix.contains("href=")
                 || prefix.contains("action=")
+                || prefix.contains("id=")
+                || prefix.contains("for=")
+                || prefix.ends_with('?')
+                || prefix.ends_with('&')
             {
                 continue;
             }
@@ -570,15 +636,31 @@ fn secrets(url: &str, body: &str) -> Vec<Finding> {
                 .trim_start_matches(['"', '\''])
                 .chars()
                 .take_while(|c| {
-                    !c.is_whitespace() && !matches!(c, '"' | '\'' | '&' | '<' | '>' | ';' | ',' | ')')
+                    !c.is_whitespace()
+                        && !matches!(c, '"' | '\'' | '&' | '<' | '>' | ';' | ',' | ')' | '}' | ']')
                 })
                 .collect();
             let cand_low = candidate.to_ascii_lowercase();
             let alnum_count = candidate.chars().filter(|c| c.is_ascii_alphanumeric()).count();
-            if alnum_count < 4
+            if alnum_count < 5
+                || candidate.contains('(')
+                || candidate.contains('{')
+                || candidate.contains('[')
+                || candidate.contains('$')
+                || candidate.contains('.')
+                || candidate.contains('+')
                 || matches!(
                     cand_low.as_str(),
-                    "null" | "undefined" | "true" | "false" | "none" | "password" | "secret"
+                    "null"
+                        | "undefined"
+                        | "true"
+                        | "false"
+                        | "none"
+                        | "password"
+                        | "secret"
+                        | "changeme"
+                        | "required"
+                        | "hidden"
                 )
                 || cand_low.starts_with("your_")
                 || cand_low.starts_with("example")
@@ -754,9 +836,19 @@ fn comments(url: &str, body: &str) -> Vec<Finding> {
         let comment = body[from..from + end].trim().to_string();
         cursor = from + end + 3;
         let cl = comment.to_ascii_lowercase();
-        if ["todo", "fixme", "password", "secret", "api key", "hack", "temp", "remove before"]
-            .iter()
-            .any(|hint| cl.contains(hint))
+        let has_word = |w: &str| {
+            cl.split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|tok| tok == w)
+        };
+        if has_word("todo")
+            || has_word("fixme")
+            || has_word("hack")
+            || cl.contains("api key")
+            || cl.contains("api_key")
+            || cl.contains("secret_key")
+            || cl.contains("password:")
+            || cl.contains("password=")
+            || cl.contains("remove before")
         {
             found.push(Finding::new(
                 "Revealing HTML comment",

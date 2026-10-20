@@ -179,6 +179,17 @@ impl InjectionPoint {
         }
     }
 
+    /// Builds an unmodified baseline GET request for `url` without injecting synthetic parameters.
+    pub fn baseline_request(url: &str) -> Option<(String, u16, bool, String)> {
+        let (host, port, tls) = super::endpoint(url)?;
+        let target = super::http::path_of(url);
+        let raw = format!(
+            "GET {target} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nConnection: close\r\n\r\n",
+            host_header(&host, port, tls)
+        );
+        Some((host, port, tls, raw))
+    }
+
     /// The request to send with `value` substituted, as (host, port, tls, raw).
     pub fn request(&self, value: &str) -> Option<(String, u16, bool, String)> {
         let (host, port, tls) = super::endpoint(&self.url)?;
@@ -298,20 +309,22 @@ fn reflection(body: &str, payload: &str) -> Reflection {
 
 /// The body carries a recognisable database error.
 fn database_error(body: &str) -> bool {
-    const SIGNATURES: [&str; 14] = [
+    const SIGNATURES: [&str; 16] = [
         "sql syntax",
         "mysql_fetch",
         "mysqli_",
-        "postgresql",
+        "postgresql query failed",
+        "psqlexception",
+        "syntax error at or near",
         "pg_query",
-        "sqlite3",
+        "sqlite3::",
+        "sqlite_error",
+        "unrecognized token:",
         "ora-00933",
         "ora-01756",
         "odbc sql",
         "unclosed quotation mark",
         "warning: mysql",
-        "you have an error in your sql syntax",
-        "supplied argument is not a valid",
         "microsoft ole db provider for sql server",
     ];
     let lower = body.to_ascii_lowercase();
@@ -325,6 +338,9 @@ fn template_evaluated(body: &str, payload: &str) -> bool {
     if body.contains(payload) {
         return false;
     }
+    if payload.contains("'7'") && body.contains("7777777") {
+        return true;
+    }
     let digits: String = payload
         .chars()
         .skip_while(|c| !c.is_ascii_digit())
@@ -337,28 +353,36 @@ fn template_evaluated(body: &str, payload: &str) -> bool {
             expected = expected.saturating_mul(value);
         }
     }
-    (expected != 1 && body.contains(&expected.to_string()))
-        || body.to_ascii_lowercase().contains("template syntax")
+    let exp_str = expected.to_string();
+    let has_standalone_expected = expected != 1
+        && body.match_indices(&exp_str).any(|(idx, _)| {
+            let prev = body[..idx].chars().next_back();
+            let next = body[idx + exp_str.len()..].chars().next();
+            !prev.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+                && !next.is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        });
+    has_standalone_expected || body.to_ascii_lowercase().contains("template syntax")
 }
 
 /// The body shows a command being run.
 fn command_output(body: &str) -> bool {
-    const SIGNATURES: [&str; 5] = [
+    const SIGNATURES: [&str; 4] = [
         "uid=0(root)",
         "uid=33(www-data)",
         "root:x:0:0",
-        "www-data:",
-        "bin/sh",
+        "www-data:x:",
     ];
     let lower = body.to_ascii_lowercase();
     SIGNATURES.iter().any(|s| lower.contains(s))
+        || (lower.contains("uid=") && lower.contains("gid=") && lower.contains("groups="))
 }
 
 /// The body leaks a file that should not be readable.
 fn file_disclosure(body: &str) -> bool {
     body.contains("root:x:0:0")
-        || body.contains("[core]")
-        || body.contains("<?php") && body.contains("?>") && body.contains("require")
+        || body.contains("[boot loader]")
+        || body.contains("[extensions]")
+        || (body.contains("<?php") && body.contains("?>") && body.contains("require"))
 }
 
 /// Path traversal, one payload per encoding the filter might expect.
@@ -445,18 +469,11 @@ pub fn cross_site_scripting() -> Check {
             "\"><script>alert(1)</script>",
             "'><img src=x onerror=alert(1)>",
             "<svg/onload=alert(1)>",
-            "{{7*7}}",
         ],
-        detect: |response, payload| {
-            if payload == "{{7*7}}" && template_evaluated(&response.body, payload) {
-                Signal::Evaluated
-            } else {
-                match reflection(&response.body, payload) {
-                    Reflection::Verbatim => Signal::Reflected,
-                    Reflection::Encoded => Signal::Inert,
-                    Reflection::None => Signal::Nothing,
-                }
-            }
+        detect: |response, payload| match reflection(&response.body, payload) {
+            Reflection::Verbatim => Signal::Reflected,
+            Reflection::Encoded => Signal::Inert,
+            Reflection::None => Signal::Nothing,
         },
         explain: "An injected element came back in the response without escaping.",
     }
@@ -467,7 +484,7 @@ pub fn template_injection() -> Check {
     Check {
         name: "Server-side template injection",
         severity: Severity::High,
-        payloads: &["{{7*7}}", "${7*7}", "{{7*'7'}}", "<%= 7*7 %>"],
+        payloads: &["{{7*'7'}}", "{{7*7}}", "${7*7}", "<%= 7*7 %>"],
         detect: |response, payload| {
             if template_evaluated(&response.body, payload) {
                 Signal::Evaluated
