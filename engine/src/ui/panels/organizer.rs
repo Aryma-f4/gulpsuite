@@ -219,7 +219,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.organizer.req_wrap,
                         &mut app.panels.organizer.req_np,
                     );
-                    let r_req = super::burp_numbered_message_view(
+                    let r_req = super::burp_numbered_message_view_wrapped(
                         &mut columns[1],
                         &theme,
                         "org-req",
@@ -227,6 +227,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &item.request,
                         app.panels.organizer.req_fmt_mode,
                         app.panels.organizer.req_np,
+                        app.panels.organizer.req_wrap,
                     );
                     super::attach_message_context_menu(
                         app,
@@ -245,7 +246,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.organizer.resp_wrap,
                         &mut app.panels.organizer.resp_np,
                     );
-                    let r_resp = super::burp_numbered_message_view(
+                    let r_resp = super::burp_numbered_message_view_wrapped(
                         &mut columns[1],
                         &theme,
                         "org-resp",
@@ -253,6 +254,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &item.response,
                         app.panels.organizer.resp_fmt_mode,
                         app.panels.organizer.resp_np,
+                        app.panels.organizer.resp_wrap,
                     );
                     super::attach_message_context_menu(
                         app,

@@ -545,37 +545,37 @@ fn target_proxy_organizer_logger_empty_states_and_intruder_subtabs_work() {
     }
     harness.get_by_label("HTTP history").click();
     harness.run();
-    assert!(harness.query_by_label("https://allowed.test/ok").is_some());
-    assert!(harness.query_by_label("https://outofscope.test/fail").is_some());
+    assert!(harness.query_by_label("/ok").is_some());
+    assert!(harness.query_by_label("https://outofscope.test").is_some());
     harness
         .get_by_role_and_label(eframe::egui::accesskit::Role::CheckBox, "In-scope only")
         .click();
     harness.run();
-    assert!(harness.query_by_label("https://allowed.test/ok").is_some());
-    assert!(harness.query_by_label("https://outofscope.test/fail").is_none());
+    assert!(harness.query_by_label("/ok").is_some());
+    assert!(harness.query_by_label("https://outofscope.test").is_none());
     harness
         .get_by_role_and_label(eframe::egui::accesskit::Role::CheckBox, "4xx/5xx only")
         .click();
     harness.run();
-    assert!(harness.query_by_label("https://allowed.test/ok").is_none());
-    assert!(harness.query_by_label("https://allowed.test/fail").is_some());
+    assert!(harness.query_by_label("/ok").is_none());
+    assert!(harness.query_by_label("/fail").is_some());
 
     // Toggle Filter on -> Filter off restores unfiltered rows without clearing settings
     harness.get_by_label("Filter on").click();
     harness.run();
-    assert!(harness.query_by_label("https://allowed.test/ok").is_some());
-    assert!(harness.query_by_label("https://outofscope.test/fail").is_some());
+    assert!(harness.query_by_label("/ok").is_some());
+    assert!(harness.query_by_label("https://outofscope.test").is_some());
 
     // Column sorting in HTTP history: Status -> Status ▲ -> Status ▼ -> Status
-    harness.get_by_label("Status").click();
+    harness.get_by_label("Status code").click();
     harness.run();
-    assert_eq!(harness.state().panels.proxy_panel.sort_column, Some(5));
+    assert_eq!(harness.state().panels.proxy_panel.sort_column, Some(6));
     assert!(harness.state().panels.proxy_panel.sort_ascending);
-    assert!(harness.query_by_label("Status ▲").is_some());
-    harness.get_by_label("Status ▲").click();
+    assert!(harness.query_by_label("Status code ▲").is_some());
+    harness.get_by_label("Status code ▲").click();
     harness.run();
     assert!(!harness.state().panels.proxy_panel.sort_ascending);
-    assert!(harness.query_by_label("Status ▼").is_some());
+    assert!(harness.query_by_label("Status code ▼").is_some());
 
     // Filter settings modal window opens with Burp Configure filter controls
     harness.get_by_label("Filter settings").click();
@@ -842,6 +842,60 @@ fn context_menu_persists_across_frames_on_tables_and_message_panes() {
         "Message pane right-click context menu must open on blank space and stay open across frames"
     );
     assert!(harness.query_by_label("Request in browser").is_some());
+
+    // Verify block-selection ("block") + Add § / Clear § in Intruder AND right-click on blocked selection
+    harness.get_by_label("Intruder").click();
+    harness.state_mut().panels.intruder.template =
+        "POST /login HTTP/1.1\r\nHost: example.com\r\n\r\nuser=carlos&pass=secret".into();
+    harness.run();
+    // Simulate blocking "carlos" (char range 48..54) in the Intruder Positions editor
+    let tmpl = harness.state().panels.intruder.template.clone();
+    let start_idx = tmpl.find("carlos").unwrap();
+    let end_idx = start_idx + "carlos".len();
+    gulpsuite::ui::panels::record_message_selection(
+        "intruder-positions-edit",
+        start_idx..end_idx,
+        &tmpl,
+    );
+    harness.run();
+    harness.get_by_label("Add §").click();
+    harness.run();
+    assert!(
+        harness.state().panels.intruder.template.contains("user=§carlos§&pass=secret"),
+        "Add § must wrap the blocked selection in §...§: {}",
+        harness.state().panels.intruder.template
+    );
+
+    // Right-click in the Intruder request editor while a selection is active;
+    // verify "Copy selection" and "Send selection to Decoder" appear and persist across frames.
+    let tmpl2 = harness.state().panels.intruder.template.clone();
+    let sec_byte_start = tmpl2.find("secret").unwrap();
+    let sec_char_start = tmpl2[..sec_byte_start].chars().count();
+    let sec_char_end = sec_char_start + "secret".chars().count();
+    gulpsuite::ui::panels::record_message_selection(
+        "intruder-positions-edit",
+        sec_char_start..sec_char_end,
+        &tmpl2,
+    );
+    let add_btn_rect = harness.get_by_label("Add §").rect();
+    right_click(
+        &mut harness,
+        eframe::egui::pos2(add_btn_rect.min.x + 60.0, add_btn_rect.max.y + 40.0),
+    );
+    harness.step();
+    harness.step();
+    assert!(
+        harness.query_by_label("Copy selection").is_some(),
+        "Right-clicking with blocked text must offer Copy selection"
+    );
+    assert!(
+        harness.query_by_label("Send selection to Decoder").is_some(),
+        "Right-clicking with blocked text must offer Send selection to Decoder"
+    );
+    harness.get_by_label("Send selection to Decoder").click();
+    harness.run();
+    assert_eq!(harness.state().tool, gulpsuite::ui::app::DECODER);
+    assert_eq!(harness.state().panels.decoder.input, "secret");
 }
 
 #[test]
@@ -1010,3 +1064,157 @@ fn generate_documentation_screenshots() {
         .expect("save 09-decoder-smart-decode.png");
 }
 
+#[test]
+fn http_history_uses_bounded_columns_and_whole_row_selection() {
+    let mut h = harness(false, 1440.0);
+    for (path, bytes) in [
+        ("/short".to_string(), 12345),
+        (format!("/{}", "long-path".repeat(80)), 67890),
+    ] {
+        h.state_mut()
+            .log
+            .push_back(gulpsuite::ui::app::Transaction {
+                method: "GET".into(),
+                target: format!("https://history.test{path}"),
+                status: 200,
+                bytes,
+                host: "history.test".into(),
+                secure: true,
+                request: format!("GET {path} HTTP/1.1\r\nHost: history.test\r\n\r\n"),
+                response:
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<title>History</title>"
+                        .into(),
+                truncated: false,
+            });
+    }
+    h.state_mut().log_version += 1;
+    h.get_by_label("Proxy").click();
+    h.run();
+    h.get_by_label("HTTP history").click();
+    h.run();
+    assert!(
+        h.query_by_label("/short").is_some(),
+        "URL column must show the path and query"
+    );
+    let url = h.get_by_label("/short").rect();
+    let length = h.get_by_label("12345").rect();
+    assert!(url.width() <= 400.0, "Long URLs must not expand columns");
+    assert!(
+        length.right() < 1440.0,
+        "Length must remain in the viewport"
+    );
+    assert!(
+        h.query_by_label("To Repeater").is_none(),
+        "Actions belong in the row context menu"
+    );
+    let edge = h.get_by_label("URL").rect().right_center();
+    h.input_mut().events.extend([
+        eframe::egui::Event::PointerMoved(edge),
+        eframe::egui::Event::PointerButton {
+            pos: edge,
+            button: eframe::egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        },
+    ]);
+    h.step();
+    let moved = edge + eframe::egui::vec2(50.0, 0.0);
+    h.input_mut()
+        .events
+        .push(eframe::egui::Event::PointerMoved(moved));
+    h.step();
+    h.input_mut()
+        .events
+        .push(eframe::egui::Event::PointerButton {
+            pos: moved,
+            button: eframe::egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        });
+    h.run();
+    assert!(
+        (h.get_by_label("/short").rect().width() - url.width() - 50.0).abs() < 2.0,
+        "Dragging a header divider must resize its column by the drag distance"
+    );
+
+    h.get_by_label("12345").click();
+    h.run();
+    assert_eq!(
+        h.state().panels.proxy_panel.selected,
+        Some(0),
+        "Every column must select its row"
+    );
+    assert!(h.query_by_label("Request").is_some());
+    if std::env::var_os("GULPSUITE_HISTORY_SCREENSHOTS").is_some() {
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/screenshots");
+        h.render()
+            .unwrap()
+            .save(out.join("http-history-light.png"))
+            .unwrap();
+        h.state_mut().set_dark(true);
+        h.run();
+        h.render()
+            .unwrap()
+            .save(out.join("http-history-dark.png"))
+            .unwrap();
+    }
+}
+
+#[test]
+fn http_history_search_includes_entries_older_than_300_rows() {
+    let mut h = harness(true, 1000.0);
+    for index in 0..305 {
+        h.state_mut()
+            .log
+            .push_back(gulpsuite::ui::app::Transaction {
+                method: "GET".into(),
+                target: format!("https://history.test/entry-{index}"),
+                status: 200,
+                bytes: 42,
+                host: "history.test".into(),
+                secure: true,
+                request: "GET / HTTP/1.1\r\nHost: history.test\r\n\r\n".into(),
+                response: "HTTP/1.1 200 OK\r\n\r\n".into(),
+                truncated: false,
+            });
+    }
+    h.state_mut().log_version += 1;
+    h.state_mut().panels.proxy_panel.filter = "/entry-0".into();
+    h.get_by_label("Proxy").click();
+    h.run();
+    h.get_by_label("HTTP history").click();
+    h.run();
+    h.get_by_label("/entry-0").click();
+    h.run();
+    assert_eq!(h.state().panels.proxy_panel.selected, Some(0));
+    assert!(h.query_by_label("/entry-304").is_none());
+    h.state_mut().panels.proxy_panel.selected = None;
+    h.state_mut().panels.proxy_panel.filter.clear();
+    h.run();
+    let header = h.get_by_label("URL").rect();
+    let row = h.get_by_label("/entry-0").rect();
+    h.input_mut().events.extend([
+        eframe::egui::Event::PointerMoved(row.center()),
+        eframe::egui::Event::MouseWheel {
+            unit: eframe::egui::MouseWheelUnit::Point,
+            delta: eframe::egui::vec2(0.0, -400.0),
+            modifiers: Default::default(),
+        },
+    ]);
+    h.run_steps(12);
+    h.input_mut()
+        .events
+        .push(eframe::egui::Event::PointerMoved(eframe::egui::pos2(
+            5.0, 5.0,
+        )));
+    h.run_steps(12);
+    assert_eq!(
+        h.get_by_label("URL").rect(),
+        header,
+        "The header must remain fixed during vertical scrolling"
+    );
+    assert!(
+        h.query_by_label("/entry-0").is_none(),
+        "The body must scroll independently of the header"
+    );
+}

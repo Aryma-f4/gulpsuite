@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, Color32, RichText, Stroke, Ui, Vec2};
 
 use super::{
-    SiteMapIcon, burp_message_formatter_bar, burp_numbered_message_view, empty_state, heading,
+    SiteMapIcon, burp_message_formatter_bar, burp_numbered_message_view_wrapped, empty_state, heading,
     muted, paint_sitemap_node_icon,
 };
 use crate::ui::app::{App, SiteMapPaths};
@@ -49,6 +49,16 @@ pub struct TargetPanel {
     pub scope: String,
     pub scope_exclude: String,
     pub advanced_scope_control: bool,
+    pub disabled_include_rules: std::collections::BTreeSet<String>,
+    pub disabled_exclude_rules: std::collections::BTreeSet<String>,
+    pub selected_include_rule: Option<usize>,
+    pub selected_exclude_rule: Option<usize>,
+    pub editing_include_rule: Option<usize>,
+    pub editing_exclude_rule: Option<usize>,
+    pub pending_scope_paste: Option<bool>,
+    pub scope_load_include: Option<bool>,
+    pub scope_load_path: String,
+    pub scope_load_error: String,
     pub new_include_prefix: String,
     pub new_exclude_prefix: String,
     pub filter: String,
@@ -71,6 +81,11 @@ pub struct TargetPanel {
     pub req_non_printable: bool,
     pub resp_non_printable: bool,
     pub issue_detail_tab: usize,
+    pub selected_kb_def: usize,
+    pub kb_search: String,
+    pub kb_severity_filter: usize,
+    pub issue_sev_filter: [bool; 4],
+    pub issue_conf_filter: [bool; 3],
 }
 
 impl Default for TargetPanel {
@@ -79,6 +94,16 @@ impl Default for TargetPanel {
             scope: String::new(),
             scope_exclude: String::new(),
             advanced_scope_control: false,
+            disabled_include_rules: Default::default(),
+            disabled_exclude_rules: Default::default(),
+            selected_include_rule: None,
+            selected_exclude_rule: None,
+            editing_include_rule: None,
+            editing_exclude_rule: None,
+            pending_scope_paste: None,
+            scope_load_include: None,
+            scope_load_path: String::new(),
+            scope_load_error: String::new(),
             new_include_prefix: String::new(),
             new_exclude_prefix: String::new(),
             filter: String::new(),
@@ -99,6 +124,11 @@ impl Default for TargetPanel {
             req_non_printable: false,
             resp_non_printable: false,
             issue_detail_tab: 0,
+            selected_kb_def: 0,
+            kb_search: String::new(),
+            kb_severity_filter: 0,
+            issue_sev_filter: [true, true, true, true],
+            issue_conf_filter: [true, true, true],
         }
     }
 }
@@ -120,7 +150,9 @@ impl TargetPanel {
             .filter(|s| !s.is_empty())
             .map(str::to_lowercase)
             .collect();
-        if !includes.is_empty() && !includes.iter().any(|rule| candidate.contains(rule)) {
+        if !includes.is_empty() && !includes.iter().any(|rule| {
+            !self.disabled_include_rules.contains(rule) && candidate.contains(rule)
+        }) {
             return false;
         }
         let excludes: Vec<_> = self
@@ -130,7 +162,9 @@ impl TargetPanel {
             .filter(|s| !s.is_empty())
             .map(str::to_lowercase)
             .collect();
-        !excludes.iter().any(|rule| candidate.contains(rule))
+        !excludes.iter().any(|rule| {
+            !self.disabled_exclude_rules.contains(rule) && candidate.contains(rule)
+        })
     }
 }
 
@@ -142,9 +176,59 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Renders `Target -> Scope` matching `site-map-target-scope.png` 100%.
+/// Target scope: selectable include/exclude rules with persistent enabled states.
 fn draw_scope_view(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
+    if let Some(include) = app.panels.target_panel.pending_scope_paste {
+        let paste = ui.input(|i| i.events.iter().find_map(|e| {
+            if let egui::Event::Paste(text) = e { Some(text.clone()) } else { None }
+        }));
+        if let Some(text) = paste {
+            app.panels.target_panel.pending_scope_paste = None;
+            let prefix = text.trim();
+            if url::Url::parse(prefix).is_ok_and(|url| matches!(url.scheme(), "http" | "https")) {
+                let rules = if include { &mut app.panels.target_panel.scope } else { &mut app.panels.target_panel.scope_exclude };
+                if !rules.split([',', '\n']).any(|rule| rule.trim() == prefix) {
+                    if !rules.trim().is_empty() { rules.push_str(", "); }
+                    rules.push_str(prefix);
+                }
+            } else { app.status = "Paste URL requires an HTTP or HTTPS URL".into(); }
+        }
+    }
+    if let Some(include) = app.panels.target_panel.scope_load_include {
+        let mut open = true;
+        egui::Window::new("Load scope rules").open(&mut open).show(ui.ctx(), |ui| {
+            ui.label("File containing one URL prefix per line:");
+            ui.text_edit_singleline(&mut app.panels.target_panel.scope_load_path);
+            if !app.panels.target_panel.scope_load_error.is_empty() {
+                ui.colored_label(theme.color("ui.text.error"), &app.panels.target_panel.scope_load_error);
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Load").clicked() {
+                    let path = app.panels.target_panel.scope_load_path.trim();
+                    let result = std::fs::metadata(path).map_err(|e| e.to_string()).and_then(|metadata| {
+                        if metadata.len() > 1024 * 1024 { Err("Scope file exceeds 1 MiB".into()) }
+                        else { std::fs::read_to_string(path).map_err(|e| e.to_string()) }
+                    });
+                    match result {
+                        Ok(contents) => {
+                            let rules = if include { &mut app.panels.target_panel.scope } else { &mut app.panels.target_panel.scope_exclude };
+                            for prefix in contents.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                                if !rules.split([',', '\n']).any(|rule| rule.trim() == prefix) {
+                                    if !rules.trim().is_empty() { rules.push_str(", "); }
+                                    rules.push_str(prefix);
+                                }
+                            }
+                            app.panels.target_panel.scope_load_include = None;
+                        }
+                        Err(error) => app.panels.target_panel.scope_load_error = error,
+                    }
+                }
+                if ui.button("Cancel").clicked() { app.panels.target_panel.scope_load_include = None; }
+            });
+        });
+        if !open { app.panels.target_panel.scope_load_include = None; }
+    }
     egui::ScrollArea::vertical()
         .id_salt("target-scope-scroll")
         .show(ui, |ui| {
@@ -193,40 +277,45 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(92.0);
-                    if ui.button("Add").clicked()
+                    if ui.button(if app.panels.target_panel.editing_include_rule.is_some() { "Save" } else { "Add" }).clicked()
                         && !app.panels.target_panel.new_include_prefix.trim().is_empty()
                     {
-                        inc_rules.push(
-                            app.panels
-                                .target_panel
-                                .new_include_prefix
-                                .trim()
-                                .to_string(),
-                        );
+                        let prefix = app.panels.target_panel.new_include_prefix.trim().to_string();
+                        if let Some(index) = app.panels.target_panel.editing_include_rule.take() {
+                            if let Some(rule) = inc_rules.get_mut(index) {
+                                let disabled = app.panels.target_panel.disabled_include_rules.remove(&rule.to_lowercase());
+                                *rule = prefix.clone();
+                                if disabled { app.panels.target_panel.disabled_include_rules.insert(prefix.to_lowercase()); }
+                            }
+                        } else if !inc_rules.contains(&prefix) {
+                            inc_rules.push(prefix);
+                        }
                         app.panels.target_panel.new_include_prefix.clear();
                         inc_changed = true;
                     }
-                    if ui.button("Edit").clicked() {
-                        if let Some(last) = inc_rules.pop() {
-                            app.panels.target_panel.new_include_prefix = last;
+                    let selected = app.panels.target_panel.selected_include_rule.filter(|i| *i < inc_rules.len());
+                    if ui.add_enabled(selected.is_some(), egui::Button::new("Edit")).clicked() {
+                        if let Some(index) = selected {
+                            app.panels.target_panel.new_include_prefix = inc_rules[index].clone();
+                            app.panels.target_panel.editing_include_rule = Some(index);
+                        }
+                    }
+                    if ui.add_enabled(selected.is_some(), egui::Button::new("Remove")).clicked() {
+                        if let Some(index) = selected {
+                            let removed = inc_rules.remove(index);
+                            app.panels.target_panel.disabled_include_rules.remove(&removed.to_lowercase());
+                            app.panels.target_panel.selected_include_rule = None;
+                            app.panels.target_panel.editing_include_rule = None;
                             inc_changed = true;
                         }
                     }
-                    if ui.button("Remove").clicked() && !inc_rules.is_empty() {
-                        inc_rules.pop();
-                        inc_changed = true;
-                    }
                     if ui.button("Paste URL").clicked() {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                        app.panels.target_panel.pending_scope_paste = Some(true);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                     }
                     if ui.button("Load ...").clicked() {
-                        for host in app.log.iter().map(|tx| tx.host_url()).take(5) {
-                            if !inc_rules.contains(&host) {
-                                inc_rules.push(host);
-                                inc_changed = true;
-                            }
-                        }
+                        app.panels.target_panel.scope_load_include = Some(true);
+                        app.panels.target_panel.scope_load_error.clear();
                     }
                 });
                 egui::Frame::new()
@@ -244,10 +333,16 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
                                 ui.strong("Enabled");
                                 ui.strong("Prefix");
                                 ui.end_row();
-                                for rule in &inc_rules {
-                                    let mut en = true;
-                                    ui.checkbox(&mut en, "");
-                                    ui.monospace(rule);
+                                for (index, rule) in inc_rules.iter().enumerate() {
+                                    let key = rule.to_lowercase();
+                                    let mut enabled = !app.panels.target_panel.disabled_include_rules.contains(&key);
+                                    if ui.checkbox(&mut enabled, "").changed() {
+                                        if enabled { app.panels.target_panel.disabled_include_rules.remove(&key); }
+                                        else { app.panels.target_panel.disabled_include_rules.insert(key); }
+                                    }
+                                    if ui.selectable_label(app.panels.target_panel.selected_include_rule == Some(index), rule).clicked() {
+                                        app.panels.target_panel.selected_include_rule = Some(index);
+                                    }
                                     ui.end_row();
                                 }
                             });
@@ -284,36 +379,45 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     ui.set_width(92.0);
-                    if ui.button("Add").clicked()
+                    if ui.button(if app.panels.target_panel.editing_exclude_rule.is_some() { "Save" } else { "Add" }).clicked()
                         && !app.panels.target_panel.new_exclude_prefix.trim().is_empty()
                     {
-                        exc_rules.push(
-                            app.panels
-                                .target_panel
-                                .new_exclude_prefix
-                                .trim()
-                                .to_string(),
-                        );
+                        let prefix = app.panels.target_panel.new_exclude_prefix.trim().to_string();
+                        if let Some(index) = app.panels.target_panel.editing_exclude_rule.take() {
+                            if let Some(rule) = exc_rules.get_mut(index) {
+                                let disabled = app.panels.target_panel.disabled_exclude_rules.remove(&rule.to_lowercase());
+                                *rule = prefix.clone();
+                                if disabled { app.panels.target_panel.disabled_exclude_rules.insert(prefix.to_lowercase()); }
+                            }
+                        } else if !exc_rules.contains(&prefix) {
+                            exc_rules.push(prefix);
+                        }
                         app.panels.target_panel.new_exclude_prefix.clear();
                         exc_changed = true;
                     }
-                    if ui.button("Edit").clicked() {
-                        if let Some(last) = exc_rules.pop() {
-                            app.panels.target_panel.new_exclude_prefix = last;
+                    let selected = app.panels.target_panel.selected_exclude_rule.filter(|i| *i < exc_rules.len());
+                    if ui.add_enabled(selected.is_some(), egui::Button::new("Edit")).clicked() {
+                        if let Some(index) = selected {
+                            app.panels.target_panel.new_exclude_prefix = exc_rules[index].clone();
+                            app.panels.target_panel.editing_exclude_rule = Some(index);
+                        }
+                    }
+                    if ui.add_enabled(selected.is_some(), egui::Button::new("Remove")).clicked() {
+                        if let Some(index) = selected {
+                            let removed = exc_rules.remove(index);
+                            app.panels.target_panel.disabled_exclude_rules.remove(&removed.to_lowercase());
+                            app.panels.target_panel.selected_exclude_rule = None;
+                            app.panels.target_panel.editing_exclude_rule = None;
                             exc_changed = true;
                         }
                     }
-                    if ui.button("Remove").clicked() && !exc_rules.is_empty() {
-                        exc_rules.pop();
-                        exc_changed = true;
-                    }
                     if ui.button("Paste URL").clicked() {
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                        app.panels.target_panel.pending_scope_paste = Some(false);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                     }
                     if ui.button("Load ...").clicked() {
-                        exc_rules.push("logout".into());
-                        exc_changed = true;
+                        app.panels.target_panel.scope_load_include = Some(false);
+                        app.panels.target_panel.scope_load_error.clear();
                     }
                 });
                 egui::Frame::new()
@@ -331,10 +435,16 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
                                 ui.strong("Enabled");
                                 ui.strong("Prefix");
                                 ui.end_row();
-                                for rule in &exc_rules {
-                                    let mut en = true;
-                                    ui.checkbox(&mut en, "");
-                                    ui.monospace(rule);
+                                for (index, rule) in exc_rules.iter().enumerate() {
+                                    let key = rule.to_lowercase();
+                                    let mut enabled = !app.panels.target_panel.disabled_exclude_rules.contains(&key);
+                                    if ui.checkbox(&mut enabled, "").changed() {
+                                        if enabled { app.panels.target_panel.disabled_exclude_rules.remove(&key); }
+                                        else { app.panels.target_panel.disabled_exclude_rules.insert(key); }
+                                    }
+                                    if ui.selectable_label(app.panels.target_panel.selected_exclude_rule == Some(index), rule).clicked() {
+                                        app.panels.target_panel.selected_exclude_rule = Some(index);
+                                    }
                                     ui.end_row();
                                 }
                             });
@@ -356,14 +466,18 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
         });
 }
 
-/// Renders `Target -> Issues` (and the `Issues` sub-tab inside `Site map`), matching `Pro-QSG-6-view-issues.png`.
+/// Renders `Target -> Issues` & `Issue definitions` (and the `Issues` sub-tab inside `Site map`),
+/// including the complete 183-entry Knowledge Base (`crate::issue_definitions::all()`) and
+/// the discovered `Issues` table & `Advisory | Request | Response` viewer (`Pro-QSG-6-view-issues.png`).
 fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
+    let all_defs = crate::issue_definitions::all();
+
     ui.horizontal_wrapped(|ui| {
         ui.label("Scan URL:");
         ui.add(
             eframe::egui::TextEdit::singleline(&mut app.panels.scanner.seed)
-                .desired_width(240.0)
+                .desired_width(220.0)
                 .font(eframe::egui::TextStyle::Monospace),
         );
         ui.checkbox(&mut app.panels.scanner.active_checks, "Active checks");
@@ -384,58 +498,209 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
             app.panels.scanner.show_manual_issue_modal = true;
         }
         ui.separator();
+        for (s_idx, lbl) in ["High", "Medium", "Low", "Info"].iter().enumerate() {
+            let active = app.panels.target_panel.issue_sev_filter[s_idx];
+            if ui.selectable_label(active, *lbl).clicked() {
+                app.panels.target_panel.issue_sev_filter[s_idx] = !active;
+            }
+        }
+        ui.separator();
+        for (c_idx, lbl) in ["Certain", "Firm", "Tentative"].iter().enumerate() {
+            let active = app.panels.target_panel.issue_conf_filter[c_idx];
+            if ui.selectable_label(active, *lbl).clicked() {
+                app.panels.target_panel.issue_conf_filter[c_idx] = !active;
+            }
+        }
+        ui.separator();
         ui.label("Filter issues:");
         ui.add(
             eframe::egui::TextEdit::singleline(&mut app.panels.target_panel.issue_filter)
                 .hint_text("Search issue name, URL, evidence")
-                .desired_width(180.0),
+                .desired_width(160.0),
         );
     });
     ui.add_space(4.0);
-    // Collapsible Burp Issue Definitions Knowledge Base (`target/issue-definitions.html`)
-    egui::CollapsingHeader::new(RichText::new("Issue definitions Knowledge Base (15 types)").strong())
-        .default_open(false)
-        .show(ui, |ui| {
-            egui::Grid::new("target-issue-definitions-kb")
-                .num_columns(5)
-                .striped(true)
-                .show(ui, |ui| {
-                    for h in [
-                        "Name",
-                        "Typical severity",
-                        "Type index",
-                        "CWE",
-                        "Remediation summary",
-                    ] {
-                        ui.strong(h);
-                    }
-                    ui.end_row();
-                    for (name, sev, idx_hex, cwe, rem) in [
-                        ("SQL injection", "High", "0x00100200", "CWE-89", "Use parameterized queries (prepared statements)."),
-                        ("OS command injection", "High", "0x00100100", "CWE-78", "Avoid passing user input to OS shells; use argument arrays."),
-                        ("Cross-site scripting (reflected)", "High", "0x00200300", "CWE-79", "Contextually HTML/JS-encode output and enforce CSP."),
-                        ("Server-side template injection", "High", "0x00101080", "CWE-1336", "Pass data into templates via context variables, never concatenate templates."),
-                        ("Server-side request forgery (SSRF)", "High", "0x00101000", "CWE-918", "Allowlist outbound hosts and block RFC1918 / link-local metadata IPs."),
-                        ("XML external entity (XXE) injection", "High", "0x00100400", "CWE-611", "Disable DTDs and external entities in the XML parser."),
-                        ("NoSQL injection", "High", "0x00100210", "CWE-943", "Validate scalar parameter types and reject operator objects ($ne, $gt)."),
-                        ("File path traversal", "High", "0x00100300", "CWE-22", "Canonicalize paths and verify they remain inside the base directory."),
-                        ("Private key disclosure", "High", "0x00600200", "CWE-312", "Remove private keys from web roots and rotate compromised keys."),
-                        ("Cross-origin resource sharing (CORS): arbitrary origin trusted", "High", "0x00200600", "CWE-942", "Validate Origin against a strict allowlist before setting Access-Control-Allow-Credentials."),
-                        ("Open redirection", "Medium", "0x00500100", "CWE-601", "Restrict redirect targets to relative paths or an explicit domain allowlist."),
-                        ("Database error message disclosure", "Medium", "0x00600100", "CWE-209", "Return generic error pages and log detailed stack traces server-side only."),
-                        ("Strict transport security not enforced", "Low", "0x01000300", "CWE-319", "Send Strict-Transport-Security: max-age=31536000; includeSubDomains."),
-                        ("TLS cookie without secure flag set", "Low", "0x00500200", "CWE-614", "Set the Secure and HttpOnly attributes on session cookies."),
-                        ("Frameable response (potential Clickjacking)", "Info", "0x00500300", "CWE-1021", "Send X-Frame-Options: DENY or Content-Security-Policy: frame-ancestors 'none'."),
-                    ] {
-                        ui.label(name);
-                        ui.label(sev);
-                        ui.monospace(idx_hex);
-                        ui.monospace(cwe);
-                        ui.label(rem);
-                        ui.end_row();
-                    }
-                });
+
+    // Complete 183-entry Issue Definitions Knowledge Base (`target/issue-definitions.html`)
+    egui::CollapsingHeader::new(
+        RichText::new(format!(
+            "Issue definitions Knowledge Base ({} types)",
+            all_defs.len()
+        ))
+        .strong(),
+    )
+    .default_open(false)
+    .show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Search definitions:");
+            ui.add(
+                egui::TextEdit::singleline(&mut app.panels.target_panel.kb_search)
+                    .hint_text("Search 183 vulnerability definitions by name, CWE, or hex index…")
+                    .desired_width(280.0),
+            );
+            ui.separator();
+            for (f_idx, f_lbl) in ["All", "High", "Medium", "Low", "Information"]
+                .iter()
+                .enumerate()
+            {
+                ui.selectable_value(
+                    &mut app.panels.target_panel.kb_severity_filter,
+                    f_idx,
+                    *f_lbl,
+                );
+            }
         });
+        ui.add_space(4.0);
+
+        let kb_needle = app.panels.target_panel.kb_search.trim().to_ascii_lowercase();
+        let sev_filter = match app.panels.target_panel.kb_severity_filter {
+            1 => Some("High"),
+            2 => Some("Medium"),
+            3 => Some("Low"),
+            4 => Some("Information"),
+            _ => None,
+        };
+        let filtered_defs: Vec<(usize, &crate::issue_definitions::IssueDefinition)> = all_defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| {
+                sev_filter.map_or(true, |sf| d.severity.eq_ignore_ascii_case(sf))
+                    && (kb_needle.is_empty()
+                        || d.name.to_ascii_lowercase().contains(&kb_needle)
+                        || d.type_hex.to_ascii_lowercase().contains(&kb_needle)
+                        || d.cwe_summary().to_ascii_lowercase().contains(&kb_needle))
+            })
+            .collect();
+
+        ui.columns(2, |cols| {
+            // Left column: scrollable table of all 183 Issue Definitions
+            egui::ScrollArea::vertical()
+                .id_salt("target-kb-defs-scroll")
+                .max_height(260.0)
+                .show(&mut cols[0], |ui| {
+                    egui::Grid::new("target-issue-definitions-kb")
+                        .num_columns(4)
+                        .striped(true)
+                        .show(ui, |ui| {
+                            for h in ["Name", "Typical severity", "Type index", "CWE"] {
+                                ui.strong(h);
+                            }
+                            ui.end_row();
+                            for (orig_idx, def) in &filtered_defs {
+                                let is_sel =
+                                    app.panels.target_panel.selected_kb_def == *orig_idx;
+                                let (sev_col, sev_icon) = match def.severity.as_str() {
+                                    "High" => (
+                                        theme.color("ui.issue.high"),
+                                        super::scanner::LauncherIcon::IssueHigh,
+                                    ),
+                                    "Medium" => (
+                                        theme.color("ui.issue.medium"),
+                                        super::scanner::LauncherIcon::IssueMedium,
+                                    ),
+                                    "Low" => (
+                                        theme.color("ui.issue.low"),
+                                        super::scanner::LauncherIcon::IssueLow,
+                                    ),
+                                    _ => (
+                                        theme.color("ui.icon.information"),
+                                        super::scanner::LauncherIcon::IssueInfo,
+                                    ),
+                                };
+                                let c_name = ui
+                                    .horizontal(|ui| {
+                                        super::scanner::paint_launcher_icon(
+                                            ui,
+                                            Vec2::new(14.0, 14.0),
+                                            sev_col,
+                                            sev_icon,
+                                        );
+                                        ui.selectable_label(is_sel, &def.name)
+                                    })
+                                    .inner;
+                                let c_sev = ui.selectable_label(
+                                    is_sel,
+                                    RichText::new(&def.severity).color(sev_col),
+                                );
+                                let c_idx = ui.selectable_label(
+                                    is_sel,
+                                    RichText::new(&def.type_hex).monospace(),
+                                );
+                                let c_cwe = ui.selectable_label(
+                                    is_sel,
+                                    RichText::new(def.cwe_summary()).monospace(),
+                                );
+                                if c_name.clicked()
+                                    || c_sev.clicked()
+                                    || c_idx.clicked()
+                                    || c_cwe.clicked()
+                                {
+                                    app.panels.target_panel.selected_kb_def = *orig_idx;
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
+
+            // Right column: Full Advisory Details for the selected IssueDefinition
+            if let Some(def) = all_defs
+                .get(app.panels.target_panel.selected_kb_def)
+                .or_else(|| filtered_defs.first().map(|(_, d)| *d))
+            {
+                egui::ScrollArea::vertical()
+                    .id_salt("target-kb-detail-scroll")
+                    .max_height(260.0)
+                    .show(&mut cols[1], |ui| {
+                        let sev_icon = match def.severity.as_str() {
+                            "High" => super::scanner::LauncherIcon::IssueHigh,
+                            "Medium" => super::scanner::LauncherIcon::IssueMedium,
+                            "Low" => super::scanner::LauncherIcon::IssueLow,
+                            _ => super::scanner::LauncherIcon::IssueInfo,
+                        };
+                        ui.horizontal(|ui| {
+                            super::scanner::paint_launcher_icon(
+                                ui,
+                                Vec2::new(24.0, 24.0),
+                                Color32::WHITE,
+                                sev_icon,
+                            );
+                            ui.label(RichText::new(&def.name).size(15.0).strong());
+                        });
+                        ui.label(
+                            RichText::new(format!(
+                                "Typical severity: {}   ·   Type index: {}",
+                                def.severity, def.type_hex
+                            ))
+                            .strong(),
+                        );
+                        ui.separator();
+                        if !def.description.is_empty() {
+                            ui.label(RichText::new("Issue description").strong());
+                            ui.label(&def.description);
+                            ui.add_space(6.0);
+                        }
+                        if !def.remediation.is_empty() {
+                            ui.label(RichText::new("Issue remediation").strong());
+                            ui.label(&def.remediation);
+                            ui.add_space(6.0);
+                        }
+                        if !def.references.is_empty() {
+                            ui.label(RichText::new("References").strong());
+                            for r in &def.references {
+                                ui.label(format!("• {} ({})", r.title, r.url));
+                            }
+                            ui.add_space(6.0);
+                        }
+                        if !def.classifications.is_empty() {
+                            ui.label(RichText::new("Vulnerability classifications").strong());
+                            for c in &def.classifications {
+                                ui.label(format!("• {} ({})", c.title, c.url));
+                            }
+                        }
+                    });
+            }
+        });
+    });
     ui.add_space(4.0);
     if app.workspace.issues.is_empty() {
         let (learn, _) = empty_state(
@@ -453,6 +718,8 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
         return;
     }
     let needle = app.panels.target_panel.issue_filter.trim().to_lowercase();
+    let sev_mask = app.panels.target_panel.issue_sev_filter;
+    let conf_mask = app.panels.target_panel.issue_conf_filter;
     let issues: Vec<_> = app
         .workspace
         .issues
@@ -460,10 +727,24 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
         .cloned()
         .enumerate()
         .filter(|(_, issue)| {
-            needle.is_empty()
-                || issue.name.to_lowercase().contains(&needle)
-                || issue.url.to_lowercase().contains(&needle)
-                || issue.evidence.to_lowercase().contains(&needle)
+            let sev_ok = match issue.severity {
+                crate::workspace::IssueSeverity::High => sev_mask[0],
+                crate::workspace::IssueSeverity::Medium => sev_mask[1],
+                crate::workspace::IssueSeverity::Low => sev_mask[2],
+                crate::workspace::IssueSeverity::Info => sev_mask[3],
+            };
+            let conf_ok = match issue.confidence.to_ascii_lowercase().as_str() {
+                "certain" => conf_mask[0],
+                "firm" => conf_mask[1],
+                "tentative" => conf_mask[2],
+                _ => true,
+            };
+            sev_ok
+                && conf_ok
+                && (needle.is_empty()
+                    || issue.name.to_lowercase().contains(&needle)
+                    || issue.url.to_lowercase().contains(&needle)
+                    || issue.evidence.to_lowercase().contains(&needle))
         })
         .collect();
     eframe::egui::ScrollArea::vertical()
@@ -471,10 +752,17 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
         .max_height(220.0)
         .show(ui, |ui| {
             eframe::egui::Grid::new("target-issues-grid")
-                .num_columns(5)
+                .num_columns(6)
                 .striped(true)
                 .show(ui, |ui| {
-                    for col in ["Severity", "Issue type", "URL", "Parameter", "Confidence"] {
+                    for col in [
+                        "Severity",
+                        "Issue type",
+                        "Host / URL",
+                        "Parameter",
+                        "Confidence",
+                        "CWE",
+                    ] {
                         ui.label(
                             eframe::egui::RichText::new(col)
                                 .strong()
@@ -483,50 +771,72 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                     }
                     ui.end_row();
                     for (idx, issue) in &issues {
-                        let selected = app.panels.target_panel.selected_issue == Some(*idx);
-                        let (sev_col, sev_icon) = match issue.severity {
-                            crate::workspace::IssueSeverity::High => (
-                                theme.color("ui.issue.high"),
-                                super::scanner::LauncherIcon::IssueHigh,
-                            ),
-                            crate::workspace::IssueSeverity::Medium => (
-                                theme.color("ui.issue.medium"),
-                                super::scanner::LauncherIcon::IssueMedium,
-                            ),
-                            crate::workspace::IssueSeverity::Low => (
-                                theme.color("ui.issue.low"),
-                                super::scanner::LauncherIcon::IssueLow,
-                            ),
-                            crate::workspace::IssueSeverity::Info => (
-                                theme.color("ui.icon.information"),
-                                super::scanner::LauncherIcon::IssueInfo,
-                            ),
-                        };
-                        let c1 = ui
-                            .horizontal(|ui| {
-                                super::scanner::paint_launcher_icon(
-                                    ui,
-                                    Vec2::new(14.0, 14.0),
-                                    sev_col,
-                                    sev_icon,
+                        ui.push_id(("target-issue-row", *idx), |ui| {
+                            let selected = app.panels.target_panel.selected_issue == Some(*idx);
+                            let (sev_col, sev_icon) = match issue.severity {
+                                crate::workspace::IssueSeverity::High => (
+                                    theme.color("ui.issue.high"),
+                                    super::scanner::LauncherIcon::IssueHigh,
+                                ),
+                                crate::workspace::IssueSeverity::Medium => (
+                                    theme.color("ui.issue.medium"),
+                                    super::scanner::LauncherIcon::IssueMedium,
+                                ),
+                                crate::workspace::IssueSeverity::Low => (
+                                    theme.color("ui.issue.low"),
+                                    super::scanner::LauncherIcon::IssueLow,
+                                ),
+                                crate::workspace::IssueSeverity::Info => (
+                                    theme.color("ui.icon.information"),
+                                    super::scanner::LauncherIcon::IssueInfo,
+                                ),
+                            };
+                            let kb_def = crate::issue_definitions::find_by_name(&issue.name);
+                            let cwe_txt = kb_def
+                                .map(|d| d.cwe_summary())
+                                .unwrap_or_else(|| "—".into());
+                            let c1 = ui
+                                .horizontal(|ui| {
+                                    super::scanner::paint_launcher_icon(
+                                        ui,
+                                        Vec2::new(14.0, 14.0),
+                                        sev_col,
+                                        sev_icon,
+                                    );
+                                    ui.selectable_label(
+                                        selected,
+                                        eframe::egui::RichText::new(format!("{:?}", issue.severity))
+                                            .color(sev_col),
+                                    )
+                                })
+                                .inner;
+                            let c2 = ui.selectable_label(selected, &issue.name);
+                            let c3 = ui.selectable_label(
+                                selected,
+                                eframe::egui::RichText::new(&issue.url).monospace(),
+                            );
+                            let c4 = ui.selectable_label(
+                                selected,
+                                issue.parameter.as_deref().unwrap_or("-"),
+                            );
+                            let c5 = ui.selectable_label(selected, &issue.confidence);
+                            let c6 = ui.selectable_label(
+                                selected,
+                                RichText::new(cwe_txt).monospace(),
+                            );
+                            for cell in [&c1, &c2, &c3, &c4, &c5, &c6] {
+                                if cell.clicked() || cell.secondary_clicked() {
+                                    app.panels.target_panel.selected_issue = Some(*idx);
+                                }
+                                super::attach_message_context_menu(
+                                    app,
+                                    cell,
+                                    &issue.url,
+                                    "",
+                                    &issue.evidence,
                                 );
-                                ui.selectable_label(
-                                    selected,
-                                    eframe::egui::RichText::new(format!("{:?}", issue.severity))
-                                        .color(sev_col),
-                                )
-                            })
-                            .inner;
-                        let c2 = ui.selectable_label(selected, &issue.name);
-                        let c3 = ui.selectable_label(
-                            selected,
-                            eframe::egui::RichText::new(&issue.url).monospace(),
-                        );
-                        ui.label(issue.parameter.as_deref().unwrap_or("-"));
-                        ui.label(&issue.confidence);
-                        if c1.clicked() || c2.clicked() || c3.clicked() {
-                            app.panels.target_panel.selected_issue = Some(*idx);
-                        }
+                            }
+                        });
                         ui.end_row();
                     }
                 });
@@ -534,11 +844,27 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
 
     if let Some(sel) = app.panels.target_panel.selected_issue {
         if let Some((_, issue)) = issues.iter().find(|(i, _)| *i == sel) {
+            let kb_def = crate::issue_definitions::find_by_name(&issue.name);
             ui.separator();
             // `Advisory | Request | Response` sub-tabs (`Pro-QSG-6-view-issues.png`)
             ui.horizontal(|ui| {
                 for (t_idx, lbl) in ["Advisory", "Request", "Response"].iter().enumerate() {
-                    ui.selectable_value(&mut app.panels.target_panel.issue_detail_tab, t_idx, *lbl);
+                    let active = app.panels.target_panel.issue_detail_tab == t_idx;
+                    let r = ui.selectable_label(active, RichText::new(*lbl).strong());
+                    if active {
+                        let rect = r.rect;
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_max(
+                                egui::pos2(rect.min.x, rect.max.y - 2.5),
+                                egui::pos2(rect.max.x, rect.max.y),
+                            ),
+                            0.0,
+                            theme.color("ui.icon.accent"),
+                        );
+                    }
+                    if r.clicked() {
+                        app.panels.target_panel.issue_detail_tab = t_idx;
+                    }
                 }
                 ui.separator();
                 if ui.button("Send URL to Repeater").clicked() {
@@ -554,44 +880,133 @@ fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                 }
             });
             ui.separator();
-            let sev_icon = match issue.severity {
-                crate::workspace::IssueSeverity::High => super::scanner::LauncherIcon::IssueHigh,
-                crate::workspace::IssueSeverity::Medium => {
-                    super::scanner::LauncherIcon::IssueMedium
+
+            let sample_tx = app
+                .log
+                .iter()
+                .rev()
+                .find(|tx| tx.target == issue.url || issue.url.starts_with(&tx.host_url()))
+                .cloned();
+            match app.panels.target_panel.issue_detail_tab {
+                1 => {
+                    let req = sample_tx
+                        .map(|t| t.request)
+                        .unwrap_or_else(|| format!("GET {} HTTP/1.1\r\n\r\n", issue.url));
+                    let r = super::burp_numbered_message_view(
+                        ui,
+                        &theme,
+                        "target-issue-req",
+                        200.0,
+                        &req,
+                        0,
+                        false,
+                    );
+                    super::attach_message_context_menu(app, &r, &issue.url, &req, "");
                 }
-                crate::workspace::IssueSeverity::Low => super::scanner::LauncherIcon::IssueLow,
-                crate::workspace::IssueSeverity::Info => super::scanner::LauncherIcon::IssueInfo,
-            };
-            ui.horizontal(|ui| {
-                super::scanner::paint_launcher_icon(
-                    ui,
-                    Vec2::new(28.0, 28.0),
-                    Color32::WHITE,
-                    sev_icon,
-                );
-                heading(ui, &theme, &format!("Advisory — {}", issue.name));
-            });
-            egui::Grid::new("target-issue-advisory-meta")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    ui.label("Severity:");
-                    ui.strong(format!("{:?}", issue.severity));
-                    ui.end_row();
-                    ui.label("Confidence:");
-                    ui.strong(&issue.confidence);
-                    ui.end_row();
-                    ui.label("URL:");
-                    ui.strong(&issue.url);
-                    ui.end_row();
-                    if let Some(param) = &issue.parameter {
-                        ui.label("Parameter:");
-                        ui.strong(param);
-                        ui.end_row();
-                    }
-                });
-            ui.add_space(4.0);
-            ui.label(RichText::new("Issue detail & Evidence").strong());
-            ui.monospace(&issue.evidence);
+                2 => {
+                    let resp = sample_tx
+                        .map(|t| t.response)
+                        .unwrap_or_else(|| issue.evidence.clone());
+                    let r = super::burp_numbered_message_view(
+                        ui,
+                        &theme,
+                        "target-issue-resp",
+                        200.0,
+                        &resp,
+                        0,
+                        false,
+                    );
+                    super::attach_message_context_menu(app, &r, &issue.url, "", &resp);
+                }
+                _ => {
+                    let sev_icon = match issue.severity {
+                        crate::workspace::IssueSeverity::High => {
+                            super::scanner::LauncherIcon::IssueHigh
+                        }
+                        crate::workspace::IssueSeverity::Medium => {
+                            super::scanner::LauncherIcon::IssueMedium
+                        }
+                        crate::workspace::IssueSeverity::Low => {
+                            super::scanner::LauncherIcon::IssueLow
+                        }
+                        crate::workspace::IssueSeverity::Info => {
+                            super::scanner::LauncherIcon::IssueInfo
+                        }
+                    };
+                    egui::ScrollArea::vertical()
+                        .id_salt("target-issue-advisory-scroll")
+                        .max_height(240.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                super::scanner::paint_launcher_icon(
+                                    ui,
+                                    Vec2::new(28.0, 28.0),
+                                    Color32::WHITE,
+                                    sev_icon,
+                                );
+                                heading(ui, &theme, &issue.name);
+                            });
+                            ui.separator();
+                            egui::Grid::new("target-issue-advisory-meta")
+                                .num_columns(2)
+                                .spacing([18.0, 4.0])
+                                .show(ui, |ui| {
+                                    ui.label("Issue:");
+                                    ui.strong(&issue.name);
+                                    ui.end_row();
+                                    ui.label("Severity:");
+                                    ui.strong(format!("{:?}", issue.severity));
+                                    ui.end_row();
+                                    ui.label("Confidence:");
+                                    ui.strong(&issue.confidence);
+                                    ui.end_row();
+                                    ui.label("URL:");
+                                    ui.strong(&issue.url);
+                                    ui.end_row();
+                                    if let Some(param) = &issue.parameter {
+                                        ui.label("Insertion point / Parameter:");
+                                        ui.strong(param);
+                                        ui.end_row();
+                                    }
+                                    if let Some(def) = kb_def {
+                                        ui.label("Type index:");
+                                        ui.monospace(&def.type_hex);
+                                        ui.end_row();
+                                    }
+                                });
+                            ui.separator();
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Issue detail").strong());
+                            ui.monospace(&issue.evidence);
+                            if let Some(def) = kb_def {
+                                if !def.description.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(RichText::new("Issue background").strong());
+                                    ui.label(&def.description);
+                                }
+                                if !def.remediation.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(RichText::new("Issue remediation").strong());
+                                    ui.label(&def.remediation);
+                                }
+                                if !def.references.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(RichText::new("References").strong());
+                                    for r in &def.references {
+                                        ui.label(format!("• {} ({})", r.title, r.url));
+                                    }
+                                }
+                                if !def.classifications.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(RichText::new("Vulnerability classifications").strong());
+                                    for c in &def.classifications {
+                                        ui.label(format!("• {} ({})", c.title, c.url));
+                                    }
+                                }
+                            }
+                        });
+                }
+            }
         }
     }
 }
@@ -990,24 +1405,33 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                     }
                                     ui.end_row();
                                     for (idx, tx) in &matching_txs {
-                                        let path_q = tx.path_and_query();
-                                        let is_sel = app.panels.target_panel.path.as_deref()
-                                            == Some(path_q.as_str());
-                                        let c1 = ui.selectable_label(is_sel, tx.host_url());
-                                        let c2 = ui.selectable_label(is_sel, &tx.method);
-                                        let c3 = ui.selectable_label(is_sel, &path_q);
-                                        let c4 = ui.selectable_label(is_sel, if tx.has_params() { "✓" } else { "" });
-                                        let c5 = ui.selectable_label(is_sel, tx.status.to_string());
-                                        let c6 = ui.selectable_label(is_sel, tx.bytes.to_string());
-                                        let c7 = ui.selectable_label(is_sel, tx.mime_type());
-                                        let c8 = ui.selectable_label(is_sel, tx.page_title());
-                                        for cell in [&c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8] {
-                                            if cell.clicked() || cell.secondary_clicked() {
-                                                app.panels.target_panel.host = Some(tx.host_url());
-                                                app.panels.target_panel.path = Some(path_q.clone());
+                                        ui.push_id(("target-contents-row", *idx), |ui| {
+                                            let path_q = tx.path_and_query();
+                                            let is_sel = app.panels.target_panel.path.as_deref()
+                                                == Some(path_q.as_str());
+                                            let c1 = ui.selectable_label(is_sel, tx.host_url());
+                                            let c2 = ui.selectable_label(is_sel, &tx.method);
+                                            let c3 = ui.selectable_label(is_sel, &path_q);
+                                            let c4 = ui.selectable_label(
+                                                is_sel,
+                                                if tx.has_params() { "✓" } else { "" },
+                                            );
+                                            let c5 =
+                                                ui.selectable_label(is_sel, tx.status.to_string());
+                                            let c6 =
+                                                ui.selectable_label(is_sel, tx.bytes.to_string());
+                                            let c7 = ui.selectable_label(is_sel, tx.mime_type());
+                                            let c8 = ui.selectable_label(is_sel, tx.page_title());
+                                            for cell in [&c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8] {
+                                                if cell.clicked() || cell.secondary_clicked() {
+                                                    app.panels.target_panel.host =
+                                                        Some(tx.host_url());
+                                                    app.panels.target_panel.path =
+                                                        Some(path_q.clone());
+                                                }
+                                                app.context_menu(cell, *idx);
                                             }
-                                            app.context_menu(cell, *idx);
-                                        }
+                                        });
                                         ui.end_row();
                                     }
                                 });
@@ -1078,7 +1502,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         &mut app.panels.target_panel.req_wrap,
                                         &mut app.panels.target_panel.req_non_printable,
                                     );
-                                    let r = burp_numbered_message_view(
+                                    let r = burp_numbered_message_view_wrapped(
                                         ui,
                                         &theme,
                                         "target-req-view",
@@ -1086,6 +1510,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         &tx.request,
                                         app.panels.target_panel.req_fmt_mode,
                                         app.panels.target_panel.req_non_printable,
+                                        app.panels.target_panel.req_wrap,
                                     );
                                     super::attach_message_context_menu(
                                         app,
@@ -1105,7 +1530,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         &mut app.panels.target_panel.resp_wrap,
                                         &mut app.panels.target_panel.resp_non_printable,
                                     );
-                                    let r = burp_numbered_message_view(
+                                    let r = burp_numbered_message_view_wrapped(
                                         ui,
                                         &theme,
                                         "target-resp-view",
@@ -1113,6 +1538,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         &tx.response,
                                         app.panels.target_panel.resp_fmt_mode,
                                         app.panels.target_panel.resp_non_printable,
+                                        app.panels.target_panel.resp_wrap,
                                     );
                                     super::attach_message_context_menu(
                                         app,

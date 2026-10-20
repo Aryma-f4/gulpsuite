@@ -26,7 +26,9 @@ pub struct ProxyPanel {
     pub split_ratio: f32,
     ///Drags the detached window's Request/Response split.
     pub detached_split_ratio: f32,
-    /// Active sort column (`0..12`) in HTTP history.
+    /// User-resizable widths, independent of the contents of captured requests.
+    pub history_column_widths: [f32; 19],
+    /// Active sort column in HTTP history.
     pub sort_column: Option<usize>,
     pub sort_ascending: bool,
     /// Filter query for HTTP history.
@@ -140,6 +142,10 @@ impl Default for ProxyPanel {
             detail_height: 280.0,
             split_ratio: 0.5,
             detached_split_ratio: 0.5,
+            history_column_widths: [
+                34., 185., 62., 300., 50., 50., 82., 62., 85., 70., 140., 90., 40.,
+                110., 130., 100., 100., 140., 140.,
+            ],
             sort_column: None,
             sort_ascending: true,
             filter: String::new(),
@@ -969,13 +975,14 @@ fn intercept(app: &mut App, ui: &mut Ui) {
 
     let intercept_h = app.panels.proxy_panel.intercept_height;
     let fmt_mode = app.panels.proxy_panel.intercept_fmt_mode;
-    let (response, changed) = super::burp_numbered_message_editor(
+    let (response, changed) = super::burp_numbered_message_editor_wrapped(
         ui,
         &theme,
         "proxy-intercept-editor",
         intercept_h,
         &mut edited,
         fmt_mode,
+        app.panels.proxy_panel.intercept_wrap,
     );
     if changed {
         app.panels.proxy_panel.held_edit = Some((selected, edited.clone()));
@@ -1115,6 +1122,65 @@ fn highlight_colour(theme: &crate::ui::theme::Theme, code: Option<u8>, selected:
         _ if selected => theme.color("icon.linkHover"),
         _ => theme.color("ui.text.body"),
     }
+}
+
+/// A flat, single-line table cell. Its entire rectangle is interactive, including
+/// empty metadata cells; the accessible label retains the untruncated value.
+fn history_cell(
+    ui: &mut Ui,
+    col: usize,
+    rect: eframe::egui::Rect,
+    text: &str,
+    color: eframe::egui::Color32,
+    selected: bool,
+) -> eframe::egui::Response {
+    use eframe::egui::{self, text::LayoutJob, Sense};
+    let response = ui.interact(rect, ui.id().with(("history-cell", col)), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            text,
+        )
+    });
+    let text_rect = rect.shrink2(egui::vec2(4.0, 0.0));
+    if text == "✓" {
+        let center = text_rect.center();
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        painter.line_segment(
+            [
+                center + egui::vec2(-4.0, 0.0),
+                center + egui::vec2(-1.0, 3.0),
+            ],
+            egui::Stroke::new(1.4, color),
+        );
+        painter.line_segment(
+            [
+                center + egui::vec2(-1.0, 3.0),
+                center + egui::vec2(5.0, -4.0),
+            ],
+            egui::Stroke::new(1.4, color),
+        );
+        return response;
+    }
+    let mut job =
+        LayoutJob::simple_singleline(text.to_string(), egui::FontId::proportional(12.0), color);
+    job.wrap.max_width = text_rect.width();
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    ui.painter()
+        .with_clip_rect(text_rect.intersect(ui.clip_rect()))
+        .galley(
+            egui::pos2(
+                text_rect.left(),
+                text_rect.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            color,
+        );
+    response
 }
 
 /// Burp's History view: everything the proxy has forwarded.
@@ -1452,11 +1518,11 @@ fn history(app: &mut App, ui: &mut Ui) {
         secure: bool,
         note: String,
         highlight: Option<u8>,
+        cookies: String,
     }
 
     let rows = app.log.len();
-    let first = rows.saturating_sub(300);
-    let mut visible: Vec<RowSummary> = (first..rows)
+    let mut visible: Vec<RowSummary> = (0..rows)
         .filter_map(|index| {
             let tx = &app.log[index];
             let host_url = tx.host_url();
@@ -1564,6 +1630,16 @@ fn history(app: &mut App, ui: &mut Ui) {
                 secure: tx.secure,
                 note,
                 highlight,
+                cookies: tx.response
+                    .split("\r\n\r\n").next().unwrap_or("")
+                    .lines()
+                    .filter_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("set-cookie").then(|| {
+                            value.trim().split(';').next().unwrap_or("").to_string()
+                        })
+                    })
+                    .collect::<Vec<_>>().join("; "),
             })
         })
         .collect();
@@ -1575,15 +1651,16 @@ fn history(app: &mut App, ui: &mut Ui) {
                 0 => a.index.cmp(&b.index),
                 1 => a.host_url.cmp(&b.host_url),
                 2 => a.method.cmp(&b.method),
-                3 => a.target.cmp(&b.target),
+                3 => a.path_query.cmp(&b.path_query),
                 4 => a.has_params.cmp(&b.has_params),
-                5 => a.status.cmp(&b.status),
-                6 => a.bytes.cmp(&b.bytes),
-                7 => a.mime.cmp(b.mime),
-                8 => a.ext.cmp(&b.ext),
-                9 => a.title.cmp(&b.title),
-                10 => a.secure.cmp(&b.secure),
+                6 => a.status.cmp(&b.status),
+                7 => a.bytes.cmp(&b.bytes),
+                8 => a.mime.cmp(b.mime),
+                9 => a.ext.cmp(&b.ext),
+                10 => a.title.cmp(&b.title),
                 11 => a.note.cmp(&b.note),
+                12 => a.secure.cmp(&b.secure),
+                14 => a.cookies.cmp(&b.cookies),
                 _ => a.index.cmp(&b.index),
             };
             if asc {
@@ -1594,163 +1671,189 @@ fn history(app: &mut App, ui: &mut Ui) {
         });
     }
 
+    // One horizontal viewport keeps header and body aligned; only the body scrolls
+    // vertically. Column widths never depend on URL/title/note length.
     let table_h = app.panels.proxy_panel.table_height;
-    eframe::egui::ScrollArea::both()
-        .id_salt("proxy-history-scroll")
-        .max_height(table_h)
+    let columns = [
+        "#",
+        "Host",
+        "Method",
+        "URL",
+        "Params",
+        "Edited",
+        "Status code",
+        "Length",
+        "MIME type",
+        "Extension",
+        "Title",
+        "Notes",
+        "TLS",
+        "IP",
+        "Cookies",
+        "Time",
+        "Listener port",
+        "Start response timer",
+        "End response timer",
+    ];
+    eframe::egui::ScrollArea::horizontal()
+        .id_salt("proxy-history-horizontal")
+        .max_height(table_h + 40.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            eframe::egui::Grid::new("proxy-history")
-                .num_columns(13)
-                .striped(true)
-                .show(ui, |ui| {
-                    let columns = [
-                        "#",
-                        "Host",
-                        "Method",
-                        "URL",
-                        "Params",
-                        "Status",
-                        "Length",
-                        "MIME type",
-                        "Extension",
-                        "Title",
-                        "TLS",
-                        "Notes",
-                    ];
-                    for (col_idx, name) in columns.iter().enumerate() {
-                        let active = app.panels.proxy_panel.sort_column == Some(col_idx);
-                        let label_text = if active {
-                            if app.panels.proxy_panel.sort_ascending {
-                                format!("{name} ▲")
-                            } else {
-                                format!("{name} ▼")
-                            }
+            use eframe::egui::{self, Rect, Sense, Stroke, Vec2};
+            let widths = app.panels.proxy_panel.history_column_widths;
+            let width = widths.iter().sum::<f32>().max(ui.available_width());
+            ui.set_min_width(width);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let border = Stroke::new(1.0, theme.color("border.1"));
+            let (header, _) = ui.allocate_exact_size(Vec2::new(width, 25.0), Sense::hover());
+            ui.painter()
+                .rect_filled(header, 0.0, theme.color("background.3"));
+            ui.painter().rect_filled(
+                Rect::from_min_size(header.left_bottom(), Vec2::new(width, table_h)),
+                0.0,
+                theme.color("background.1"),
+            );
+            let mut x = header.left();
+            for (col, name) in columns.iter().enumerate() {
+                let rect = Rect::from_min_size(
+                    egui::pos2(x, header.top()),
+                    Vec2::new(widths[col], header.height()),
+                );
+                let active = app.panels.proxy_panel.sort_column == Some(col);
+                let label = if active {
+                    format!(
+                        "{name} {}",
+                        if app.panels.proxy_panel.sort_ascending {
+                            "▲"
                         } else {
-                            (*name).to_string()
-                        };
-                        let resp = ui.selectable_label(
-                            active,
-                            eframe::egui::RichText::new(label_text)
-                                .strong()
-                                .color(theme.color("ui.text.body")),
-                        );
-                        if resp.clicked() {
-                            if app.panels.proxy_panel.sort_column == Some(col_idx) {
-                                if app.panels.proxy_panel.sort_ascending {
-                                    app.panels.proxy_panel.sort_ascending = false;
-                                } else {
-                                    app.panels.proxy_panel.sort_column = None;
-                                    app.panels.proxy_panel.sort_ascending = true;
-                                }
-                            } else {
-                                app.panels.proxy_panel.sort_column = Some(col_idx);
-                                app.panels.proxy_panel.sort_ascending = true;
-                            }
+                            "▼"
                         }
+                    )
+                } else {
+                    (*name).into()
+                };
+                let response =
+                    history_cell(ui, col + 100, rect, &label, theme.color("ui.text.body"), false);
+                if response.clicked() && !matches!(col, 5 | 13 | 15..=18) {
+                    let p = &mut app.panels.proxy_panel;
+                    if active && !p.sort_ascending {
+                        p.sort_column = None;
+                        p.sort_ascending = true;
+                    } else if active {
+                        p.sort_ascending = false;
+                    } else {
+                        p.sort_column = Some(col);
+                        p.sort_ascending = true;
                     }
-                    ui.label("");
-                    ui.end_row();
-
-                    for row in visible {
+                }
+                ui.painter().vline(rect.right(), header.y_range(), border);
+                let resize = ui
+                    .interact(
+                        Rect::from_center_size(
+                            egui::pos2(rect.right(), header.center().y),
+                            Vec2::new(6.0, header.height()),
+                        ),
+                        ui.id().with(("history-column-resize", col)),
+                        Sense::drag(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                let drag_id = resize.id.with("initial-width");
+                if resize.drag_started() {
+                    ui.data_mut(|data| data.insert_temp(drag_id, widths[col]));
+                }
+                if let Some(delta) = resize.total_drag_delta() {
+                    let initial = ui
+                        .data(|data| data.get_temp::<f32>(drag_id))
+                        .unwrap_or(widths[col]);
+                    app.panels.proxy_panel.history_column_widths[col] =
+                        (initial + delta.x).clamp(30.0, 1000.0);
+                }
+                if resize.double_clicked() {
+                    app.panels.proxy_panel.history_column_widths[col] =
+                        ProxyPanel::default().history_column_widths[col];
+                }
+                x = rect.right();
+            }
+            ui.painter()
+                .hline(header.x_range(), header.bottom(), border);
+            egui::ScrollArea::vertical()
+                .id_salt("proxy-history-scroll")
+                .max_height(table_h)
+                .auto_shrink([false, false])
+                .show_rows(ui, 22.0, visible.len(), |ui, range| {
+                    for row in &visible[range] {
                         let index = row.index;
-                        let selected = app.panels.proxy_panel.selected == Some(index);
-                        let row_color = highlight_colour(&theme, row.highlight, selected);
-                        let method_colour = if selected {
-                            theme.color("icon.linkHover")
-                        } else {
-                            theme.color("icon.link")
-                        };
-
-                        let c_idx = ui.selectable_label(
-                            selected,
-                            eframe::egui::RichText::new(format!("{}", index + 1))
-                                .color(theme.color("ui.icon.default")),
-                        );
-                        let c_host = ui.selectable_label(
-                            selected,
-                            eframe::egui::RichText::new(&row.host_url).color(row_color),
-                        );
-                        let c_method = ui.selectable_label(
-                            selected,
-                            eframe::egui::RichText::new(&row.method).color(method_colour),
-                        );
-                        let c_url = ui
-                            .selectable_label(
-                                selected,
-                                eframe::egui::RichText::new(&row.target).color(row_color),
-                            )
-                            .on_hover_text(&row.path_query);
-                        ui.label(if row.has_params { "✓" } else { "" });
-                        let status_colour = match row.status {
-                            200..=299 => theme.color("ui.icon.success"),
-                            300..=399 => theme.color("ui.icon.information"),
-                            400..=499 => theme.color("ui.icon.warning"),
-                            500..=599 => theme.color("ui.issue.high"),
-                            _ => row_color,
-                        };
-                        let c_status = ui.label(
-                            eframe::egui::RichText::new(row.status.to_string()).color(status_colour),
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(if row.truncated {
-                                format!("{}+", row.bytes)
+                        ui.push_id(("history-row", index), |ui| {
+                            let selected = app.panels.proxy_panel.selected == Some(index);
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::hover());
+                            let fill = if selected {
+                                theme.color("background.5")
+                            } else if let Some(code) = row.highlight {
+                                highlight_colour(&theme, Some(code), false).gamma_multiply(0.22)
                             } else {
-                                row.bytes.to_string()
-                            })
-                            .color(theme.color("ui.icon.default")),
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(row.mime)
-                                .color(theme.color("ui.icon.default")),
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(&row.ext)
-                                .color(theme.color("ui.icon.default")),
-                        );
-                        let c_title = ui.label(
-                            eframe::egui::RichText::new(&row.title).color(row_color),
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(if row.secure { "✓" } else { "" })
-                                .color(theme.color("ui.icon.default")),
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(&row.note)
-                                .color(theme.color("ui.icon.default")),
-                        );
-
-                        for cell in [&c_idx, &c_host, &c_method, &c_url, &c_status, &c_title] {
-                            if cell.clicked() || cell.secondary_clicked() {
-                                app.panels.proxy_panel.selected = Some(index);
-                            }
-                            app.context_menu(cell, index);
-                        }
-
-                        ui.horizontal(|ui| {
-                            if ui.button("To Repeater").clicked() {
-                                if let Some(tx) = app.log.get(index) {
-                                    app.panels.repeater.open(&tx.target, &tx.request);
+                                theme.color("background.1")
+                            };
+                            ui.painter().rect_filled(rect, 0.0, fill);
+                            // Transaction currently has no edit/IP/timing/listener metadata.
+                            // Leave those cells empty rather than inventing captured values.
+                            let values = [
+                                format!("{}", index + 1),
+                                row.host_url.clone(),
+                                row.method.clone(),
+                                row.path_query.clone(),
+                                if row.has_params { "✓" } else { "" }.into(),
+                                String::new(),
+                                if row.status == 0 {
+                                    String::new()
+                                } else {
+                                    row.status.to_string()
+                                },
+                                format!("{}{}", row.bytes, if row.truncated { "+" } else { "" }),
+                                row.mime.into(),
+                                row.ext.clone(),
+                                row.title.clone(),
+                                row.note.clone(),
+                                if row.secure { "✓" } else { "" }.into(),
+                                String::new(),
+                                row.cookies.clone(),
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                            ];
+                            let text_color = theme.color("ui.text.body");
+                            let mut x = rect.left();
+                            for (col, value) in values.iter().enumerate() {
+                                let cell = Rect::from_min_size(
+                                    egui::pos2(x, rect.top()),
+                                    Vec2::new(widths[col], rect.height()),
+                                );
+                                let response =
+                                    history_cell(ui, col, cell, value, text_color, selected);
+                                if response.clicked() || response.secondary_clicked() {
+                                    app.panels.proxy_panel.selected = Some(index);
                                 }
-                                app.tool = crate::ui::app::REPEATER;
-                                app.status = "Request copied to Repeater".into();
-                            }
-                            if ui.button("To Intruder").clicked() {
-                                if let Some((target, request)) = app
-                                    .log
-                                    .get(index)
-                                    .map(|tx| (tx.target.clone(), tx.request.clone()))
-                                {
-                                    app.send_to_intruder(&target, &request);
+                                if response.double_clicked() {
+                                    app.panels.proxy_panel.detached_row = Some(index);
                                 }
-                            }
-                            if ui.button("Scan").clicked() {
-                                if let Some(target) = app.log.get(index).map(|tx| tx.target.clone()) {
-                                    app.scan_url(&target, true);
+                                app.context_menu(&response, index);
+                                if col == 3 {
+                                    response.on_hover_text(&row.target);
+                                } else if matches!(col, 5 | 13 | 15..=18) {
+                                    response.on_hover_text(
+                                        "This metadata was not recorded for this request",
+                                    );
                                 }
+                                ui.painter().vline(
+                                    cell.right(),
+                                    rect.y_range(),
+                                    Stroke::new(1.0, border.color.gamma_multiply(0.5)),
+                                );
+                                x = cell.right();
                             }
                         });
-                        ui.end_row();
                     }
                 });
         });
@@ -1863,7 +1966,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                         );
                         app.panels.proxy_panel.hex_view =
                             app.panels.proxy_panel.history_req_fmt_mode == 2;
-                        let r = super::burp_numbered_message_view(
+                        let r = super::burp_numbered_message_view_wrapped(
                             ui,
                             &theme,
                             "proxy-hist-req-view",
@@ -1871,6 +1974,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                             &request,
                             app.panels.proxy_panel.history_req_fmt_mode,
                             app.panels.proxy_panel.history_req_np,
+                            app.panels.proxy_panel.history_req_wrap,
                         );
                         super::attach_message_context_menu(
                             app,
@@ -1890,7 +1994,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                             &mut app.panels.proxy_panel.history_resp_wrap,
                             &mut app.panels.proxy_panel.history_resp_np,
                         );
-                        let r = super::burp_numbered_message_view(
+                        let r = super::burp_numbered_message_view_wrapped(
                             ui,
                             &theme,
                             "proxy-hist-resp-view",
@@ -1898,6 +2002,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                             &response,
                             app.panels.proxy_panel.history_resp_fmt_mode,
                             app.panels.proxy_panel.history_resp_np,
+                            app.panels.proxy_panel.history_resp_wrap,
                         );
                         super::attach_message_context_menu(
                             app,

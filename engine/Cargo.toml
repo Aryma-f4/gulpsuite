@@ -48,3 +48,10 @@ egui_kittest = { version = "=0.33.3", features = ["eframe", "snapshot", "wgpu"] 
 
 [profile.release]
 opt-level = 2
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+accesskit_macos = "=0.22.2"
+
+# Preserve AppKit KVO observers when the native accessibility adapter is dropped.
+[patch.crates-io]
+accesskit_macos = { path = "vendor/accesskit_macos" }

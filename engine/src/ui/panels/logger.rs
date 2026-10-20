@@ -210,24 +210,28 @@ fn http(app: &mut App, ui: &mut Ui) {
                     }
                     ui.end_row();
                     for (index, tx) in rows.iter() {
-                        let selected = app.panels.logger.selected == Some(*index);
-                        let c_idx = ui.selectable_label(selected, format!("{}", index + 1));
-                        let text = if selected {
-                            eframe::egui::RichText::new(&tx.method).color(theme.color("ui.icon.link"))
-                        } else {
-                            eframe::egui::RichText::new(&tx.method)
-                        };
-                        let c_method = ui.selectable_label(selected, text);
-                        let c_target = ui.selectable_label(selected, &tx.target);
-                        let c_status = ui.label(tx.status.to_string());
-                        let c_bytes = ui.label(tx.bytes.to_string());
-                        let c_host = ui.label(tx.host_url());
-                        for cell in [&c_idx, &c_method, &c_target, &c_status, &c_bytes, &c_host] {
-                            if cell.clicked() || cell.secondary_clicked() {
-                                app.panels.logger.selected = Some(*index);
+                        ui.push_id(("logger-row", *index), |ui| {
+                            let selected = app.panels.logger.selected == Some(*index);
+                            let c_idx = ui.selectable_label(selected, format!("{}", index + 1));
+                            let text = if selected {
+                                eframe::egui::RichText::new(&tx.method)
+                                    .color(theme.color("ui.icon.link"))
+                            } else {
+                                eframe::egui::RichText::new(&tx.method)
+                            };
+                            let c_method = ui.selectable_label(selected, text);
+                            let c_target = ui.selectable_label(selected, &tx.target);
+                            let c_status = ui.selectable_label(selected, tx.status.to_string());
+                            let c_bytes = ui.selectable_label(selected, tx.bytes.to_string());
+                            let c_host = ui.selectable_label(selected, tx.host_url());
+                            for cell in [&c_idx, &c_method, &c_target, &c_status, &c_bytes, &c_host]
+                            {
+                                if cell.clicked() || cell.secondary_clicked() {
+                                    app.panels.logger.selected = Some(*index);
+                                }
+                                app.context_menu(cell, *index);
                             }
-                            app.context_menu(cell, *index);
-                        }
+                        });
                         ui.end_row();
                     }
                 });
@@ -265,7 +269,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.logger.req_wrap,
                         &mut app.panels.logger.req_np,
                     );
-                    let r = super::burp_numbered_message_view(
+                    let r = super::burp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "logger-req",
@@ -273,6 +277,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &tx.request,
                         app.panels.logger.req_fmt_mode,
                         app.panels.logger.req_np,
+                        app.panels.logger.req_wrap,
                     );
                     super::attach_message_context_menu(
                         app,
@@ -292,7 +297,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.logger.resp_wrap,
                         &mut app.panels.logger.resp_np,
                     );
-                    let r = super::burp_numbered_message_view(
+                    let r = super::burp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "logger-resp",
@@ -300,6 +305,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &tx.response,
                         app.panels.logger.resp_fmt_mode,
                         app.panels.logger.resp_np,
+                        app.panels.logger.resp_wrap,
                     );
                     super::attach_message_context_menu(
                         app,

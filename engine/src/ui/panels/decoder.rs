@@ -101,10 +101,12 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                 )
                             } else {
                                 ui.add(
-                                    eframe::egui::TextEdit::multiline(&mut app.panels.decoder.input)
-                                        .font(eframe::egui::TextStyle::Monospace)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(rows),
+                                    eframe::egui::TextEdit::multiline(
+                                        &mut app.panels.decoder.input,
+                                    )
+                                    .font(eframe::egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(rows),
                                 )
                             };
                             decoder_context_menu(app, &resp);
@@ -183,7 +185,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 });
 
             if ui
-                .add_sized([right_col_w, 24.0], eframe::egui::Button::new("Smart decode"))
+                .add_sized(
+                    [right_col_w, 24.0],
+                    eframe::egui::Button::new("Smart decode"),
+                )
                 .clicked()
             {
                 app.panels.decoder.custom = true;
@@ -222,7 +227,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         .id_salt("decoder-output-scroll")
                         .max_height(output_h - 12.0)
                         .show(ui, |ui| {
-                            let shown = if app.panels.decoder.hex_view {
+                            let shown = if app.panels.decoder.output_hex_view {
                                 hex_dump(&app.panels.decoder.output)
                             } else {
                                 app.panels.decoder.output.clone()
@@ -244,15 +249,42 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         ui.add_space(6.0);
         ui.vertical(|ui| {
             ui.set_width(right_col_w);
+            ui.horizontal(|ui| {
+                let text = ui.radio_value(&mut app.panels.decoder.output_hex_view, false, "Text");
+                text.widget_info(|| {
+                    eframe::egui::WidgetInfo::selected(
+                        eframe::egui::WidgetType::RadioButton,
+                        true,
+                        !app.panels.decoder.output_hex_view,
+                        "Output Text",
+                    )
+                });
+                let hex = ui.radio_value(&mut app.panels.decoder.output_hex_view, true, "Hex");
+                hex.widget_info(|| {
+                    eframe::egui::WidgetInfo::selected(
+                        eframe::egui::WidgetType::RadioButton,
+                        true,
+                        app.panels.decoder.output_hex_view,
+                        "Output Hex",
+                    )
+                });
+            });
+            ui.add_space(4.0);
             if ui
-                .add_sized([right_col_w, 24.0], eframe::egui::Button::new("Output → Input"))
+                .add_sized(
+                    [right_col_w, 24.0],
+                    eframe::egui::Button::new("Output → Input"),
+                )
                 .clicked()
             {
                 app.panels.decoder.input = app.panels.decoder.output.clone();
                 apply(app);
             }
             if ui
-                .add_sized([right_col_w, 24.0], eframe::egui::Button::new("Copy output"))
+                .add_sized(
+                    [right_col_w, 24.0],
+                    eframe::egui::Button::new("Copy output"),
+                )
                 .clicked()
             {
                 ui.ctx().copy_text(app.panels.decoder.output.clone());

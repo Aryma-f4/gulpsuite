@@ -1432,6 +1432,11 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
     });
     ui.separator();
 
+    // Sync any latest text selection ("block") from the Positions editor before handling Add § / Clear §
+    if let Some((range, _)) = super::latest_selection_for("intruder-positions-edit") {
+        app.panels.intruder.selection = Some(range);
+    }
+
     // Row 3: Outlined `[ Add § ]  [ Clear § ]  [ Auto § ]` buttons (`getting-started-with-intruder-3-request-with-payloads.png`)
     ui.horizontal_wrapped(|ui| {
         let panel = &mut app.panels.intruder;
@@ -1442,7 +1447,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             .corner_radius(3.0)
             .min_size(Vec2::new(66.0, 25.0));
         if ui.add(add_btn).clicked() {
-            if let Some(range) = panel.selection.clone() {
+            if let Some(range) = panel.selection.take().filter(|r| r.start < r.end) {
                 let start = panel
                     .template
                     .char_indices()
@@ -1455,8 +1460,10 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
                     .nth(range.end)
                     .map(|(index, _)| index)
                     .unwrap_or(panel.template.len());
-                panel.template.insert(end, '§');
-                panel.template.insert(start, '§');
+                if start <= end && end <= panel.template.len() {
+                    panel.template.insert(end, '§');
+                    panel.template.insert(start, '§');
+                }
             } else {
                 panel.template.push_str("§§");
             }
@@ -1467,7 +1474,28 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             .corner_radius(3.0)
             .min_size(Vec2::new(66.0, 25.0));
         if ui.add(clear_btn).clicked() {
-            panel.template = panel.template.replace('§', "");
+            if let Some(range) = panel.selection.take().filter(|r| r.start < r.end) {
+                let start = panel
+                    .template
+                    .char_indices()
+                    .nth(range.start)
+                    .map(|(index, _)| index)
+                    .unwrap_or(0);
+                let end = panel
+                    .template
+                    .char_indices()
+                    .nth(range.end)
+                    .map(|(index, _)| index)
+                    .unwrap_or(panel.template.len());
+                if start < end && end <= panel.template.len() && panel.template[start..end].contains('§') {
+                    let cleaned = panel.template[start..end].replace('§', "");
+                    panel.template.replace_range(start..end, &cleaned);
+                } else {
+                    panel.template = panel.template.replace('§', "");
+                }
+            } else {
+                panel.template = panel.template.replace('§', "");
+            }
         }
         let auto_btn = egui::Button::new(RichText::new("Auto §").size(12.0).strong())
             .fill(btn_bg)
@@ -1490,56 +1518,55 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
     });
     ui.separator();
 
-    // Row 4: Line-numbered HTTP request view/editor with mint-green `#CFE8DF` / `#A31515` `§...§` highlights (`intruder-enumerating-positions-940.png`)
-    let tmpl_h = app.panels.intruder.template_height;
+    // Row 4: Line-numbered HTTP request editor with mint-green `#CFE8DF` / `#A31515` `§...§` highlights (`intruder-enumerating-positions-940.png`)
+    let has_results_or_running =
+        app.panels.intruder.running || !app.panels.intruder.results.is_empty();
+    let tmpl_h = if has_results_or_running {
+        app.panels.intruder.template_height
+    } else {
+        (ui.available_height() - 18.0).max(340.0)
+    };
     let host_clone = app.panels.intruder.host.clone();
-    let tmpl_clone = app.panels.intruder.template.clone();
-    if app.panels.intruder.template_view_mode == 2 {
-        let hex = intruder_hex_dump(&tmpl_clone);
-        let resp = super::burp_numbered_message_view(
+    let mode = app.panels.intruder.template_view_mode;
+    let resp = if mode == 2 {
+        let tmpl_clone = app.panels.intruder.template.clone();
+        super::burp_numbered_message_view(
             ui,
             &theme,
             "intruder-template-hex",
             tmpl_h,
-            &hex,
+            &tmpl_clone,
             2,
             false,
-        );
-        super::attach_message_context_menu(app, &resp, &host_clone, &tmpl_clone, "");
-    } else if app.panels.intruder.template_view_mode == 1 {
-        let (resp, _) = super::burp_numbered_message_editor(
+        )
+    } else {
+        let (r, _) = super::burp_numbered_message_editor_wrapped(
             ui,
             &theme,
-            "intruder-positions-raw-edit",
+            "intruder-positions-edit",
             tmpl_h,
             &mut app.panels.intruder.template,
-            1,
+            mode,
+            true,
         );
-        super::attach_message_context_menu(app, &resp, &host_clone, &tmpl_clone, "");
-    } else {
-        let resp = super::burp_numbered_message_view(
+        if let Some((range, _)) = super::latest_selection_for("intruder-positions-edit") {
+            app.panels.intruder.selection = Some(range);
+        }
+        r
+    };
+    let tmpl_clone = app.panels.intruder.template.clone();
+    super::attach_message_context_menu(app, &resp, &host_clone, &tmpl_clone, "");
+    if has_results_or_running {
+        super::horizontal_resize_handle(
             ui,
             &theme,
-            "intruder-positions-pretty",
-            tmpl_h,
-            &tmpl_clone,
-            0,
-            false,
+            "intruder-template-resize",
+            &mut app.panels.intruder.template_height,
+            120.0,
+            520.0,
+            240.0,
         );
-        if resp.double_clicked() {
-            app.panels.intruder.template_view_mode = 1;
-        }
-        super::attach_message_context_menu(app, &resp, &host_clone, &tmpl_clone, "");
     }
-    super::horizontal_resize_handle(
-        ui,
-        &theme,
-        "intruder-template-resize",
-        &mut app.panels.intruder.template_height,
-        120.0,
-        520.0,
-        240.0,
-    );
 }
 
 fn draw_results_area(app: &mut App, ui: &mut Ui) {

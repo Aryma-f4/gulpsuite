@@ -42,6 +42,9 @@ pub struct RepeaterTab {
     pub editing: bool,
     pub hex_view: bool,
     pub render_view: bool,
+    /// Response formatting is independent from the editable request.
+    pub response_mode: usize,
+    pub response_non_printable: bool,
     pub show_non_printable: bool,
     pub notes: String,
     pub group_name: String,
@@ -80,6 +83,8 @@ impl Default for RepeaterTab {
             editing: false,
             hex_view: false,
             render_view: false,
+            response_mode: 0,
+            response_non_printable: false,
             show_non_printable: false,
             notes: String::new(),
             group_name: String::new(),
@@ -253,6 +258,9 @@ impl RepeaterPanel {
         tab.elapsed_ms = 0;
         tab.editing = false;
         tab.hex_view = false;
+        tab.render_view = false;
+        tab.response_mode = 0;
+        tab.response_non_printable = false;
         tab.pending = None;
         tab.sending = false;
         tab.in_flight = None;
@@ -914,31 +922,6 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         });
 }
 
-fn repeater_hex_dump(text: &str) -> String {
-    let mut out = String::new();
-    for (row, chunk) in text.as_bytes().chunks(16).enumerate() {
-        out.push_str(&format!("{:04x}: ", row * 16));
-        for i in 0..16 {
-            if let Some(b) = chunk.get(i) {
-                out.push_str(&format!("{b:02x} "));
-            } else {
-                out.push_str("   ");
-            }
-        }
-        out.push(' ');
-        for &b in chunk {
-            out.push(if (0x20..=0x7e).contains(&b) {
-                b as char
-            } else {
-                '.'
-            });
-        }
-        out.push('\n');
-    }
-    out
-}
-
-/// Renders the segmented `[ Pretty | Raw | Hex (| Render) ]  [\n] [≡]` pill bar from `quick-start-pro-repeater.png`.
 fn draw_repeater_pill_bar(
     ui: &mut Ui,
     theme: &crate::ui::theme::Theme,
@@ -1086,28 +1069,38 @@ fn draw_request_pane(
         repeater_actions_menu(app, ui);
     });
     let resp = if mode == 2 {
-        super::burp_numbered_message_view(
+        super::burp_numbered_message_view_wrapped(
             ui,
             theme,
             "repeater-req-hex",
             height,
-            &repeater_hex_dump(request),
+            request,
             2,
             false,
+            wrap,
         )
     } else if mode == 1 {
-        let (r, _) = super::burp_numbered_message_editor(
+        let (r, _) = super::burp_numbered_message_editor_wrapped(
             ui,
             theme,
             "repeater-req-edit",
             height,
             &mut app.panels.repeater.active_mut().raw,
             1,
+            wrap,
         );
         r
     } else {
-        let r =
-            super::burp_numbered_message_view(ui, theme, "repeater-req-pretty", height, request, 0, np);
+        let r = super::burp_numbered_message_view_wrapped(
+            ui,
+            theme,
+            "repeater-req-pretty",
+            height,
+            request,
+            0,
+            np,
+            wrap,
+        );
         if r.double_clicked() {
             app.panels.repeater.active_mut().editing = true;
         }
@@ -1137,7 +1130,11 @@ fn draw_response_pane(
                 .color(Color32::from_rgb(0xE0, 0x53, 0x20)),
         );
         if let Some(status) = app.panels.repeater.active().status {
-            ui.label(eframe::egui::RichText::new(status.to_string()).color(colour).strong());
+            ui.label(
+                eframe::egui::RichText::new(status.to_string())
+                    .color(colour)
+                    .strong(),
+            );
         } else if !response.is_empty() {
             ui.label(eframe::egui::RichText::new("error").color(colour));
         }
@@ -1149,14 +1146,8 @@ fn draw_response_pane(
             );
         }
     });
-    let mut mode = if app.panels.repeater.active().render_view {
-        3
-    } else if app.panels.repeater.active().hex_view {
-        2
-    } else {
-        0
-    };
-    let mut np = app.panels.repeater.active().show_non_printable;
+    let mut mode = app.panels.repeater.active().response_mode;
+    let mut np = app.panels.repeater.active().response_non_printable;
     let mut wrap = app.panels.repeater.resp_wrap;
     let header_resp = draw_repeater_pill_bar(
         ui,
@@ -1169,9 +1160,9 @@ fn draw_response_pane(
     );
     {
         let tab = app.panels.repeater.active_mut();
-        tab.hex_view = mode == 2;
+        tab.response_mode = mode;
         tab.render_view = mode == 3;
-        tab.show_non_printable = np;
+        tab.response_non_printable = np;
     }
     app.panels.repeater.resp_wrap = wrap;
     ui.add_space(4.0);
@@ -1179,15 +1170,15 @@ fn draw_response_pane(
     super::show_persistent_context_menu(&header_resp, |ui| {
         repeater_actions_menu(app, ui);
     });
-    let view_mode = if mode == 2 { 2 } else { 0 };
-    let resp = super::burp_numbered_message_view(
+    let resp = super::burp_numbered_message_view_wrapped(
         ui,
         theme,
         "repeater-resp-pretty",
         height,
         response,
-        view_mode,
+        mode,
         np,
+        wrap,
     );
     super::show_persistent_context_menu(&resp, |ui| {
         repeater_actions_menu(app, ui);
@@ -1195,7 +1186,34 @@ fn draw_response_pane(
 }
 
 fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
+    ui.set_min_width(235.0);
     let tab = app.panels.repeater.active().clone();
+    if let Some(sel_txt) = super::latest_selected_text() {
+        if ui.button("Copy selection").clicked() {
+            ui.ctx().copy_text(sel_txt.clone());
+            app.status = format!("Copied {} selected character(s)", sel_txt.chars().count());
+            ui.close();
+        }
+        if ui.button("Send selection to Decoder").clicked() {
+            app.panels.decoder.input = sel_txt.clone();
+            app.tool = crate::ui::app::DECODER;
+            app.view = 0;
+            app.status = "Sent selected text to Decoder".into();
+            ui.close();
+        }
+        if ui.button("Send selection to Comparer").clicked() {
+            if app.panels.comparer.left.trim().is_empty() {
+                app.panels.comparer.left = sel_txt;
+            } else {
+                app.panels.comparer.right = sel_txt;
+            }
+            app.tool = crate::ui::app::COMPARER;
+            app.view = 0;
+            app.status = "Sent selected text to Comparer".into();
+            ui.close();
+        }
+        ui.separator();
+    }
     if ui.button("Scan / Do active scan").clicked() {
         app.scan_url(&tab.host, true);
         ui.close();

@@ -361,6 +361,53 @@ pub fn vertical_split(
     });
 }
 
+thread_local! {
+    static LAST_MESSAGE_SELECTION: std::cell::RefCell<Option<(String, std::ops::Range<usize>, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Returns the most recent non-empty character selection `(char_range, selected_text)` for `id_salt`.
+pub fn latest_selection_for(id_salt: &str) -> Option<(std::ops::Range<usize>, String)> {
+    LAST_MESSAGE_SELECTION.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .filter(|(id, range, txt)| id == id_salt && range.start < range.end && !txt.is_empty())
+            .map(|(_, range, txt)| (range.clone(), txt.clone()))
+    })
+}
+
+/// Returns the most recent non-empty selected ("blocked") text across any HTTP message pane.
+pub fn latest_selected_text() -> Option<String> {
+    LAST_MESSAGE_SELECTION.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .filter(|(_, range, txt)| range.start < range.end && !txt.is_empty())
+            .map(|(_, _, txt)| txt.clone())
+    })
+}
+
+pub fn record_message_selection(id_salt: &str, range: std::ops::Range<usize>, full_text: &str) {
+    if range.start >= range.end {
+        return;
+    }
+    let start_b = full_text
+        .char_indices()
+        .nth(range.start)
+        .map(|(i, _)| i)
+        .unwrap_or(full_text.len());
+    let end_b = full_text
+        .char_indices()
+        .nth(range.end)
+        .map(|(i, _)| i)
+        .unwrap_or(full_text.len());
+    if start_b < end_b && end_b <= full_text.len() {
+        let slice = full_text[start_b..end_b].to_string();
+        LAST_MESSAGE_SELECTION.with(|cell| {
+            *cell.borrow_mut() = Some((id_salt.to_string(), range, slice));
+        });
+    }
+}
+
 /// Opens a persistent right-click context menu whenever the pointer is secondary-clicked
 /// anywhere inside `trigger.rect` (including selectable labels, text editors, gutters, and blank space),
 /// and keeps it open across subsequent frames until dismissed or an action calls `ui.close()`.
@@ -370,17 +417,18 @@ pub fn show_persistent_context_menu(
 ) {
     let secondary_in_rect = trigger.secondary_clicked()
         || trigger.ctx.input(|i| {
-            i.pointer
+            (i.pointer
                 .button_clicked(eframe::egui::PointerButton::Secondary)
+                || i.pointer
+                    .button_released(eframe::egui::PointerButton::Secondary))
                 && i.pointer
                     .interact_pos()
                     .is_some_and(|pos| trigger.rect.contains(pos))
         });
     eframe::egui::Popup::context_menu(trigger)
+        .close_behavior(eframe::egui::PopupCloseBehavior::CloseOnClick)
         .open_memory(if secondary_in_rect {
             Some(eframe::egui::SetOpenCommand::Bool(true))
-        } else if trigger.clicked() {
-            Some(eframe::egui::SetOpenCommand::Bool(false))
         } else {
             None
         })
@@ -550,6 +598,33 @@ pub fn attach_message_context_menu(
         ui.separator();
 
         // Request manipulation & Copy helpers
+        let selected_snippet = latest_selected_text();
+        if let Some(sel_txt) = &selected_snippet {
+            if ui.button("Copy selection").clicked() {
+                ui.ctx().copy_text(sel_txt.clone());
+                app.status = format!("Copied {} selected character(s)", sel_txt.chars().count());
+                ui.close();
+            }
+            if ui.button("Send selection to Decoder").clicked() {
+                app.panels.decoder.input = sel_txt.clone();
+                app.tool = app::DECODER;
+                app.view = 0;
+                app.status = "Sent selected text to Decoder".into();
+                ui.close();
+            }
+            if ui.button("Send selection to Comparer").clicked() {
+                if app.panels.comparer.left.trim().is_empty() {
+                    app.panels.comparer.left = sel_txt.clone();
+                } else {
+                    app.panels.comparer.right = sel_txt.clone();
+                }
+                app.tool = app::COMPARER;
+                app.view = 0;
+                app.status = "Sent selected text to Comparer".into();
+                ui.close();
+            }
+            ui.separator();
+        }
         if has_req && ui.button("Change request method (GET ↔ POST)").clicked() {
             let toggled = crate::ui::app::Transaction::toggle_request_method(&req);
             app.panels.repeater.open(&url, &toggled);
@@ -568,7 +643,8 @@ pub fn attach_message_context_menu(
                 "HTML decode",
             ] {
                 if ui.button(op_name).clicked() {
-                    let src = if has_req { &req } else { &resp };
+                    let fallback = if has_req { &req } else { &resp };
+                    let src = selected_snippet.as_deref().unwrap_or(fallback);
                     if let Some(op) = crate::logic::find_op(op_name) {
                         if let Ok(out) = (op.run)(src) {
                             ui.ctx().copy_text(out);
@@ -1115,8 +1191,7 @@ pub fn burp_message_formatter_bar(
     });
 }
 
-/// Renders a read-only HTTP message with Burp Suite Pro's left line-number gutter (`1`, `2`, `3`, ...)
-/// and syntax-highlighted HTTP text (`Pretty` / `Raw` / `Hex` / `Render`).
+/// Read-only message view with wrapping enabled by default.
 pub fn burp_numbered_message_view(
     ui: &mut Ui,
     theme: &Theme,
@@ -1126,57 +1201,189 @@ pub fn burp_numbered_message_view(
     mode: usize,
     show_non_printable: bool,
 ) -> eframe::egui::Response {
-    let display_text = if mode == 2 {
-        format_burp_hex_dump(raw_message)
-    } else if show_non_printable {
-        format_non_printable(raw_message)
-    } else {
-        raw_message.to_string()
-    };
-    let line_count = display_text.lines().count().max(1);
-    let gutter_str: String = (1..=line_count)
-        .map(|n| format!("{n:>3}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let bg = theme.color("ui.editor.message.background");
-    let gutter_bg = theme.color("ui.background.2");
-    let border_col = theme.color("ui.border.1");
-
-    eframe::egui::ScrollArea::vertical()
-        .id_salt((id_salt, "numbered-view-scroll"))
-        .max_height(height.max(60.0))
-        .show(ui, |ui| {
-            let row_out = ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                eframe::egui::Frame::new()
-                    .fill(gutter_bg)
-                    .stroke(eframe::egui::Stroke::new(0.5, border_col))
-                    .inner_margin(eframe::egui::Margin::symmetric(6, 6))
-                    .show(ui, |ui| {
-                        ui.label(
-                            eframe::egui::RichText::new(gutter_str)
-                                .font(eframe::egui::FontId::monospace(12.0))
-                                .color(theme.color("ui.icon.default")),
-                        );
-                    });
-                crate::ui::highlight::show_message_in(
-                    ui,
-                    id_salt,
-                    height.max(60.0),
-                    &display_text,
-                    theme,
-                    bg,
-                )
-            });
-            let mut resp = row_out.inner;
-            resp.rect = row_out.response.rect;
-            resp
-        })
-        .inner
+    burp_numbered_message_view_wrapped(
+        ui,
+        theme,
+        id_salt,
+        height,
+        raw_message,
+        mode,
+        show_non_printable,
+        true,
+    )
 }
 
-/// Renders an editable HTTP message with Burp Suite Pro's left line-number gutter (`1`, `2`, `3`, ...)
-/// and live HTTP syntax highlighting (`Pretty` / `Raw` / `Hex`). Returns `(Response, changed)`.
+/// A single scroll viewport keeps wrapped message lines and their gutter aligned.
+/// Disables `ScrollArea` drag-to-scroll (`drag: false`) so mouse dragging selects ("blocks") text.
+pub fn burp_numbered_message_view_wrapped(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: &str,
+    height: f32,
+    raw_message: &str,
+    mode: usize,
+    show_non_printable: bool,
+    wrap: bool,
+) -> eframe::egui::Response {
+    use eframe::egui::{self, FontId, Label, Sense, TextWrapMode, Vec2};
+    let no_drag_scroll = egui::containers::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: false,
+        mouse_wheel: true,
+    };
+    if mode == 3 {
+        let outer = egui::Frame::new()
+            .fill(theme.color("ui.editor.message.background"))
+            .inner_margin(8.0)
+            .show(ui, |ui| {
+                ui.label("HTML preview — text only; CSS, JavaScript, images and external resources are not rendered.");
+                egui::ScrollArea::both()
+                    .id_salt((id_salt, "html-preview"))
+                    .scroll_source(no_drag_scroll)
+                    .max_height(height.max(60.0))
+                    .show(ui, |ui| {
+                        ui.add(Label::new(html_text_preview(raw_message)).selectable(true))
+                    })
+                    .inner
+            });
+        let mut resp = outer.inner;
+        resp.rect = outer.response.rect;
+        return resp;
+    }
+    let display_text = message_display_text(raw_message, mode, show_non_printable);
+    let width = (ui.available_width() - 48.0).max(40.0);
+    let mut job = if mode == 0 {
+        crate::ui::highlight::layout(&display_text, theme)
+    } else {
+        egui::text::LayoutJob::simple(
+            display_text,
+            FontId::monospace(12.0),
+            theme.color("ui.text.body"),
+            f32::INFINITY,
+        )
+    };
+    job.wrap.max_width = if wrap && mode != 2 {
+        width
+    } else {
+        f32::INFINITY
+    };
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let outer = egui::Frame::new()
+        .fill(theme.color("ui.editor.message.background"))
+        .stroke(egui::Stroke::new(1.0_f32, theme.color("ui.border.1")))
+        .show(ui, |ui| {
+            let content = egui::ScrollArea::both()
+                .id_salt((id_salt, "numbered-view-scroll"))
+                .scroll_source(no_drag_scroll)
+                .max_height(height.max(60.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let (gutter, _) = ui.allocate_exact_size(
+                            Vec2::new(38.0, galley.size().y.max(height.max(60.0))),
+                            Sense::hover(),
+                        );
+                        ui.painter()
+                            .rect_filled(gutter, 0.0, theme.color("ui.background.2"));
+                        let mut line = 1;
+                        let mut new_line = true;
+                        for row in &galley.rows {
+                            if new_line {
+                                ui.painter().text(
+                                    gutter.left_top() + egui::vec2(30.0, row.pos.y),
+                                    egui::Align2::RIGHT_TOP,
+                                    line.to_string(),
+                                    FontId::monospace(12.0),
+                                    theme.color("ui.icon.default"),
+                                );
+                                line += 1;
+                            }
+                            new_line = row.ends_with_newline;
+                        }
+                        ui.add(
+                            Label::new(galley)
+                                .wrap_mode(TextWrapMode::Extend)
+                                .selectable(true)
+                                .sense(Sense::click()),
+                        )
+                    })
+                })
+                .inner;
+            let mut response = content.inner;
+            response.rect = content.response.rect;
+            response
+        });
+    let mut response = outer.inner;
+    response.rect = outer.response.rect;
+    response
+}
+
+fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
+    let display = if mode == 2 {
+        format_burp_hex_dump(raw)
+    } else if mode == 0 {
+        // Formatting is display-only; never rewrite a captured or editable message.
+        let boundary = raw
+            .find("\r\n\r\n")
+            .map(|i| (i, 4))
+            .or_else(|| raw.find("\n\n").map(|i| (i, 2)));
+        if let Some((at, separator)) = boundary {
+            let (head, body) = (&raw[..at], &raw[at + separator..]);
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+                format!(
+                    "{head}\n\n{}",
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| body.to_string())
+                )
+            } else {
+                raw.to_string()
+            }
+        } else {
+            raw.to_string()
+        }
+    } else {
+        raw.to_string()
+    };
+    if non_printable && mode != 2 {
+        format_non_printable(&display)
+    } else {
+        display
+    }
+}
+
+fn html_text_preview(raw: &str) -> String {
+    let body = raw
+        .split_once("\r\n\r\n")
+        .or_else(|| raw.split_once("\n\n"))
+        .map_or(raw, |(_, body)| body);
+    if !body.trim_start().starts_with('<') {
+        return "HTML preview is unavailable for this non-HTML response.".into();
+    }
+    // No markup is executed and no URLs are fetched. This deliberately renders only text.
+    use std::sync::LazyLock;
+    static ACTIVE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?</(?:script|style)\s*>").unwrap()
+    });
+    static BREAKS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?is)<\s*(?:br\b[^>]*|/?(?:p|div|h[1-6]|li|tr)\b[^>]*)>").unwrap()
+    });
+    static TAGS: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?s)<[^>]*>").unwrap());
+    let without_active = ACTIVE.replace_all(body, "");
+    let lines = BREAKS.replace_all(&without_active, "\n");
+    let text = TAGS.replace_all(&lines, "");
+    let decoded = crate::logic::find_op("HTML decode")
+        .and_then(|op| (op.run)(&text).ok())
+        .unwrap_or_else(|| text.into_owned());
+    decoded
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Editable message; only the layout changes when wrapping is toggled.
 pub fn burp_numbered_message_editor(
     ui: &mut Ui,
     theme: &Theme,
@@ -1185,61 +1392,124 @@ pub fn burp_numbered_message_editor(
     text: &mut String,
     mode: usize,
 ) -> (eframe::egui::Response, bool) {
-    if mode == 2 {
-        let resp = burp_numbered_message_view(ui, theme, id_salt, height, text, 2, false);
-        return (resp, false);
-    }
-    let line_count = text.lines().count().max(1);
-    let gutter_str: String = (1..=line_count)
-        .map(|n| format!("{n:>3}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let bg = theme.color("ui.editor.message.background");
-    let gutter_bg = theme.color("ui.background.2");
-    let border_col = theme.color("ui.border.1");
-    let mut changed = false;
+    burp_numbered_message_editor_wrapped(ui, theme, id_salt, height, text, mode, true)
+}
 
-    let resp = eframe::egui::ScrollArea::vertical()
-        .id_salt((id_salt, "numbered-edit-scroll"))
-        .max_height(height.max(80.0))
+pub fn burp_numbered_message_editor_wrapped(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: &str,
+    height: f32,
+    text: &mut String,
+    mode: usize,
+    wrap: bool,
+) -> (eframe::egui::Response, bool) {
+    use eframe::egui::{self, FontId};
+    if mode >= 2 {
+        return (
+            burp_numbered_message_view_wrapped(ui, theme, id_salt, height, text, mode, false, wrap),
+            false,
+        );
+    }
+    let no_drag_scroll = egui::containers::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: false,
+        mouse_wheel: true,
+    };
+    let rows = ((height / 15.0) as usize).clamp(6, 55);
+    let edit_id = ui.make_persistent_id((id_salt, "numbered-edit-body"));
+    let prev_range = egui::text_edit::TextEditState::load(ui.ctx(), edit_id)
+        .and_then(|s| s.cursor.char_range())
+        .filter(|r| r.primary != r.secondary);
+    let right_mouse_event = ui.input(|i| {
+        i.pointer.button_pressed(egui::PointerButton::Secondary)
+            || i.pointer.button_down(egui::PointerButton::Secondary)
+            || i.pointer.button_released(egui::PointerButton::Secondary)
+    });
+
+    let mut changed = false;
+    let outer = egui::Frame::new()
+        .fill(theme.color("ui.editor.message.background"))
+        .stroke(egui::Stroke::new(1.0_f32, theme.color("ui.border.1")))
         .show(ui, |ui| {
-            let row_out = ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                eframe::egui::Frame::new()
-                    .fill(gutter_bg)
-                    .stroke(eframe::egui::Stroke::new(0.5, border_col))
-                    .inner_margin(eframe::egui::Margin::symmetric(6, 6))
-                    .show(ui, |ui| {
-                        ui.label(
-                            eframe::egui::RichText::new(gutter_str)
-                                .font(eframe::egui::FontId::monospace(12.0))
-                                .color(theme.color("ui.icon.default")),
+            egui::ScrollArea::both()
+                .id_salt((id_salt, "numbered-edit-scroll"))
+                .scroll_source(no_drag_scroll)
+                .max_height(height.max(80.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let (mut gutter, _) = ui.allocate_exact_size(
+                            egui::vec2(38.0, height.max(80.0)),
+                            egui::Sense::hover(),
                         );
-                    });
-                let rows = ((height / 16.0) as usize).clamp(6, 40);
-                let frame_out = eframe::egui::Frame::new()
-                    .fill(bg)
-                    .inner_margin(eframe::egui::Margin::symmetric(8, 6))
-                    .show(ui, |ui| {
-                        let r = ui.add(
-                            eframe::egui::TextEdit::multiline(text)
-                                .id_salt((id_salt, "numbered-edit-body"))
-                                .font(eframe::egui::TextStyle::Monospace)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(rows)
-                                .frame(false),
-                        );
-                        if r.changed() {
-                            changed = true;
+                        let mut layouter = |ui: &Ui, buf: &dyn egui::TextBuffer, width: f32| {
+                            let mut job = if mode == 0 {
+                                crate::ui::highlight::layout(buf.as_str(), theme)
+                            } else {
+                                egui::text::LayoutJob::simple(
+                                    buf.as_str().into(),
+                                    FontId::monospace(12.0),
+                                    theme.color("ui.text.body"),
+                                    width,
+                                )
+                            };
+                            job.wrap.max_width = if wrap { width.max(40.0) } else { f32::INFINITY };
+                            ui.fonts_mut(|fonts| fonts.layout_job(job))
+                        };
+                        let mut output = egui::TextEdit::multiline(text)
+                            .id(edit_id)
+                            .font(FontId::monospace(12.0))
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(rows)
+                            .frame(false)
+                            .layouter(&mut layouter)
+                            .show(ui);
+
+                        if right_mouse_event {
+                            if let Some(saved) = prev_range {
+                                output.state.cursor.set_char_range(Some(saved));
+                                output.state.store(ui.ctx(), edit_id);
+                                output.cursor_range = Some(saved);
+                            }
                         }
-                        r
-                    });
-                frame_out.inner
-            });
-            let mut resp = row_out.inner;
-            resp.rect = row_out.response.rect;
-            resp
-        })
-        .inner;
-    (resp, changed)
+                        if let Some(cr) = output.cursor_range {
+                            let sorted = cr.as_sorted_char_range();
+                            if sorted.start < sorted.end {
+                                record_message_selection(id_salt, sorted, text);
+                            }
+                        }
+
+                        gutter.max.y = gutter.top() + output.galley.size().y.max(height.max(80.0));
+                        ui.painter()
+                            .rect_filled(gutter, 0.0, theme.color("ui.background.2"));
+                        let mut line = 1;
+                        let mut new_line = true;
+                        for row in &output.galley.rows {
+                            if new_line {
+                                ui.painter().text(
+                                    egui::pos2(
+                                        gutter.right() - 8.0,
+                                        output.galley_pos.y + row.pos.y,
+                                    ),
+                                    egui::Align2::RIGHT_TOP,
+                                    line.to_string(),
+                                    FontId::monospace(12.0),
+                                    theme.color("ui.icon.default"),
+                                );
+                                line += 1;
+                            }
+                            new_line = row.ends_with_newline;
+                        }
+                        changed = output.response.changed();
+                        output.response
+                    })
+                    .inner
+                })
+                .inner
+        });
+    let mut response = outer.inner;
+    response.rect = outer.response.rect;
+    (response, changed)
 }

@@ -15,6 +15,7 @@ pub mod cookies;
 pub mod logic;
 pub mod http_target;
 pub mod intruder;
+pub mod issue_definitions;
 pub mod meminfo;
 pub mod project;
 pub mod proxy;

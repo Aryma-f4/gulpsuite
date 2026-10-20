@@ -61,8 +61,6 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.22.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0089e5c0ac0ca281e13ea374773898d9354cc28d15af9f0f7394d44a495b575"
 dependencies = [
  "accesskit",
  "accesskit_consumer 0.31.0",
@@ -1429,6 +1427,7 @@ dependencies = [
 name = "gulpsuite"
 version = "0.0.1"
 dependencies = [
+ "accesskit_macos",
  "base64",
  "eframe",
  "egui_kittest",

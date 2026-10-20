@@ -564,8 +564,7 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut ctx = cc.egui_ctx.clone();
-        install_fonts(&mut ctx);
+        let ctx = cc.egui_ctx.clone();
         let mut app = App::with_context(&ctx);
         let preferred = app.panels.proxy_panel.port;
         let port = if std::net::TcpListener::bind(("127.0.0.1", preferred)).is_ok() {
@@ -586,9 +585,9 @@ impl App {
         app
     }
 
-    /// Builds the app around a context. The window and the tests both go through here, so the
-    /// fonts are the only thing the window has to add.
-    pub fn with_context(_ctx: &Context) -> Self {
+    /// Builds both native and headless workspaces with the same font families and metrics.
+    pub fn with_context(ctx: &Context) -> Self {
+        install_fonts(ctx);
 
         // Burp's own light and dark themes ship with Burp, so the shell loads the file instead of
         // tinting one. `GULP_THEME=light` picks the light theme at startup, which is how the two
@@ -615,7 +614,7 @@ impl App {
         // panels never have to know about Tokio, and wake the GUI whenever traffic arrives from
         // the browser even while the browser window has focus.
         let (tx, rx) = channel();
-        let repaint_ctx = _ctx.clone();
+        let repaint_ctx = ctx.clone();
         runtime.handle().spawn(async move {
             while let Ok(event) = events.recv().await {
                 if tx.send(event).is_err() {
@@ -1676,7 +1675,7 @@ pub(crate) fn primary_button(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
         let background = if response.hovered() { fill.linear_multiply(1.1) } else { fill };
-        painter.rect_filled(rect, crate::ui::theme::BURP_BUTTON_ARC as f32, background);
+        painter.rect_filled(rect, crate::ui::theme::BURP_BUTTON_RADIUS as f32, background);
         // Two passes, so the button label reads bold the way Burp's does. The galley is placed by
         // its top left corner, so it is centred first.
         let galley = ui
@@ -1694,6 +1693,136 @@ pub(crate) fn primary_button(
     response
 }
 
+#[derive(Clone, Copy)]
+struct CheckboxPalette {
+    foreground: eframe::egui::Color32,
+    background: eframe::egui::Color32,
+    border: eframe::egui::Color32,
+    selected: eframe::egui::Color32,
+    selected_hover: eframe::egui::Color32,
+    hover: eframe::egui::Color32,
+    checkmark: eframe::egui::Color32,
+    disabled_background: eframe::egui::Color32,
+    disabled_foreground: eframe::egui::Color32,
+}
+
+impl CheckboxPalette {
+    fn from_theme(theme: &Theme) -> Self {
+        Self {
+            foreground: theme.color("ui.text.body"),
+            background: theme.color("ui.background.2"),
+            border: theme.color("palette.mono.6"),
+            selected: theme.color("palette.secondary.core"),
+            selected_hover: theme.color("palette.secondary.2"),
+            hover: theme.color("palette.mono.3"),
+            checkmark: theme.color("ui.icon.white"),
+            disabled_background: theme.color("palette.mono.4"),
+            disabled_foreground: theme.color("ui.icon.disabled"),
+        }
+    }
+
+    fn from_visuals(visuals: &eframe::egui::Visuals) -> Self {
+        Self {
+            foreground: visuals.text_color(),
+            background: visuals.panel_fill,
+            border: visuals.widgets.inactive.bg_stroke.color,
+            selected: visuals.selection.stroke.color,
+            selected_hover: visuals.selection.stroke.color,
+            hover: visuals.widgets.hovered.bg_fill,
+            checkmark: visuals.strong_text_color(),
+            disabled_background: visuals.widgets.noninteractive.bg_fill,
+            disabled_foreground: visuals.weak_text_color(),
+        }
+    }
+}
+
+/// Burp gives checkboxes their own square geometry and selected colours.
+/// Scoped overrides keep button corners and radio-button appearance independent.
+pub trait BurpUiExt {
+    fn burp_checkbox(
+        &mut self,
+        checked: &mut bool,
+        text: impl Into<eframe::egui::WidgetText>,
+    ) -> Response;
+}
+
+impl BurpUiExt for Ui {
+    fn burp_checkbox(
+        &mut self,
+        checked: &mut bool,
+        text: impl Into<eframe::egui::WidgetText>,
+    ) -> Response {
+        let palette = self
+            .ctx()
+            .data(|data| {
+                data.get_temp::<CheckboxPalette>(eframe::egui::Id::new("burp-checkbox-palette"))
+            })
+            .unwrap_or_else(|| CheckboxPalette::from_visuals(self.visuals()));
+        let selected = *checked;
+        let text = text.into().color(if self.is_enabled() {
+            palette.foreground
+        } else {
+            palette.disabled_foreground
+        });
+        self.scope(|ui| {
+            let widgets = &mut ui.style_mut().visuals.widgets;
+            for visuals in [
+                &mut widgets.inactive,
+                &mut widgets.hovered,
+                &mut widgets.active,
+                &mut widgets.open,
+            ] {
+                // FlatCheckBoxIcon defaults CheckBox.arc to 2 (Java2D diameter).
+                visuals.corner_radius = CornerRadius::same(1);
+                visuals.bg_fill = if selected {
+                    palette.selected
+                } else {
+                    palette.background
+                };
+                visuals.weak_bg_fill = visuals.bg_fill;
+                visuals.bg_stroke = Stroke::new(
+                    1.0,
+                    if selected {
+                        palette.selected
+                    } else {
+                        palette.border
+                    },
+                );
+                visuals.fg_stroke = Stroke::new(
+                    1.5,
+                    if selected {
+                        palette.checkmark
+                    } else {
+                        palette.foreground
+                    },
+                );
+            }
+            widgets.hovered.bg_fill = if selected {
+                palette.selected_hover
+            } else {
+                palette.hover
+            };
+            widgets.hovered.bg_stroke.color = if selected {
+                palette.selected_hover
+            } else {
+                palette.border
+            };
+            widgets.noninteractive.corner_radius = CornerRadius::same(1);
+            widgets.noninteractive.bg_fill = if selected {
+                palette.disabled_background
+            } else {
+                palette.background
+            };
+            widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.disabled_background);
+            widgets.noninteractive.fg_stroke = Stroke::new(1.5, palette.disabled_foreground);
+            ui.spacing_mut().icon_width = 15.0;
+            ui.spacing_mut().icon_width_inner = 9.0;
+            ui.checkbox(checked, text)
+        })
+        .inner
+    }
+}
+
 /// Width of a tool tab, from its label. Burp sizes each tab to its text plus a fixed inset.
 fn label_width(ui: &Ui, text: &str) -> f32 {
     let font = TAB_FONT;
@@ -1701,6 +1830,7 @@ fn label_width(ui: &Ui, text: &str) -> f32 {
 }
 
 fn apply_visuals(ctx: &Context, theme: &Theme) {
+    ctx.data_mut(|data| data.insert_temp(eframe::egui::Id::new("burp-checkbox-palette"), CheckboxPalette::from_theme(theme)));
     let mut style = (*ctx.style()).clone();
 
     // Quoted from BurpLaf under its own names now that `palette.*` resolves.
@@ -1732,28 +1862,28 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
     style.visuals.widgets.inactive.weak_bg_fill = button_bg;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, body);
     style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, button_border);
-    let arc = crate::ui::theme::BURP_BUTTON_ARC;
-    style.visuals.widgets.inactive.corner_radius = CornerRadius::same(arc);
+    let radius = crate::ui::theme::BURP_BUTTON_RADIUS;
+    style.visuals.widgets.inactive.corner_radius = CornerRadius::same(radius);
 
     style.visuals.widgets.hovered.bg_fill = button_hover_bg;
     style.visuals.widgets.hovered.weak_bg_fill = button_hover_bg;
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, hover_text);
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, button_hover_border);
-    style.visuals.widgets.hovered.corner_radius = CornerRadius::same(arc);
+    style.visuals.widgets.hovered.corner_radius = CornerRadius::same(radius);
 
     style.visuals.widgets.active.bg_fill = button_bg;
     style.visuals.widgets.active.weak_bg_fill = button_bg;
     style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, body);
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, button_border);
-    style.visuals.widgets.active.corner_radius = CornerRadius::same(arc);
+    style.visuals.widgets.active.corner_radius = CornerRadius::same(radius);
 
     style.visuals.widgets.open.bg_fill = button_hover_bg;
     style.visuals.widgets.open.weak_bg_fill = button_hover_bg;
     style.visuals.widgets.open.fg_stroke = Stroke::new(1.0, body);
     style.visuals.widgets.open.bg_stroke = Stroke::new(1.0, button_border);
-    style.visuals.widgets.open.corner_radius = CornerRadius::same(arc);
+    style.visuals.widgets.open.corner_radius = CornerRadius::same(radius);
 
-    style.visuals.selection.bg_fill = theme.color("ui.background.5");
+    style.visuals.selection.bg_fill = theme.color("ui.background.6");
     style.visuals.selection.stroke = Stroke::new(1.0, accent);
     style.visuals.hyperlink_color = accent;
     style.visuals.error_fg_color = theme.color("ui.icon.error");
@@ -2027,7 +2157,7 @@ impl App {
 
         let ctx = trigger.ctx.clone();
         let ctx = &ctx;
-        trigger.context_menu(|ui| {
+        super::panels::show_persistent_context_menu(trigger, |ui| {
             ui.set_min_width(235.0);
             let short_u: String = target.chars().take(48).collect();
             ui.label(eframe::egui::RichText::new(short_u).strong());
@@ -2864,8 +2994,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label("Target URL:");
                         ui.text_edit_singleline(&mut target);
-                        if ui
-                            .checkbox(&mut auto_submit, "Include auto-submit script")
+                        if ui.burp_checkbox(&mut auto_submit, "Include auto-submit script")
                             .changed()
                             || ui.button("Regenerate").clicked()
                         {
@@ -3034,7 +3163,7 @@ impl App {
                                 self.set_dark(false);
                             }
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.show_menu_bar,
                             "Show in-window top menu bar (on macOS, native OS menu bar is used by default)",
                         );
@@ -3125,7 +3254,7 @@ impl App {
                                     .range(100..=300_000),
                             );
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.intruder.update_host,
                             "Update Host header to match target",
                         );
@@ -3157,7 +3286,7 @@ impl App {
                     }
                     5 => {
                         super::panels::heading(ui, &theme, "Collaborator configuration");
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.collaborator_local,
                             "Include Collaborator server location in generated payloads",
                         );
@@ -3183,11 +3312,11 @@ impl App {
                                     .range(1..=5_000),
                             );
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.scanner.active_checks,
                             "Enable active payload injection checks",
                         );
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.scanner.only_high,
                             "Show only High and Medium severity findings in Scanner view",
                         );
@@ -3198,7 +3327,7 @@ impl App {
                             ui.label("Sequencer token parameter / cookie name:");
                             ui.text_edit_singleline(&mut self.panels.sequencer.token);
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.comparer.byte_mode,
                             "Default Comparer to Byte-level (hex) comparison",
                         );
@@ -3230,11 +3359,11 @@ impl App {
                             ui.label("Target Scope Exclude:");
                             ui.text_edit_singleline(&mut self.panels.target_panel.scope_exclude);
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.proxy_panel.dont_log_out_of_scope,
                             "Don't send items to Proxy history or live tasks, if out of scope",
                         );
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.logger.only_errors,
                             "Logger: record only 4xx/5xx error responses",
                         );
@@ -3260,12 +3389,12 @@ impl App {
                     }
                     11 => {
                         super::panels::heading(ui, &theme, "Network — Connections, HTTP & TLS");
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.tls_intercepting,
                             "Enable HTTPS MITM interception with session CA",
                         );
                         self.proxy.set_tls_interception(self.tls_intercepting);
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.proxy_panel.misc_keep_alive,
                             "Use keep-alive for HTTP/1 connections",
                         );
@@ -3287,7 +3416,7 @@ impl App {
                             ui.label("Extension scripts folder:");
                             ui.text_edit_singleline(&mut self.panels.extender_folder);
                         });
-                        ui.checkbox(
+                        ui.burp_checkbox(
                             &mut self.panels.extender.live,
                             "Apply active Bambda script to live Repeater requests",
                         );
@@ -3309,7 +3438,7 @@ impl App {
                 crate::updater::current_platform_tag()
             ));
             ui.separator();
-            ui.checkbox(
+            ui.burp_checkbox(
                 &mut self.auto_check_updates,
                 "Automatically check for updates on startup",
             );
@@ -4283,5 +4412,78 @@ mod tests {
             "the console should stay bounded, got {}",
             app.console.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod shared_style_parity_tests {
+    use super::*;
+
+    #[test]
+    fn shared_constructor_installs_the_native_typography() {
+        let ctx = Context::default();
+        let _app = App::with_context(&ctx);
+        assert_eq!(ctx.style().text_styles[&TextStyle::Body].size, 12.0);
+        assert_eq!(ctx.style().text_styles[&TextStyle::Heading].size, 15.0);
+        assert_eq!(ctx.style().spacing.item_spacing, Vec2::new(6.0, 4.0));
+    }
+
+    #[test]
+    fn flatlaf_arc_diameter_is_converted_to_egui_corner_radius() {
+        let ctx = Context::default();
+        apply_visuals(&ctx, &Theme::load(false));
+        // FlatUIUtils.createComponentRectangle uses Button.arc as Java2D arcWidth/
+        // arcHeight; egui's CornerRadius represents half that diameter.
+        assert_eq!(
+            ctx.style().visuals.widgets.inactive.corner_radius,
+            CornerRadius::same(4)
+        );
+        assert_eq!(
+            ctx.style().visuals.widgets.hovered.corner_radius,
+            CornerRadius::same(4)
+        );
+    }
+
+    #[test]
+    fn scoped_checkbox_paints_a_square_blue_icon_without_changing_buttons() {
+        use eframe::egui::epaint::Shape;
+        use eframe::egui::{CentralPanel, RawInput};
+        let ctx = Context::default();
+        let theme = Theme::load(false);
+        apply_visuals(&ctx, &theme);
+        let mut checked = true;
+        let output = ctx.run(RawInput::default(), |ctx| {
+            CentralPanel::default().show(ctx, |ui| {
+                let before = ui.visuals().widgets.inactive;
+                ui.burp_checkbox(&mut checked, "Scoped checkbox");
+                assert_eq!(
+                    ui.visuals().widgets.inactive.corner_radius,
+                    before.corner_radius
+                );
+                assert_eq!(ui.visuals().widgets.inactive.bg_fill, before.bg_fill);
+            });
+        });
+        assert!(
+            output.shapes.iter().any(|shape| match &shape.shape {
+                Shape::Rect(rect) =>
+                    rect.corner_radius == CornerRadius::same(1)
+                        && rect.fill == theme.color("palette.secondary.core"),
+                _ => false,
+            }),
+            "The selected checkbox must paint a square blue icon"
+        );
+    }
+
+    #[test]
+    fn selected_region_uses_the_shipped_selection_colour() {
+        for dark in [false, true] {
+            let ctx = Context::default();
+            let theme = Theme::load(dark);
+            apply_visuals(&ctx, &theme);
+            assert_eq!(
+                ctx.style().visuals.selection.bg_fill,
+                theme.color("ui.background.6")
+            );
+        }
     }
 }

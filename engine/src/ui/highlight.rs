@@ -844,14 +844,20 @@ pub fn show_message_in(
     background: eframe::egui::Color32,
 ) -> eframe::egui::Response {
     let job = layout(message, theme);
+    let no_drag_scroll = eframe::egui::containers::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: false,
+        mouse_wheel: true,
+    };
     let frame = eframe::egui::Frame::new()
         .fill(background)
         .inner_margin(6.0)
-        .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.background.3")));
+        .stroke(eframe::egui::Stroke::new(1.0_f32, theme.color("ui.background.3")));
     let frame_out = frame.show(ui, |ui| {
         ui.set_min_height(height.max(80.0));
         eframe::egui::ScrollArea::both()
             .id_salt(id)
+            .scroll_source(no_drag_scroll)
             .max_height(height.max(80.0))
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -891,23 +897,64 @@ pub fn show_editable_in(
     background: eframe::egui::Color32,
 ) -> eframe::egui::Response {
     let rows = ((height / 16.0) as usize).clamp(6, 60);
+    let no_drag_scroll = eframe::egui::containers::scroll_area::ScrollSource {
+        scroll_bar: true,
+        drag: false,
+        mouse_wheel: true,
+    };
+    let edit_id = ui.make_persistent_id((id, "msg-edit-body"));
+    let prev_range = eframe::egui::text_edit::TextEditState::load(ui.ctx(), edit_id)
+        .and_then(|s| s.cursor.char_range())
+        .filter(|r| r.primary != r.secondary);
+    let right_mouse_event = ui.input(|i| {
+        i.pointer
+            .button_pressed(eframe::egui::PointerButton::Secondary)
+            || i.pointer
+                .button_down(eframe::egui::PointerButton::Secondary)
+            || i.pointer
+                .button_released(eframe::egui::PointerButton::Secondary)
+    });
+
     let frame_out = eframe::egui::Frame::new()
         .fill(background)
         .inner_margin(6.0)
-        .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.background.3")))
+        .stroke(eframe::egui::Stroke::new(1.0_f32, theme.color("ui.background.3")))
         .show(ui, |ui| {
             ui.set_min_height(height.max(80.0));
             eframe::egui::ScrollArea::vertical()
                 .id_salt(id)
+                .scroll_source(no_drag_scroll)
                 .max_height(height.max(80.0))
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.add(
-                        eframe::egui::TextEdit::multiline(text)
-                            .font(eframe::egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(rows),
-                    )
+                    let mut layouter =
+                        |ui: &eframe::egui::Ui, buf: &dyn eframe::egui::TextBuffer, width: f32| {
+                            let mut job = layout(buf.as_str(), theme);
+                            job.wrap.max_width = width.max(40.0);
+                            ui.fonts_mut(|fonts| fonts.layout_job(job))
+                        };
+                    let mut out = eframe::egui::TextEdit::multiline(text)
+                        .id(edit_id)
+                        .font(eframe::egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(rows)
+                        .frame(false)
+                        .layouter(&mut layouter)
+                        .show(ui);
+                    if right_mouse_event {
+                        if let Some(saved) = prev_range {
+                            out.state.cursor.set_char_range(Some(saved));
+                            out.state.store(ui.ctx(), edit_id);
+                            out.cursor_range = Some(saved);
+                        }
+                    }
+                    if let Some(cr) = out.cursor_range {
+                        let sorted = cr.as_sorted_char_range();
+                        if sorted.start < sorted.end {
+                            crate::ui::panels::record_message_selection(id, sorted, text);
+                        }
+                    }
+                    out.response
                 })
                 .inner
         });

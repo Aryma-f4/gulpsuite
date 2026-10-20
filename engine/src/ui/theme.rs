@@ -45,6 +45,8 @@ pub struct Theme {
 
 /// `Button.arc` from burp/theme/BurpLaf.properties.
 pub const BURP_BUTTON_ARC: u8 = 8;
+/// FlatLaf passes arcWidth/arcHeight to Java2D; egui expects a corner radius.
+pub const BURP_BUTTON_RADIUS: u8 = BURP_BUTTON_ARC / 2;
 /// `Button.margin=2,20,2,20` from BurpLaf, expressed as egui button padding (horizontal, vertical).
 pub const BURP_BUTTON_PADDING: eframe::egui::Vec2 = eframe::egui::Vec2::new(20.0, 2.0);
 
