@@ -1079,31 +1079,16 @@ fn draw_request_pane(
             false,
             wrap,
         )
-    } else if mode == 1 {
+    } else {
         let (r, _) = super::burp_numbered_message_editor_wrapped(
             ui,
             theme,
             "repeater-req-edit",
             height,
             &mut app.panels.repeater.active_mut().raw,
-            1,
+            mode,
             wrap,
         );
-        r
-    } else {
-        let r = super::burp_numbered_message_view_wrapped(
-            ui,
-            theme,
-            "repeater-req-pretty",
-            height,
-            request,
-            0,
-            np,
-            wrap,
-        );
-        if r.double_clicked() {
-            app.panels.repeater.active_mut().editing = true;
-        }
         r
     };
     super::show_persistent_context_menu(&resp, |ui| {
@@ -1194,6 +1179,22 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
             app.status = format!("Copied {} selected character(s)", sel_txt.chars().count());
             ui.close();
         }
+        if ui.button("Base64 encode selection").clicked() {
+            super::apply_convert_selection(app, ui.ctx(), "Base64 encode", &tab.raw, &tab.response);
+            ui.close();
+        }
+        if ui.button("Base64 decode selection").clicked() {
+            super::apply_convert_selection(app, ui.ctx(), "Base64 decode", &tab.raw, &tab.response);
+            ui.close();
+        }
+        if ui.button("URL encode selection").clicked() {
+            super::apply_convert_selection(app, ui.ctx(), "URL encode", &tab.raw, &tab.response);
+            ui.close();
+        }
+        if ui.button("URL decode selection").clicked() {
+            super::apply_convert_selection(app, ui.ctx(), "URL decode", &tab.raw, &tab.response);
+            ui.close();
+        }
         if ui.button("Send selection to Decoder").clicked() {
             app.panels.decoder.input = sel_txt.clone();
             app.tool = crate::ui::app::DECODER;
@@ -1214,6 +1215,24 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
         }
         ui.separator();
     }
+    ui.menu_button("Convert selection", |ui| {
+        for op_name in [
+            "URL encode",
+            "URL decode",
+            "Base64 encode",
+            "Base64 decode",
+            "HTML encode",
+            "HTML decode",
+            "Hex encode",
+            "Hex decode",
+        ] {
+            if ui.button(op_name).clicked() {
+                super::apply_convert_selection(app, ui.ctx(), op_name, &tab.raw, &tab.response);
+                ui.close();
+            }
+        }
+    });
+    ui.separator();
     if ui.button("Scan / Do active scan").clicked() {
         app.scan_url(&tab.host, true);
         ui.close();

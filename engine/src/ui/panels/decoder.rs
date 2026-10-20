@@ -85,8 +85,26 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
                 .show(ui, |ui| {
                     ui.set_min_height(input_h - 12.0);
+                    let no_drag_scroll = eframe::egui::containers::scroll_area::ScrollSource {
+                        scroll_bar: true,
+                        drag: false,
+                        mouse_wheel: true,
+                    };
+                    let edit_id = ui.make_persistent_id("decoder-input-body");
+                    let prev_range = eframe::egui::text_edit::TextEditState::load(ui.ctx(), edit_id)
+                        .and_then(|s| s.cursor.char_range())
+                        .filter(|r| r.primary != r.secondary);
+                    let right_mouse_event = ui.input(|i| {
+                        i.pointer
+                            .button_pressed(eframe::egui::PointerButton::Secondary)
+                            || i.pointer
+                                .button_down(eframe::egui::PointerButton::Secondary)
+                            || i.pointer
+                                .button_released(eframe::egui::PointerButton::Secondary)
+                    });
                     eframe::egui::ScrollArea::vertical()
                         .id_salt("decoder-input-scroll")
+                        .scroll_source(no_drag_scroll)
                         .max_height(input_h - 12.0)
                         .show(ui, |ui| {
                             let resp = if app.panels.decoder.hex_view {
@@ -100,14 +118,42 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                     .sense(eframe::egui::Sense::click()),
                                 )
                             } else {
-                                ui.add(
-                                    eframe::egui::TextEdit::multiline(
-                                        &mut app.panels.decoder.input,
-                                    )
-                                    .font(eframe::egui::TextStyle::Monospace)
-                                    .desired_width(f32::INFINITY)
-                                    .desired_rows(rows),
+                                let mut out = eframe::egui::TextEdit::multiline(
+                                    &mut app.panels.decoder.input,
                                 )
+                                .id(edit_id)
+                                .font(eframe::egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(rows)
+                                .show(ui);
+                                if let Some(pending) =
+                                    super::take_pending_editor_cursor("decoder-input")
+                                {
+                                    let ccr = eframe::egui::text::CCursorRange::two(
+                                        eframe::egui::text::CCursor::new(pending.start),
+                                        eframe::egui::text::CCursor::new(pending.end),
+                                    );
+                                    out.state.cursor.set_char_range(Some(ccr));
+                                    out.state.store(ui.ctx(), edit_id);
+                                    out.cursor_range = Some(ccr);
+                                } else if right_mouse_event {
+                                    if let Some(saved) = prev_range {
+                                        out.state.cursor.set_char_range(Some(saved));
+                                        out.state.store(ui.ctx(), edit_id);
+                                        out.cursor_range = Some(saved);
+                                    }
+                                }
+                                if let Some(cr) = out.cursor_range {
+                                    let sorted = cr.as_sorted_char_range();
+                                    if sorted.start < sorted.end {
+                                        super::record_message_selection(
+                                            "decoder-input",
+                                            sorted,
+                                            &app.panels.decoder.input,
+                                        );
+                                    }
+                                }
+                                out.response
                             };
                             decoder_context_menu(app, &resp);
                         });
@@ -331,7 +377,12 @@ fn decoder_context_menu(app: &mut App, trigger: &eframe::egui::Response) {
             ("Hash: SHA-256", "Hash: SHA-256"),
         ] {
             if ui.button(label).clicked() {
-                run_named_op(app, op_name);
+                if super::latest_selection_for("decoder-input").is_some() {
+                    let inp = app.panels.decoder.input.clone();
+                    super::apply_convert_selection(app, ui.ctx(), op_name, &inp, "");
+                } else {
+                    run_named_op(app, op_name);
+                }
                 ui.close();
             }
         }

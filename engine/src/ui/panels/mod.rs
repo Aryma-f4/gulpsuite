@@ -364,6 +364,8 @@ pub fn vertical_split(
 thread_local! {
     static LAST_MESSAGE_SELECTION: std::cell::RefCell<Option<(String, std::ops::Range<usize>, String)>> =
         const { std::cell::RefCell::new(None) };
+    static PENDING_EDITOR_CURSOR: std::cell::RefCell<Option<(String, std::ops::Range<usize>)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// Returns the most recent non-empty character selection `(char_range, selected_text)` for `id_salt`.
@@ -376,14 +378,36 @@ pub fn latest_selection_for(id_salt: &str) -> Option<(std::ops::Range<usize>, St
     })
 }
 
-/// Returns the most recent non-empty selected ("blocked") text across any HTTP message pane.
-pub fn latest_selected_text() -> Option<String> {
+/// Returns the most recent non-empty selection `(id_salt, char_range, selected_text)` across any pane.
+pub fn latest_selection_full() -> Option<(String, std::ops::Range<usize>, String)> {
     LAST_MESSAGE_SELECTION.with(|cell| {
         cell.borrow()
             .as_ref()
             .filter(|(_, range, txt)| range.start < range.end && !txt.is_empty())
-            .map(|(_, _, txt)| txt.clone())
+            .cloned()
     })
+}
+
+/// Returns the most recent non-empty selected ("blocked") text across any HTTP message pane.
+pub fn latest_selected_text() -> Option<String> {
+    latest_selection_full().map(|(_, _, txt)| txt)
+}
+
+pub fn take_pending_editor_cursor(id_salt: &str) -> Option<std::ops::Range<usize>> {
+    PENDING_EDITOR_CURSOR.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        if borrow.as_ref().is_some_and(|(id, _)| id == id_salt) {
+            borrow.take().map(|(_, r)| r)
+        } else {
+            None
+        }
+    })
+}
+
+pub fn set_pending_editor_cursor(id_salt: &str, range: std::ops::Range<usize>) {
+    PENDING_EDITOR_CURSOR.with(|cell| {
+        *cell.borrow_mut() = Some((id_salt.to_string(), range));
+    });
 }
 
 pub fn record_message_selection(id_salt: &str, range: std::ops::Range<usize>, full_text: &str) {
@@ -405,6 +429,142 @@ pub fn record_message_selection(id_salt: &str, range: std::ops::Range<usize>, fu
         LAST_MESSAGE_SELECTION.with(|cell| {
             *cell.borrow_mut() = Some((id_salt.to_string(), range, slice));
         });
+    }
+}
+
+/// Replaces `range` (or `expected_selected` if char offsets shifted) inside `target` with `replacement`,
+/// returning the updated character range covering `replacement`.
+pub fn replace_selection_in_text(
+    target: &mut String,
+    range: &std::ops::Range<usize>,
+    expected_selected: &str,
+    replacement: &str,
+) -> Option<std::ops::Range<usize>> {
+    let start_b = target
+        .char_indices()
+        .nth(range.start)
+        .map(|(i, _)| i)
+        .unwrap_or(target.len());
+    let end_b = target
+        .char_indices()
+        .nth(range.end)
+        .map(|(i, _)| i)
+        .unwrap_or(target.len());
+    if start_b < end_b && end_b <= target.len() && &target[start_b..end_b] == expected_selected {
+        target.replace_range(start_b..end_b, replacement);
+        let new_end = range.start + replacement.chars().count();
+        return Some(range.start..new_end);
+    }
+    if !expected_selected.is_empty() {
+        if let Some(byte_pos) = target.find(expected_selected) {
+            let char_start = target[..byte_pos].chars().count();
+            target.replace_range(byte_pos..byte_pos + expected_selected.len(), replacement);
+            let char_end = char_start + replacement.chars().count();
+            return Some(char_start..char_end);
+        }
+    }
+    None
+}
+
+/// Runs `op_name` (`Base64 encode`, `Base64 decode`, `URL encode`, `URL decode`, `HTML encode`,
+/// `HTML decode`, `Hex encode`, `Hex decode`) on the active blocked selection, replaces it IN-PLACE
+/// when the selection belongs to an editable buffer (`Repeater`, `Intruder`, `Proxy -> Intercept`, `Decoder`),
+/// updates the active selection to cover the converted text, and copies the result to the clipboard.
+pub fn apply_convert_selection(
+    app: &mut App,
+    ctx: &eframe::egui::Context,
+    op_name: &str,
+    fallback_req: &str,
+    fallback_resp: &str,
+) {
+    let Some(op) = crate::logic::find_op(op_name) else {
+        return;
+    };
+    if let Some((source_id, range, selected_txt)) = latest_selection_full() {
+        let converted = (op.run)(&selected_txt)
+            .or_else(|_| (op.run)(selected_txt.trim()))
+            .unwrap_or_default();
+        if converted.is_empty() && !selected_txt.is_empty() {
+            app.status = format!("{op_name} failed on selected text");
+            return;
+        }
+        ctx.copy_text(converted.clone());
+
+        let mut replaced_in_editor = None;
+        if source_id.starts_with("repeater-req") || app.tool == app::REPEATER {
+            let raw = &mut app.panels.repeater.active_mut().raw;
+            if let Some(new_r) = replace_selection_in_text(raw, &range, &selected_txt, &converted) {
+                replaced_in_editor = Some(("repeater-req-edit", new_r));
+            }
+        } else if source_id.starts_with("intruder-") || app.tool == app::INTRUDER {
+            let tmpl = &mut app.panels.intruder.template;
+            if let Some(new_r) = replace_selection_in_text(tmpl, &range, &selected_txt, &converted)
+            {
+                replaced_in_editor = Some(("intruder-positions-edit", new_r));
+            }
+        } else if source_id.starts_with("proxy-intercept")
+            || (app.tool == app::PROXY && app.view == 0)
+        {
+            if let Some(sel_idx) = app.panels.proxy_panel.held_selected {
+                if app
+                    .panels
+                    .proxy_panel
+                    .held_edit
+                    .as_ref()
+                    .is_none_or(|(idx, _)| *idx != sel_idx)
+                {
+                    let seed = if !fallback_req.is_empty() {
+                        fallback_req.to_string()
+                    } else {
+                        fallback_resp.to_string()
+                    };
+                    if !seed.is_empty() {
+                        app.panels.proxy_panel.held_edit = Some((sel_idx, seed));
+                    }
+                }
+            }
+            if let Some((_, ref mut buf)) = app.panels.proxy_panel.held_edit {
+                if let Some(new_r) =
+                    replace_selection_in_text(buf, &range, &selected_txt, &converted)
+                {
+                    replaced_in_editor = Some(("proxy-intercept-editor", new_r));
+                }
+            }
+        } else if source_id.starts_with("decoder-") || app.tool == app::DECODER {
+            let inp = &mut app.panels.decoder.input;
+            if let Some(new_r) = replace_selection_in_text(inp, &range, &selected_txt, &converted) {
+                app.panels.decoder.output = converted.clone();
+                replaced_in_editor = Some(("decoder-input", new_r));
+            }
+        }
+
+        if let Some((editor_id, new_range)) = replaced_in_editor {
+            LAST_MESSAGE_SELECTION.with(|cell| {
+                *cell.borrow_mut() =
+                    Some((editor_id.to_string(), new_range.clone(), converted.clone()));
+            });
+            set_pending_editor_cursor(editor_id, new_range);
+            app.status = format!("Applied {op_name} to selection in-place (and copied)");
+        } else {
+            let new_end = range.start + converted.chars().count();
+            LAST_MESSAGE_SELECTION.with(|cell| {
+                *cell.borrow_mut() = Some((source_id, range.start..new_end, converted.clone()));
+            });
+            app.panels.decoder.input = selected_txt;
+            app.panels.decoder.output = converted;
+            app.status = format!("Applied {op_name} to selection and copied to clipboard");
+        }
+    } else {
+        let fallback = if !fallback_req.trim().is_empty() {
+            fallback_req
+        } else {
+            fallback_resp
+        };
+        if let Ok(out) = (op.run)(fallback) {
+            ctx.copy_text(out.clone());
+            app.panels.decoder.output = out;
+            app.status = format!("Applied {op_name} and copied to clipboard");
+        }
     }
 }
 
@@ -605,6 +765,22 @@ pub fn attach_message_context_menu(
                 app.status = format!("Copied {} selected character(s)", sel_txt.chars().count());
                 ui.close();
             }
+            if ui.button("Base64 encode selection").clicked() {
+                apply_convert_selection(app, ui.ctx(), "Base64 encode", &req, &resp);
+                ui.close();
+            }
+            if ui.button("Base64 decode selection").clicked() {
+                apply_convert_selection(app, ui.ctx(), "Base64 decode", &req, &resp);
+                ui.close();
+            }
+            if ui.button("URL encode selection").clicked() {
+                apply_convert_selection(app, ui.ctx(), "URL encode", &req, &resp);
+                ui.close();
+            }
+            if ui.button("URL decode selection").clicked() {
+                apply_convert_selection(app, ui.ctx(), "URL decode", &req, &resp);
+                ui.close();
+            }
             if ui.button("Send selection to Decoder").clicked() {
                 app.panels.decoder.input = sel_txt.clone();
                 app.tool = app::DECODER;
@@ -641,16 +817,11 @@ pub fn attach_message_context_menu(
                 "Base64 decode",
                 "HTML encode",
                 "HTML decode",
+                "Hex encode",
+                "Hex decode",
             ] {
                 if ui.button(op_name).clicked() {
-                    let fallback = if has_req { &req } else { &resp };
-                    let src = selected_snippet.as_deref().unwrap_or(fallback);
-                    if let Some(op) = crate::logic::find_op(op_name) {
-                        if let Ok(out) = (op.run)(src) {
-                            ui.ctx().copy_text(out);
-                            app.status = format!("Applied {op_name} and copied to clipboard");
-                        }
-                    }
+                    apply_convert_selection(app, ui.ctx(), op_name, &req, &resp);
                     ui.close();
                 }
             }
@@ -1467,7 +1638,15 @@ pub fn burp_numbered_message_editor_wrapped(
                             .layouter(&mut layouter)
                             .show(ui);
 
-                        if right_mouse_event {
+                        if let Some(pending) = take_pending_editor_cursor(id_salt) {
+                            let ccr = egui::text::CCursorRange::two(
+                                egui::text::CCursor::new(pending.start),
+                                egui::text::CCursor::new(pending.end),
+                            );
+                            output.state.cursor.set_char_range(Some(ccr));
+                            output.state.store(ui.ctx(), edit_id);
+                            output.cursor_range = Some(ccr);
+                        } else if right_mouse_event {
                             if let Some(saved) = prev_range {
                                 output.state.cursor.set_char_range(Some(saved));
                                 output.state.store(ui.ctx(), edit_id);

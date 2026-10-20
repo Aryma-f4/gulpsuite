@@ -1228,3 +1228,46 @@ fn http_history_search_includes_entries_older_than_300_rows() {
         "The body must scroll independently of the header"
     );
 }
+
+#[test]
+fn right_click_convert_selection_encodes_and_decodes_base64_in_place() {
+    let mut h = harness(false, 1280.0);
+    let req = "GET /login HTTP/1.1\r\nHost: example.test\r\nAuthorization: Basic admin:secret123\r\n\r\n";
+    h.state_mut().tool = gulpsuite::ui::app::REPEATER;
+    h.state_mut()
+        .panels
+        .repeater
+        .open("https://example.test/login", req);
+    h.run();
+
+    // Select ("block") `admin:secret123` inside the Repeater request editor (in default Pretty mode)
+    let start = req.find("admin:secret123").unwrap();
+    let end = start + "admin:secret123".len();
+    gulpsuite::ui::panels::record_message_selection("repeater-req-edit", start..end, req);
+
+    let ctx = h.ctx.clone();
+    let raw_clone = h.state().panels.repeater.active().raw.clone();
+    gulpsuite::ui::panels::apply_convert_selection(
+        h.state_mut(),
+        &ctx,
+        "Base64 encode",
+        &raw_clone,
+        "",
+    );
+    let encoded_req = h.state().panels.repeater.active().raw.clone();
+    assert!(
+        encoded_req.contains("Authorization: Basic YWRtaW46c2VjcmV0MTIz"),
+        "Expected in-place Base64 encoding in Repeater request, got: {encoded_req}"
+    );
+
+    // Chained decode back in-place without re-selecting
+    gulpsuite::ui::panels::apply_convert_selection(
+        h.state_mut(),
+        &ctx,
+        "Base64 decode",
+        &encoded_req,
+        "",
+    );
+    let decoded_req = h.state().panels.repeater.active().raw.clone();
+    assert_eq!(decoded_req, req);
+}

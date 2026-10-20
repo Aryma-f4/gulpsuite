@@ -2299,6 +2299,77 @@ impl App {
                 ui.close();
             }
             ui.separator();
+            if let Some(sel_txt) = super::panels::latest_selected_text() {
+                if ui.button("Copy selection").clicked() {
+                    ctx.copy_text(sel_txt);
+                    self.status = "Selection copied".into();
+                    ui.close();
+                }
+                if ui.button("Base64 encode selection").clicked() {
+                    super::panels::apply_convert_selection(
+                        self,
+                        ctx,
+                        "Base64 encode",
+                        &request,
+                        &response,
+                    );
+                    ui.close();
+                }
+                if ui.button("Base64 decode selection").clicked() {
+                    super::panels::apply_convert_selection(
+                        self,
+                        ctx,
+                        "Base64 decode",
+                        &request,
+                        &response,
+                    );
+                    ui.close();
+                }
+                if ui.button("URL encode selection").clicked() {
+                    super::panels::apply_convert_selection(
+                        self,
+                        ctx,
+                        "URL encode",
+                        &request,
+                        &response,
+                    );
+                    ui.close();
+                }
+                if ui.button("URL decode selection").clicked() {
+                    super::panels::apply_convert_selection(
+                        self,
+                        ctx,
+                        "URL decode",
+                        &request,
+                        &response,
+                    );
+                    ui.close();
+                }
+                ui.separator();
+            }
+            ui.menu_button("Convert selection", |ui| {
+                for op_name in [
+                    "URL encode",
+                    "URL decode",
+                    "Base64 encode",
+                    "Base64 decode",
+                    "HTML encode",
+                    "HTML decode",
+                    "Hex encode",
+                    "Hex decode",
+                ] {
+                    if ui.button(op_name).clicked() {
+                        super::panels::apply_convert_selection(
+                            self,
+                            ctx,
+                            op_name,
+                            &request,
+                            &response,
+                        );
+                        ui.close();
+                    }
+                }
+            });
             if ui
                 .add_enabled(
                     has_request,
