@@ -174,39 +174,50 @@ fn draw_events(ui: &mut Ui, state: &mut DrawerState, workspace: &Workspace, them
         empty_state(ui, "No events match the current filters.", theme);
         return;
     }
+    let body_h = (ui.available_height() - 6.0).max(72.0);
     ui.columns(2, |columns| {
-        eframe::egui::ScrollArea::vertical().show(&mut columns[0], |ui| {
-            for id in &ids {
-                if let Some(event) = workspace.events.iter().find(|event| event.id.0 == *id) {
-                    let selected = state.selected == Some(*id);
-                    if ui
-                        .selectable_label(
-                            selected,
-                            format!(
-                                "{}  {}  {}",
-                                event_level_name(event.level),
-                                event.source,
-                                event.message
-                            ),
-                        )
-                        .clicked()
-                    {
-                        state.selected = Some(*id);
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("drawer-event-log-list-scroll")
+            .max_height(body_h)
+            .auto_shrink([false, false])
+            .show(&mut columns[0], |ui| {
+                for id in &ids {
+                    if let Some(event) = workspace.events.iter().find(|event| event.id.0 == *id) {
+                        let selected = state.selected == Some(*id);
+                        if ui
+                            .selectable_label(
+                                selected,
+                                format!(
+                                    "{}  {}  {}",
+                                    event_level_name(event.level),
+                                    event.source,
+                                    event.message
+                                ),
+                            )
+                            .clicked()
+                        {
+                            state.selected = Some(*id);
+                        }
                     }
                 }
-            }
-        });
+            });
         if let Some(event) = state
             .selected
             .and_then(|id| workspace.events.iter().find(|event| event.id.0 == id))
         {
-            columns[1].label(RichText::new(&event.source).strong());
-            columns[1].label(event_level_name(event.level));
-            columns[1].separator();
-            columns[1].label(&event.message);
-            if let Some(task) = event.task_id {
-                columns[1].label(format!("Task {}", task.0));
-            }
+            eframe::egui::ScrollArea::vertical()
+                .id_salt("drawer-event-log-detail-scroll")
+                .max_height(body_h)
+                .auto_shrink([false, false])
+                .show(&mut columns[1], |ui| {
+                    ui.label(RichText::new(&event.source).strong());
+                    ui.label(event_level_name(event.level));
+                    ui.separator();
+                    ui.label(&event.message);
+                    if let Some(task) = event.task_id {
+                        ui.label(format!("Task {}", task.0));
+                    }
+                });
         } else {
             empty_state(&mut columns[1], "Select an event to inspect it.", theme);
         }
@@ -219,28 +230,33 @@ fn draw_issues(ui: &mut Ui, state: &mut DrawerState, workspace: &Workspace, them
         empty_state(ui, "No issues match the current filters.", theme);
         return;
     }
+    let body_h = (ui.available_height() - 6.0).max(72.0);
     ui.columns(2, |columns| {
-        eframe::egui::ScrollArea::vertical().show(&mut columns[0], |ui| {
-            for id in &ids {
-                if let Some(issue) = workspace.issues.iter().find(|issue| issue.id.0 == *id) {
-                    let selected = state.selected == Some(*id);
-                    if ui
-                        .selectable_label(
-                            selected,
-                            format!(
-                                "{}  {}  {}",
-                                issue_severity_name(issue.severity),
-                                issue.name,
-                                issue.url
-                            ),
-                        )
-                        .clicked()
-                    {
-                        state.selected = Some(*id);
+        eframe::egui::ScrollArea::vertical()
+            .id_salt("drawer-all-issues-list-scroll")
+            .max_height(body_h)
+            .auto_shrink([false, false])
+            .show(&mut columns[0], |ui| {
+                for id in &ids {
+                    if let Some(issue) = workspace.issues.iter().find(|issue| issue.id.0 == *id) {
+                        let selected = state.selected == Some(*id);
+                        if ui
+                            .selectable_label(
+                                selected,
+                                format!(
+                                    "{}  {}  {}",
+                                    issue_severity_name(issue.severity),
+                                    issue.name,
+                                    issue.url
+                                ),
+                            )
+                            .clicked()
+                        {
+                            state.selected = Some(*id);
+                        }
                     }
                 }
-            }
-        });
+            });
         if let Some(issue) = state
             .selected
             .and_then(|id| workspace.issues.iter().find(|issue| issue.id.0 == id))
@@ -253,6 +269,8 @@ fn draw_issues(ui: &mut Ui, state: &mut DrawerState, workspace: &Workspace, them
             let body_fg = theme.color("ui.text.body");
             eframe::egui::ScrollArea::vertical()
                 .id_salt("drawer-issue-detail-scroll")
+                .max_height(body_h)
+                .auto_shrink([false, false])
                 .show(&mut columns[1], |ui| {
                     ui.label(RichText::new(&issue.name).strong());
                     ui.label(format!(

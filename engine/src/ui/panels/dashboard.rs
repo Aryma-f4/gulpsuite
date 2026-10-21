@@ -409,11 +409,11 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label("Issues:");
                 issue_pill(ui, counts.info, theme.color("palette.mono.5"));
                 issue_pill(ui, counts.low, theme.color("ui.issue.low"));
                 issue_pill(ui, counts.medium, theme.color("ui.issue.medium"));
                 issue_pill(ui, counts.high, theme.color("ui.issue.high"));
+                ui.label("Issues:");
             });
         });
         ui.add_space(32.0);
@@ -762,7 +762,8 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                 });
         });
         card.show(&mut columns[1], |ui| {
-            ui.set_min_height((available * 0.34).max(140.0));
+            let log_card_h = (available * 0.34).max(140.0);
+            ui.set_min_height(log_card_h);
             ui.horizontal(|ui| {
                 let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
                 crate::ui::icons::paint(
@@ -774,37 +775,63 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                 heading(ui, &theme, "Task log");
             });
             ui.separator();
-            let events: Vec<_> = app
+            let mut events: Vec<_> = app
                 .workspace
                 .events
                 .iter()
                 .filter(|event| event.task_id == Some(task.id))
                 .collect();
-            for event in events.iter().rev().take(8) {
-                ui.label(format!("{}  {}", event.source, event.message));
+            if events.is_empty() {
+                events = app.workspace.events.iter().collect();
             }
             if events.is_empty() {
                 muted(ui, &theme, "No task events yet.");
+            } else {
+                let scroll_h = (log_card_h - 38.0).max(90.0);
+                egui::ScrollArea::vertical()
+                    .id_salt(("dashboard-task-log-scroll", task.id.0))
+                    .max_height(scroll_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for event in events.iter().rev() {
+                            ui.label(format!("{}  {}", event.source, event.message));
+                        }
+                    });
             }
         });
     });
 }
 
-fn issue_table(app: &App, ui: &mut Ui, task_id: TaskId) {
+fn issue_table(app: &mut App, ui: &mut Ui, task_id: TaskId) {
     let theme = app.theme.clone();
     let issues = task_issues(&app.workspace, task_id);
     egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, theme.color("ui.border.1")))
+        .stroke(egui::Stroke::new(1.0_f32, theme.color("ui.border.1")))
         .show(ui, |ui| {
             ui.set_min_height(ui.available_height().max(300.0) - 28.0);
+            let total_w = ui.available_width().max(260.0);
+            let w_type = total_w * 0.54;
+            let w_host = total_w * 0.28;
+            let w_time = (total_w - w_type - w_host).max(56.0);
+
             egui::Frame::new()
                 .fill(theme.color("ui.background.3"))
                 .inner_margin(egui::Margin::symmetric(10, 7))
                 .show(ui, |ui| {
-                    ui.columns(3, |columns| {
-                        columns[0].label(egui::RichText::new("Issue type").strong());
-                        columns[1].label(egui::RichText::new("Host").strong());
-                        columns[2].label(egui::RichText::new("Time (UTC)").strong());
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.allocate_ui(Vec2::new(w_type, 18.0), |ui| {
+                            ui.set_min_width(w_type);
+                            ui.label(egui::RichText::new("Issue type").strong());
+                        });
+                        ui.allocate_ui(Vec2::new(w_host, 18.0), |ui| {
+                            ui.set_min_width(w_host);
+                            ui.label(egui::RichText::new("Host").strong());
+                        });
+                        ui.allocate_ui(Vec2::new(w_time, 18.0), |ui| {
+                            ui.set_min_width(w_time);
+                            ui.label(egui::RichText::new("Time (UTC)").strong());
+                        });
                     });
                 });
             if issues.is_empty() {
@@ -821,23 +848,105 @@ fn issue_table(app: &App, ui: &mut Ui, task_id: TaskId) {
                     );
                 });
             } else {
-                for issue in issues.into_iter().take(64) {
-                    ui.columns(3, |columns| {
-                        columns[0].label(format!(
-                            "{} · {}",
-                            severity_name(issue.severity),
-                            issue.name
-                        ));
-                        let host = issue
-                            .url
-                            .split_once("://")
-                            .map_or(issue.url.as_str(), |(_, rest)| rest)
-                            .split('/')
-                            .next()
-                            .unwrap_or("");
-                        columns[1].label(host);
-                        columns[2].label(issue_time(issue.observed_unix_ms));
+                let mut jump_to_issue: Option<String> = None;
+                let scroll_h = (ui.available_height() - 12.0).max(180.0);
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt(("dashboard-summary-issues-scroll", task_id.0))
+                            .max_height(scroll_h)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for issue in issues.into_iter().take(128) {
+                                    let sev_icon = match issue.severity {
+                                        IssueSeverity::High => {
+                                            super::scanner::LauncherIcon::IssueHigh
+                                        }
+                                        IssueSeverity::Medium => {
+                                            super::scanner::LauncherIcon::IssueMedium
+                                        }
+                                        IssueSeverity::Low => {
+                                            super::scanner::LauncherIcon::IssueLow
+                                        }
+                                        IssueSeverity::Info => {
+                                            super::scanner::LauncherIcon::IssueInfo
+                                        }
+                                    };
+                                    let host = issue
+                                        .url
+                                        .split_once("://")
+                                        .map_or(issue.url.as_str(), |(_, rest)| rest)
+                                        .split('/')
+                                        .next()
+                                        .unwrap_or("");
+                                    let time_txt = issue_time(issue.observed_unix_ms);
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 0.0;
+                                        let r1 = ui
+                                            .allocate_ui(Vec2::new(w_type, 22.0), |ui| {
+                                                ui.set_min_width(w_type);
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                                    super::scanner::paint_launcher_icon(
+                                                        ui,
+                                                        Vec2::new(14.0, 14.0),
+                                                        Color32::WHITE,
+                                                        sev_icon,
+                                                    );
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            egui::RichText::new(&issue.name)
+                                                                .size(12.0),
+                                                        )
+                                                        .truncate()
+                                                        .sense(Sense::click()),
+                                                    )
+                                                })
+                                                .inner
+                                            })
+                                            .inner;
+                                        let r2 = ui
+                                            .allocate_ui(Vec2::new(w_host, 22.0), |ui| {
+                                                ui.set_min_width(w_host);
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(host).size(12.0),
+                                                    )
+                                                    .truncate()
+                                                    .sense(Sense::click()),
+                                                )
+                                            })
+                                            .inner;
+                                        let r3 = ui
+                                            .allocate_ui(Vec2::new(w_time, 22.0), |ui| {
+                                                ui.set_min_width(w_time);
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(time_txt).size(12.0),
+                                                    )
+                                                    .truncate()
+                                                    .sense(Sense::click()),
+                                                )
+                                            })
+                                            .inner;
+                                        if r1.clicked() || r2.clicked() || r3.clicked() {
+                                            jump_to_issue = Some(issue.name.clone());
+                                        }
+                                    });
+                                }
+                            });
                     });
+                if let Some(target_name) = jump_to_issue {
+                    if let Some(idx) = app
+                        .workspace
+                        .issues
+                        .iter()
+                        .position(|i| i.name == target_name)
+                    {
+                        app.panels.target_panel.selected_issue = Some(idx);
+                    }
+                    app.view = 2;
                 }
             }
         });
@@ -1002,21 +1111,29 @@ fn issue_table_readonly(app: &App, ui: &mut Ui, task_id: TaskId) {
 
 fn event_log(app: &App, ui: &mut Ui, task: &Task) {
     heading(ui, &app.theme, "Event log");
-    let events: Vec<_> = app
+    let mut events: Vec<_> = app
         .workspace
         .events
         .iter()
         .filter(|event| event.task_id == Some(task.id))
         .collect();
     if events.is_empty() {
+        events = app.workspace.events.iter().collect();
+    }
+    if events.is_empty() {
         muted(ui, &app.theme, "No events recorded for this task.");
         return;
     }
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for event in events.into_iter().rev().take(128) {
-            ui.label(format!("{}  {}", event.source, event.message));
-        }
-    });
+    let avail_h = (ui.available_height() - 16.0).max(160.0);
+    egui::ScrollArea::vertical()
+        .id_salt(("dashboard-event-log-tab-scroll", task.id.0))
+        .max_height(avail_h)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for event in events.into_iter().rev() {
+                ui.label(format!("{}  {}", event.source, event.message));
+            }
+        });
 }
 
 fn logger(app: &App, ui: &mut Ui, task: &Task) {
@@ -1050,9 +1167,16 @@ fn audit_log(app: &App, ui: &mut Ui, task: &Task) {
     if events.is_empty() {
         muted(ui, &app.theme, "No audit warnings or errors.");
     } else {
-        for event in events.into_iter().rev() {
-            ui.label(format!("{}  {}", event.source, event.message));
-        }
+        let avail_h = (ui.available_height() - 16.0).max(160.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("dashboard-audit-log-tab-scroll", task.id.0))
+            .max_height(avail_h)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for event in events.into_iter().rev() {
+                    ui.label(format!("{}  {}", event.source, event.message));
+                }
+            });
     }
 }
 
