@@ -512,6 +512,7 @@ pub struct App {
     pub intruder_updates: Option<std::sync::mpsc::Receiver<crate::intruder::AttackUpdate>>,
     /// The last memory reading for the status bar, and when it was taken.
     pub memory_text: String,
+    pub memory_ratio: f32,
     pub memory_checked: std::time::Instant,
     pub dashboard: panels::DashboardState,
     pub wip: crate::ui::wip::WipState,
@@ -664,6 +665,7 @@ impl App {
             scanner_updates: None,
             intruder_updates: None,
             memory_text: "Memory: —".to_string(),
+            memory_ratio: 0.0,
             dashboard: panels::DashboardState::default(),
             wip: crate::ui::wip::WipState::default(),
             show_search: false,
@@ -3974,7 +3976,13 @@ impl App {
         let now = std::time::Instant::now();
         if now.duration_since(self.memory_checked) > crate::meminfo::REFRESH {
             self.memory_checked = now;
-            self.memory_text = match (crate::meminfo::rss_bytes(), crate::meminfo::total_bytes()) {
+            let used_opt = crate::meminfo::rss_bytes();
+            let total_opt = crate::meminfo::total_bytes();
+            self.memory_ratio = match (used_opt, total_opt) {
+                (Some(used), Some(total)) if total > 0 => used as f32 / total as f32,
+                _ => 0.0,
+            };
+            self.memory_text = match (used_opt, total_opt) {
                 (Some(used), Some(total)) => format!(
                     "Memory: {} of {}",
                     crate::meminfo::format_size(used),
@@ -3989,13 +3997,7 @@ impl App {
 
     /// How much of the machine's memory this process is using, for the status bar's slider.
     fn memory_used_ratio(&self) -> f32 {
-        match (
-            crate::meminfo::rss_bytes(),
-            crate::meminfo::total_bytes(),
-        ) {
-            (Some(used), Some(total)) if total > 0 => used as f32 / total as f32,
-            _ => 0.0,
-        }
+        self.memory_ratio
     }
 
 }

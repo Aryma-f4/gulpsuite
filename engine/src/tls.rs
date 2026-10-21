@@ -156,9 +156,31 @@ pub fn certificate_path() -> PathBuf {
         .unwrap_or_default()
 }
 
+static DEFAULT_CLIENT_CONFIG: std::sync::LazyLock<Arc<rustls::ClientConfig>> =
+    std::sync::LazyLock::new(|| {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        )
+    });
+
+/// Shared `Arc<ClientConfig>` when no custom roots are supplied, avoiding cloning 140+ root CAs
+/// on every HTTPS probe or proxy connection.
+pub fn client_config_arc(
+    extra: &[CertificateDer<'static>],
+) -> Result<Arc<rustls::ClientConfig>, String> {
+    if extra.is_empty() {
+        return Ok(DEFAULT_CLIENT_CONFIG.clone());
+    }
+    Ok(Arc::new(client_config_with(extra)?))
+}
+
 /// The client side of a TLS connection to an origin, trusting the system roots.
 pub fn client_config() -> Result<rustls::ClientConfig, String> {
-    client_config_with(&[])
+    Ok((**DEFAULT_CLIENT_CONFIG).clone())
 }
 
 /// The same, with extra authorities to trust on top of the system roots.

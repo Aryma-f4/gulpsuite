@@ -3,38 +3,73 @@
 //! Burp shows a memory readout in its status bar. This is the same idea for a native build, read
 //! from the operating system rather than from a JVM heap counter.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
-/// How long a reading stays fresh. The status bar asks twice a second at most, and `ps` is not free.
+/// How long a reading stays fresh.
 pub const REFRESH: Duration = Duration::from_secs(2);
 
-/// The resident set size of this process in bytes, when it can be read.
+/// The physical memory footprint (on macOS, matching Activity Monitor's "Memory" column)
+/// or resident set size (on Linux) of this process in bytes, read in-process without spawning `ps`.
 pub fn rss_bytes() -> Option<u64> {
-    if cfg!(target_os = "macos") {
-        rss_macos()
-    } else if cfg!(target_os = "linux") {
+    #[cfg(target_os = "macos")]
+    {
+        footprint_macos()
+    }
+    #[cfg(target_os = "linux")]
+    {
         rss_linux()
-    } else {
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
         None
     }
 }
 
-/// macOS has no `/proc`, so `ps` is the way in. It reports kilobytes.
-fn rss_macos() -> Option<u64> {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
-        .output()
-        .ok()?;
-    let text = String::from_utf8(output.stdout).ok()?;
-    let kilobytes: u64 = text.trim().parse().ok()?;
-    Some(kilobytes * 1024)
+/// Reads `ri_phys_footprint` (and falls back to `ri_resident_size`) directly from the macOS kernel
+/// via `proc_pid_rusage` (`RUSAGE_INFO_V0`), avoiding any `fork()`/`exec()` of `/bin/ps` and
+/// matching macOS Activity Monitor's "Memory" column.
+#[cfg(target_os = "macos")]
+fn footprint_macos() -> Option<u64> {
+    #[repr(C)]
+    struct RusageInfoV0 {
+        ri_uuid: [u8; 16],
+        ri_user_time: u64,
+        ri_system_time: u64,
+        ri_pkg_idle_wkups: u64,
+        ri_interrupt_wkups: u64,
+        ri_pageins: u64,
+        ri_wired_size: u64,
+        ri_resident_size: u64,
+        ri_phys_footprint: u64,
+        ri_proc_start_abstime: u64,
+        ri_proc_exit_abstime: u64,
+    }
+    unsafe extern "C" {
+        fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut RusageInfoV0) -> i32;
+    }
+    const RUSAGE_INFO_V0: i32 = 0;
+    let mut info = std::mem::MaybeUninit::<RusageInfoV0>::zeroed();
+    let rc = unsafe { proc_pid_rusage(std::process::id() as i32, RUSAGE_INFO_V0, info.as_mut_ptr()) };
+    if rc == 0 {
+        let info = unsafe { info.assume_init() };
+        let bytes = if info.ri_phys_footprint > 0 {
+            info.ri_phys_footprint
+        } else {
+            info.ri_resident_size
+        };
+        if bytes > 0 {
+            return Some(bytes);
+        }
+    }
+    None
 }
 
 /// Linux reports the resident pages in `/proc/self/statm`; the second field is the resident set.
+#[cfg(target_os = "linux")]
 fn rss_linux() -> Option<u64> {
     let text = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = text.split_whitespace().nth(1)?.parse().ok()?;
-    // The page size is 4096 on every platform Linux runs this on.
     Some(pages * 4096)
 }
 
@@ -51,8 +86,7 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-/// How much memory the machine has in total, for Burp's "of 2.00GB" readout.
-pub fn total_bytes() -> Option<u64> {
+static TOTAL_RAM_BYTES: LazyLock<Option<u64>> = LazyLock::new(|| {
     if cfg!(target_os = "macos") {
         let output = std::process::Command::new("sysctl")
             .args(["-n", "hw.memsize"])
@@ -71,6 +105,11 @@ pub fn total_bytes() -> Option<u64> {
     } else {
         None
     }
+});
+
+/// How much memory the machine has in total, cached once per process lifetime.
+pub fn total_bytes() -> Option<u64> {
+    *TOTAL_RAM_BYTES
 }
 
 #[cfg(test)]

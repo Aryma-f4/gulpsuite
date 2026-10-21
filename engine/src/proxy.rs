@@ -1500,8 +1500,8 @@ async fn connect_upstream(
     if !secure {
         return Ok(Box::new(tcp));
     }
-    let config = crate::tls::client_config_with(extra_roots).map_err(io::Error::other)?;
-    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let config = crate::tls::client_config_arc(extra_roots).map_err(io::Error::other)?;
+    let connector = tokio_rustls::TlsConnector::from(config);
     let name = rustls::pki_types::ServerName::try_from(host.to_string())
         .map_err(|_| io::Error::other(format!("bad server name: {host}")))?;
     let tls = connector.connect(name, tcp).await?;
