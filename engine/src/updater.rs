@@ -7,7 +7,6 @@
 //! and launches the platform installer.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -232,8 +231,8 @@ pub async fn http_get_bytes(
         .map_err(|e| format!("Failed to connect to {host}:{port}: {e}"))?;
 
         let (status, headers, body) = if is_https {
-            let tls_cfg = crate::tls::client_config_with(&[])?;
-            let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_cfg));
+            let tls_cfg = crate::tls::client_config_arc(&[])?;
+            let connector = tokio_rustls::TlsConnector::from(tls_cfg);
             let server_name = rustls::pki_types::ServerName::try_from(host.clone())
                 .map_err(|e| format!("Invalid TLS server name '{host}': {e}"))?;
             let mut stream = connector
@@ -324,6 +323,10 @@ async fn read_http_response<S: AsyncReadExt + Unpin>(
             }
             headers.push((key, val));
         }
+    }
+
+    if content_length == Some(0) || matches!(status, 204 | 301 | 302 | 303 | 304 | 307 | 308) {
+        return Ok((status, headers, Vec::new()));
     }
 
     let total = content_length.unwrap_or(0);
