@@ -665,6 +665,7 @@ pub fn show_persistent_context_menu(
     trigger: &eframe::egui::Response,
     add_contents: impl FnOnce(&mut eframe::egui::Ui),
 ) {
+    let any_open = eframe::egui::Popup::is_any_open(&trigger.ctx);
     let secondary_in_rect = trigger.secondary_clicked()
         || trigger.ctx.input(|i| {
             (i.pointer
@@ -675,6 +676,9 @@ pub fn show_persistent_context_menu(
                     .interact_pos()
                     .is_some_and(|pos| trigger.rect.contains(pos))
         });
+    if !any_open && !secondary_in_rect {
+        return;
+    }
     eframe::egui::Popup::context_menu(trigger)
         .close_behavior(eframe::egui::PopupCloseBehavior::CloseOnClick)
         .open_memory(if secondary_in_rect {
@@ -1541,17 +1545,22 @@ pub fn burp_numbered_message_view_wrapped(
                         );
                         ui.painter()
                             .rect_filled(gutter, 0.0, theme.color("ui.background.2"));
+                        let clip_y = ui.clip_rect().y_range();
+                        let gutter_top = gutter.top();
                         let mut line = 1;
                         let mut new_line = true;
                         for row in &galley.rows {
                             if new_line {
-                                ui.painter().text(
-                                    gutter.left_top() + egui::vec2(30.0, row.pos.y),
-                                    egui::Align2::RIGHT_TOP,
-                                    line.to_string(),
-                                    FontId::monospace(12.0),
-                                    theme.color("ui.icon.default"),
-                                );
+                                let y = gutter_top + row.pos.y;
+                                if y + 18.0 >= clip_y.min && y - 4.0 <= clip_y.max {
+                                    ui.painter().text(
+                                        egui::pos2(gutter.left() + 30.0, y),
+                                        egui::Align2::RIGHT_TOP,
+                                        line.to_string(),
+                                        FontId::monospace(12.0),
+                                        theme.color("ui.icon.default"),
+                                    );
+                                }
                                 line += 1;
                             }
                             new_line = row.ends_with_newline;
@@ -1613,7 +1622,9 @@ fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
         if let Some((at, separator)) = boundary {
             let (head, body) = (&raw[..at], &raw[at + separator..]);
             let trimmed = body.trim_start();
-            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if trimmed.len() <= 8 * 1024
+                && (trimmed.starts_with('{') || trimmed.starts_with('['))
+            {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
                     format!(
                         "{head}\n\n{}",
@@ -1787,20 +1798,21 @@ pub fn burp_numbered_message_editor_wrapped(
                         gutter.max.y = gutter.top() + output.galley.size().y.max(height.max(80.0));
                         ui.painter()
                             .rect_filled(gutter, 0.0, theme.color("ui.background.2"));
+                        let clip_y = ui.clip_rect().y_range();
                         let mut line = 1;
                         let mut new_line = true;
                         for row in &output.galley.rows {
                             if new_line {
-                                ui.painter().text(
-                                    egui::pos2(
-                                        gutter.right() - 8.0,
-                                        output.galley_pos.y + row.pos.y,
-                                    ),
-                                    egui::Align2::RIGHT_TOP,
-                                    line.to_string(),
-                                    FontId::monospace(12.0),
-                                    theme.color("ui.icon.default"),
-                                );
+                                let y = output.galley_pos.y + row.pos.y;
+                                if y + 18.0 >= clip_y.min && y - 4.0 <= clip_y.max {
+                                    ui.painter().text(
+                                        egui::pos2(gutter.right() - 8.0, y),
+                                        egui::Align2::RIGHT_TOP,
+                                        line.to_string(),
+                                        FontId::monospace(12.0),
+                                        theme.color("ui.icon.default"),
+                                    );
+                                }
                                 line += 1;
                             }
                             new_line = row.ends_with_newline;

@@ -225,18 +225,18 @@ impl Transaction {
     }
 
     pub fn path_and_query(&self) -> String {
-        if let Ok(parsed) = url::Url::parse(&self.target) {
-            let mut pq = parsed.path().to_string();
-            if pq.is_empty() {
-                pq.push('/');
+        if let Some((_, rest)) = self.target.split_once("://") {
+            let path_part = match rest.find('/') {
+                Some(idx) => &rest[idx..],
+                None => "/",
+            };
+            let without_frag = path_part.split('#').next().unwrap_or(path_part);
+            if without_frag.is_empty() {
+                "/".to_string()
+            } else {
+                without_frag.to_string()
             }
-            if let Some(q) = parsed.query() {
-                pq.push('?');
-                pq.push_str(q);
-            }
-            return pq;
-        }
-        if self.target.starts_with('/') {
+        } else if self.target.starts_with('/') {
             self.target.clone()
         } else {
             format!("/{}", self.target)
@@ -244,7 +244,7 @@ impl Transaction {
     }
 
     pub fn has_params(&self) -> bool {
-        if self.path_and_query().contains('?') {
+        if self.target.contains('?') {
             return true;
         }
         let (_, body) = crate::analysis::split_message(&self.request);
@@ -295,7 +295,16 @@ impl Transaction {
 
     pub fn page_title(&self) -> String {
         let (_, body) = crate::analysis::split_message(&self.response);
-        let lower = body.to_ascii_lowercase();
+        let max_scan = body.len().min(4096);
+        let mut boundary = max_scan;
+        while boundary > 0 && !body.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        let head_slice = &body[..boundary];
+        if !head_slice.contains('<') {
+            return String::new();
+        }
+        let lower = head_slice.to_ascii_lowercase();
         let Some(start) = lower.find("<title") else {
             return String::new();
         };
@@ -306,7 +315,7 @@ impl Transaction {
         let Some(end) = lower[content_start..].find("</title>") else {
             return String::new();
         };
-        body[content_start..content_start + end]
+        head_slice[content_start..content_start + end]
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
@@ -1239,10 +1248,28 @@ impl App {
         self.runtime.handle().clone()
     }
 
-    fn apply(&mut self, event: Event) {
+    fn apply(&mut self, mut event: Event) {
+        if let Event::Tx {
+            ref mut request,
+            ref mut response,
+            ref method,
+            ref target,
+            status,
+            bytes,
+            ..
+        } = event
+        {
+            if request.len() > LOG_BODY_LIMIT {
+                *request = clip(request, LOG_BODY_LIMIT);
+            }
+            if response.len() > LOG_BODY_LIMIT {
+                *response = clip(response, LOG_BODY_LIMIT);
+            }
+            self.note(&format!("Tx {method} {target} -> {status} ({bytes} bytes)"));
+        } else {
+            self.note(&format!("{event:?}"));
+        }
         self.workspace_adapter.apply_proxy(&mut self.workspace, &event);
-        // The console window shows the same trail the proxy reports.
-        self.note(&format!("{event:?}"));
         match event {
             Event::Tx { method, target, status, bytes, request, response, secure } => {
                 if self.panels.proxy_panel.misc_dont_log_history {
@@ -1254,7 +1281,8 @@ impl App {
                     return;
                 }
                 let host = host_of(&target);
-                self.remember_links(&target, &response);
+                let link_slice = clip(&response, 16 * 1024);
+                self.remember_links(&target, &link_slice);
                 retain(&mut self.log, Transaction {
                     method,
                     target,

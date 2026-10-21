@@ -136,21 +136,42 @@ fn cookie_spans(value: &str, name_colour: Color32, value_colour: Color32) -> Vec
 }
 
 /// Dispatches the body on its declared type, falling back to a sniff.
+/// Caps detailed per-token syntax colouring at 16 KiB so large minified bundles render at 60 FPS.
 fn body_spans(body: &str, content_type: String, theme: &Theme) -> Vec<Span> {
-    let detected = detect(body, &content_type);
-    match detected {
-        Body::Json => json_spans(body, theme),
-        Body::Markup => markup_spans(body, theme),
-        Body::UrlEncoded => urlencoded_spans(body, theme),
-        Body::Script => script_spans(body, theme),
+    const HIGHLIGHT_CAP: usize = 16 * 1024;
+    let (active_body, overflow_tail) = if body.len() > HIGHLIGHT_CAP {
+        let mut end = HIGHLIGHT_CAP;
+        while end > 0 && !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        (&body[..end], Some(&body[end..]))
+    } else {
+        (body, None)
+    };
+    let detected = detect(active_body, &content_type);
+    let mut out = match detected {
+        Body::Json => json_spans(active_body, theme),
+        Body::Markup => markup_spans(active_body, theme),
+        Body::UrlEncoded => urlencoded_spans(active_body, theme),
+        Body::Script => script_spans(active_body, theme),
         Body::Plain => {
             if content_type.contains("form-urlencoded") {
-                urlencoded_spans(body, theme)
+                urlencoded_spans(active_body, theme)
             } else {
-                vec![Span::new(body.to_string(), theme.color("ui.editor.message.literalString"))]
+                vec![Span::new(
+                    active_body.to_string(),
+                    theme.color("ui.editor.message.literalString"),
+                )]
             }
         }
+    };
+    if let Some(tail) = overflow_tail {
+        out.push(Span::new(
+            tail.to_string(),
+            theme.color("ui.editor.message.literalString"),
+        ));
     }
+    out
 }
 
 enum Body {
@@ -482,18 +503,16 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
     let mut out = Vec::new();
     let mut rest = body;
     while !rest.is_empty() {
-        if let Some(at) = rest.find("//") {
-            push_plain(&mut out, &rest[..at], string);
-            let line_end = rest[at..].find('\n').map(|n| n + 1).unwrap_or(rest.len());
-            out.push(Span::new(rest[at..at + line_end].to_string(), comment));
-            rest = &rest[at + line_end..];
+        if rest.starts_with("//") {
+            let line_end = rest.find('\n').map(|n| n + 1).unwrap_or(rest.len());
+            out.push(Span::new(rest[..line_end].to_string(), comment));
+            rest = &rest[line_end..];
             continue;
         }
-        if let Some(at) = rest.find("/*") {
-            push_plain(&mut out, &rest[..at], string);
-            let end = rest[at..].find("*/").map(|e| e + 2).unwrap_or(rest.len());
-            out.push(Span::new(rest[at..at + end].to_string(), comment));
-            rest = &rest[at + end..];
+        if rest.starts_with("/*") {
+            let end = rest[2..].find("*/").map(|e| e + 4).unwrap_or(rest.len());
+            out.push(Span::new(rest[..end].to_string(), comment));
+            rest = &rest[end..];
             continue;
         }
         let first = rest.chars().next().unwrap();
@@ -502,9 +521,15 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
             let mut chars = rest.chars();
             chars.next();
             let mut literal = String::new();
+            let mut escaped = false;
             for ch in chars {
                 literal.push(ch);
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
                 if ch == '\\' {
+                    escaped = true;
                     continue;
                 }
                 if ch == quote {
@@ -517,35 +542,46 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
             continue;
         }
         if first == '@' {
-            let word: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-            let consumed = word.len();
-            out.push(Span::new(word, annotation));
+            let tail_len: usize = rest[1..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .map(char::len_utf8)
+                .sum();
+            let consumed = (1 + tail_len).min(rest.len());
+            out.push(Span::new(rest[..consumed].to_string(), annotation));
             rest = &rest[consumed..];
             continue;
         }
         if first.is_ascii_digit() {
-            let word: String = rest
+            let consumed: usize = rest
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '.')
-                .collect();
-            let consumed = word.len();
-            out.push(Span::new(word, number));
+                .map(char::len_utf8)
+                .sum::<usize>()
+                .max(1);
+            out.push(Span::new(rest[..consumed].to_string(), number));
             rest = &rest[consumed..];
             continue;
         }
         if first.is_alphabetic() || first == '_' || first == '$' {
-            let word: String = rest
+            let consumed: usize = rest
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
-                .collect();
-            let colour = if KEYWORDS.contains(&word.as_str()) { keyword } else { string };
-            let consumed = word.len();
-            out.push(Span::new(word, colour));
+                .map(char::len_utf8)
+                .sum::<usize>()
+                .max(first.len_utf8());
+            let word = &rest[..consumed];
+            let colour = if KEYWORDS.contains(&word) {
+                keyword
+            } else {
+                string
+            };
+            out.push(Span::new(word.to_string(), colour));
             rest = &rest[consumed..];
             continue;
         }
         // Advance by at least `first.len_utf8()` bytes so multi-byte UTF-8 symbols (e.g. '', '—', emojis)
-        // never slice mid-codepoint.
+        // never slice mid-codepoint and every iteration makes strict forward progress.
         let min_step = first.len_utf8();
         let step = rest[min_step..]
             .find(|c: char| {
@@ -553,7 +589,8 @@ fn script_spans(body: &str, theme: &Theme) -> Vec<Span> {
                     || matches!(c, '_' | '$' | '"' | '\'' | '`' | '/' | '@')
             })
             .map(|off| min_step + off)
-            .unwrap_or(rest.len());
+            .unwrap_or(rest.len())
+            .max(min_step);
         out.push(Span::new(rest[..step].to_string(), string));
         rest = &rest[step..];
     }
@@ -1078,6 +1115,7 @@ mod burp_key_tests {
         let theme = Theme::load(false);
         for msg in [
             "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n\u{FFFD}X9\u{FFFD}Q\u{FFFD}{\u{FFFD} \"hello\u{FFFD}world\" /*\u{FFFD}*/ //\u{FFFD}\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n@decorator const email = \"a\\\"b@c.com\"; @\nfunction f() { return @foo; }",
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<![CDATA[\u{FFFD}unclosed<div data-\u{FFFD}=\"\u{FFFD}\">\u{FFFD}",
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"k\u{FFFD}\": \"v\u{FFFD}\", \"n\": 123}",
         ] {

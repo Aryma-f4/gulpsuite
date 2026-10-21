@@ -1145,6 +1145,9 @@ fn history_cell(
         )
     });
     let text_rect = rect.shrink2(egui::vec2(4.0, 0.0));
+    if text.is_empty() || text_rect.width() <= 2.0 {
+        return response;
+    }
     if text == "✓" {
         let center = text_rect.center();
         let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -1153,19 +1156,36 @@ fn history_cell(
                 center + egui::vec2(-4.0, 0.0),
                 center + egui::vec2(-1.0, 3.0),
             ],
-            egui::Stroke::new(1.4, color),
+            egui::Stroke::new(1.4_f32, color),
         );
         painter.line_segment(
             [
                 center + egui::vec2(-1.0, 3.0),
                 center + egui::vec2(5.0, -4.0),
             ],
-            egui::Stroke::new(1.4, color),
+            egui::Stroke::new(1.4_f32, color),
         );
         return response;
     }
-    let mut job =
-        LayoutJob::simple_singleline(text.to_string(), egui::FontId::proportional(12.0), color);
+    // Bound the shaped prefix to what can physically fit inside `text_rect.width()` so multi-KB URLs
+    // never stall the font shaper on every frame (while `widget_info` above keeps the full `text`).
+    let max_chars = ((text_rect.width() / 5.2) as usize + 6).clamp(12, 140);
+    let display_slice: std::borrow::Cow<'_, str> =
+        if text.len() > max_chars && text.chars().nth(max_chars).is_some() {
+            let end_b = text
+                .char_indices()
+                .nth(max_chars)
+                .map(|(i, _)| i)
+                .unwrap_or(text.len());
+            std::borrow::Cow::Borrowed(&text[..end_b])
+        } else {
+            std::borrow::Cow::Borrowed(text)
+        };
+    let mut job = LayoutJob::simple_singleline(
+        display_slice.into_owned(),
+        egui::FontId::proportional(12.0),
+        color,
+    );
     job.wrap.max_width = text_rect.width();
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
