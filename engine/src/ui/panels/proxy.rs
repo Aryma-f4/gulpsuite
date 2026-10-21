@@ -127,6 +127,15 @@ pub struct ProxyPanel {
     pub mime_images: bool,
     pub mime_flash: bool,
     pub mime_other_binary: bool,
+    pub show_listener_modal: bool,
+    pub listener_modal_tab: usize,
+    pub bind_specific_address: String,
+    pub tls_use_custom_protocols: bool,
+    pub tls_proto_1_0: bool,
+    pub tls_proto_1_1: bool,
+    pub tls_proto_1_2: bool,
+    pub tls_proto_1_3: bool,
+    pub support_http2: bool,
 }
 
 impl Default for ProxyPanel {
@@ -232,6 +241,15 @@ impl Default for ProxyPanel {
             mime_images: false,
             mime_flash: true,
             mime_other_binary: false,
+            show_listener_modal: false,
+            listener_modal_tab: 0,
+            bind_specific_address: "127.0.0.1".into(),
+            tls_use_custom_protocols: false,
+            tls_proto_1_0: false,
+            tls_proto_1_1: false,
+            tls_proto_1_2: true,
+            tls_proto_1_3: true,
+            support_http2: true,
         }
     }
 }
@@ -336,9 +354,114 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
             muted(
                 ui,
                 &theme,
-                "Gulp's proxy listener accepts HTTP and HTTPS traffic on loopback and routes the integrated browser.",
+                "Gulp Proxy uses listeners to receive incoming HTTP requests from your browser. You will need to configure your browser to use one of the listeners as its proxy server.",
             );
-            ui.add_space(4.0);
+            ui.add_space(6.0);
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(78.0);
+                    if ui
+                        .add_sized([74.0, 24.0], eframe::egui::Button::new("Add"))
+                        .clicked()
+                    {
+                        app.panels.proxy_panel.show_listener_modal = true;
+                        app.panels.proxy_panel.listener_modal_tab = 0;
+                    }
+                    if ui
+                        .add_sized([74.0, 24.0], eframe::egui::Button::new("Edit"))
+                        .clicked()
+                    {
+                        app.panels.proxy_panel.show_listener_modal = true;
+                    }
+                    if ui
+                        .add_sized([74.0, 24.0], eframe::egui::Button::new("Remove"))
+                        .clicked()
+                    {
+                        app.stop_proxy();
+                    }
+                });
+                ui.add_space(6.0);
+                eframe::egui::Frame::new()
+                    .fill(theme.color("ui.background.0"))
+                    .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+                    .inner_margin(6.0)
+                    .show(ui, |ui| {
+                        eframe::egui::Grid::new("proxy-listeners-table")
+                            .num_columns(6)
+                            .striped(true)
+                            .min_col_width(72.0)
+                            .spacing([18.0, 6.0])
+                            .show(ui, |ui| {
+                                for col in [
+                                    "Running",
+                                    "Interface",
+                                    "Invisible",
+                                    "Redirect",
+                                    "Certificate",
+                                    "TLS Protocols",
+                                ] {
+                                    ui.label(eframe::egui::RichText::new(col).strong());
+                                }
+                                ui.end_row();
+
+                                let mut running = app.listening.is_some();
+                                if ui.checkbox(&mut running, "").changed() {
+                                    if running {
+                                        app.start_proxy(app.panels.proxy_panel.port);
+                                    } else {
+                                        app.stop_proxy();
+                                    }
+                                }
+                                let bind_host = match app.panels.proxy_panel.bind_address_mode {
+                                    1 => "*",
+                                    2 => app.panels.proxy_panel.bind_specific_address.as_str(),
+                                    _ => "127.0.0.1",
+                                };
+                                let iface = format!(
+                                    "{}:{}",
+                                    bind_host,
+                                    app.listening.unwrap_or(app.panels.proxy_panel.port)
+                                );
+                                if ui
+                                    .selectable_label(false, &iface)
+                                    .on_hover_text("Double-click or click Edit to configure proxy listener")
+                                    .double_clicked()
+                                {
+                                    app.panels.proxy_panel.show_listener_modal = true;
+                                }
+                                ui.label(if app.panels.proxy_panel.support_invisible_proxy {
+                                    "✓"
+                                } else {
+                                    ""
+                                });
+                                let redir = if app.panels.proxy_panel.redirect_host.trim().is_empty()
+                                {
+                                    String::new()
+                                } else if app.panels.proxy_panel.redirect_port.trim().is_empty() {
+                                    app.panels.proxy_panel.redirect_host.trim().to_string()
+                                } else {
+                                    format!(
+                                        "{}:{}",
+                                        app.panels.proxy_panel.redirect_host.trim(),
+                                        app.panels.proxy_panel.redirect_port.trim()
+                                    )
+                                };
+                                ui.label(redir);
+                                ui.label(match app.panels.proxy_panel.cert_mode {
+                                    1 => "Self-signed",
+                                    2 => "Specific host",
+                                    _ => "Per-host",
+                                });
+                                ui.label(if app.panels.proxy_panel.tls_use_custom_protocols {
+                                    "Custom"
+                                } else {
+                                    "Default"
+                                });
+                                ui.end_row();
+                            });
+                    });
+            });
+            ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 let listening = app.listening.is_some();
                 if ui
@@ -399,6 +522,239 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                     app.open_browser();
                 }
             });
+
+            if app.panels.proxy_panel.show_listener_modal {
+                let ctx = ui.ctx().clone();
+                let mut open = true;
+                eframe::egui::Window::new("Add a new proxy listener")
+                    .open(&mut open)
+                    .resizable(true)
+                    .default_size([560.0, 320.0])
+                    .show(&ctx, |ui| {
+                        let tab_names = [
+                            "Binding",
+                            "Request handling",
+                            "Certificate",
+                            "TLS Protocols",
+                            "HTTP",
+                        ];
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 18.0;
+                            for (idx, name) in tab_names.iter().enumerate() {
+                                let active = app.panels.proxy_panel.listener_modal_tab == idx;
+                                let resp = ui.selectable_label(active, *name);
+                                if active {
+                                    let r = resp.rect;
+                                    ui.painter().line_segment(
+                                        [
+                                            eframe::egui::pos2(r.left(), r.bottom() + 2.0),
+                                            eframe::egui::pos2(r.right(), r.bottom() + 2.0),
+                                        ],
+                                        eframe::egui::Stroke::new(
+                                            2.5,
+                                            eframe::egui::Color32::from_rgb(0xFF, 0x66, 0x33),
+                                        ),
+                                    );
+                                }
+                                if resp.clicked() {
+                                    app.panels.proxy_panel.listener_modal_tab = idx;
+                                }
+                            }
+                        });
+                        ui.separator();
+                        ui.add_space(6.0);
+                        match app.panels.proxy_panel.listener_modal_tab {
+                            0 => {
+                                ui.horizontal(|ui| {
+                                    ui.label(eframe::egui::RichText::new("?").strong());
+                                    ui.label("These settings control how Gulp binds the proxy listener.");
+                                });
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("Bind to port:");
+                                    let mut p_txt = app.panels.proxy_panel.port.to_string();
+                                    if ui
+                                        .add(
+                                            eframe::egui::TextEdit::singleline(&mut p_txt)
+                                                .desired_width(84.0),
+                                        )
+                                        .changed()
+                                    {
+                                        if let Ok(p) = p_txt.trim().parse::<u16>() {
+                                            app.panels.proxy_panel.port = p;
+                                        }
+                                    }
+                                });
+                                ui.add_space(6.0);
+                                ui.horizontal_top(|ui| {
+                                    ui.label("Bind to address:");
+                                    ui.vertical(|ui| {
+                                        ui.radio_value(
+                                            &mut app.panels.proxy_panel.bind_address_mode,
+                                            0,
+                                            "Loopback only",
+                                        );
+                                        ui.radio_value(
+                                            &mut app.panels.proxy_panel.bind_address_mode,
+                                            1,
+                                            "All interfaces",
+                                        );
+                                        ui.horizontal(|ui| {
+                                            ui.radio_value(
+                                                &mut app.panels.proxy_panel.bind_address_mode,
+                                                2,
+                                                "Specific address:",
+                                            );
+                                            eframe::egui::ComboBox::from_id_salt(
+                                                "listener-modal-specific-addr",
+                                            )
+                                            .selected_text(
+                                                app.panels
+                                                    .proxy_panel
+                                                    .bind_specific_address
+                                                    .as_str(),
+                                            )
+                                            .width(180.0)
+                                            .show_ui(ui, |ui| {
+                                                for addr in ["127.0.0.1", "0.0.0.0", "localhost"] {
+                                                    ui.selectable_value(
+                                                        &mut app
+                                                            .panels
+                                                            .proxy_panel
+                                                            .bind_specific_address,
+                                                        addr.to_string(),
+                                                        addr,
+                                                    );
+                                                }
+                                            });
+                                        });
+                                    });
+                                });
+                            }
+                            1 => {
+                                ui.horizontal(|ui| {
+                                    ui.label(eframe::egui::RichText::new("?").strong());
+                                    ui.label("These settings control whether Gulp redirects traffic received by this listener.");
+                                });
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("Redirect to host:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut app.panels.proxy_panel.redirect_host,
+                                        )
+                                        .desired_width(200.0),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Redirect to port:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut app.panels.proxy_panel.redirect_port,
+                                        )
+                                        .desired_width(84.0),
+                                    );
+                                });
+                                ui.checkbox(
+                                    &mut app.panels.proxy_panel.force_tls,
+                                    "Force use of TLS",
+                                );
+                                ui.checkbox(
+                                    &mut app.panels.proxy_panel.support_invisible_proxy,
+                                    "Support invisible proxying (enable only if needed)",
+                                );
+                            }
+                            2 => {
+                                ui.horizontal(|ui| {
+                                    ui.label(eframe::egui::RichText::new("?").strong());
+                                    ui.label("These settings control the server TLS certificate presented to clients.");
+                                });
+                                ui.add_space(8.0);
+                                ui.radio_value(
+                                    &mut app.panels.proxy_panel.cert_mode,
+                                    1,
+                                    "Use a self-signed certificate",
+                                );
+                                ui.radio_value(
+                                    &mut app.panels.proxy_panel.cert_mode,
+                                    0,
+                                    "Generate CA-signed per-host certificates",
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut app.panels.proxy_panel.cert_mode,
+                                        2,
+                                        "Generate a CA-signed certificate with a specific hostname:",
+                                    );
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut app.panels.proxy_panel.cert_specific_host,
+                                        )
+                                        .desired_width(160.0),
+                                    );
+                                });
+                            }
+                            3 => {
+                                ui.horizontal(|ui| {
+                                    ui.label(eframe::egui::RichText::new("?").strong());
+                                    ui.label("These settings control the TLS protocols used on client connections.");
+                                });
+                                ui.add_space(8.0);
+                                ui.radio_value(
+                                    &mut app.panels.proxy_panel.tls_use_custom_protocols,
+                                    false,
+                                    "Use the default protocols for Gulp",
+                                );
+                                ui.radio_value(
+                                    &mut app.panels.proxy_panel.tls_use_custom_protocols,
+                                    true,
+                                    "Use custom protocols",
+                                );
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.checkbox(&mut app.panels.proxy_panel.tls_proto_1_0, "TLSv1");
+                                    ui.checkbox(
+                                        &mut app.panels.proxy_panel.tls_proto_1_1,
+                                        "TLSv1.1",
+                                    );
+                                    ui.checkbox(
+                                        &mut app.panels.proxy_panel.tls_proto_1_2,
+                                        "TLSv1.2",
+                                    );
+                                    ui.checkbox(
+                                        &mut app.panels.proxy_panel.tls_proto_1_3,
+                                        "TLSv1.3",
+                                    );
+                                });
+                            }
+                            _ => {
+                                ui.horizontal(|ui| {
+                                    ui.label(eframe::egui::RichText::new("?").strong());
+                                    ui.label("These settings control how the listener handles HTTP/2 connections.");
+                                });
+                                ui.add_space(8.0);
+                                ui.checkbox(
+                                    &mut app.panels.proxy_panel.support_http2,
+                                    "Support HTTP/2 (enable only if server supports it)",
+                                );
+                            }
+                        }
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if crate::ui::app::primary_button(ui, &theme, "OK").clicked() {
+                                app.start_proxy(app.panels.proxy_panel.port);
+                                app.panels.proxy_panel.show_listener_modal = false;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                app.panels.proxy_panel.show_listener_modal = false;
+                            }
+                        });
+                    });
+                if !open {
+                    app.panels.proxy_panel.show_listener_modal = false;
+                }
+            }
 
             ui.add_space(6.0);
             eframe::egui::CollapsingHeader::new(

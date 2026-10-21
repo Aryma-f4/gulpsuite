@@ -320,6 +320,11 @@ pub fn perform_install(
                 copy_tree_preserving_links(&res, &res_dir)?;
             }
         }
+        let _ = std::fs::create_dir_all(&res_dir);
+        let _ = std::fs::write(
+            res_dir.join("Gulpsuite.icns"),
+            include_bytes!("../../packaging/macos/Gulpsuite.icns"),
+        );
         let plist = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
              <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -327,6 +332,7 @@ pub fn perform_install(
              <key>CFBundleName</key><string>Gulpsuite</string>\n\
              <key>CFBundleDisplayName</key><string>Gulpsuite</string>\n\
              <key>CFBundleExecutable</key><string>Gulpsuite</string>\n\
+             <key>CFBundleIconFile</key><string>Gulpsuite</string>\n\
              <key>CFBundleIdentifier</key><string>io.github.aryma-f4.gulpsuite</string>\n\
              <key>CFBundlePackageType</key><string>APPL</string>\n\
              <key>CFBundleShortVersionString</key><string>{version}</string>\n\
@@ -365,6 +371,10 @@ pub fn perform_install(
         if platform == "windows-x64" {
             let uninst_bin = destination.join("Uninstall.exe");
             let _ = std::fs::copy(&target_bin, &uninst_bin);
+            let _ = std::fs::write(
+                destination.join("gulpsuite.ico"),
+                include_bytes!("../../packaging/windows/gulpsuite.ico"),
+            );
         }
         #[cfg(unix)]
         {
@@ -431,6 +441,12 @@ fn register_windows_installation(
 ) {
     let inst_dir = destination.to_string_lossy();
     let exe_path = target_bin.to_string_lossy();
+    let ico_path = destination.join("gulpsuite.ico");
+    let ico_str = if ico_path.is_file() {
+        ico_path.to_string_lossy().into_owned()
+    } else {
+        exe_path.clone().into_owned()
+    };
     let uninst_path = destination.join("Uninstall.exe");
     let uninst_str = uninst_path.to_string_lossy();
 
@@ -439,7 +455,7 @@ fn register_windows_installation(
         ("DisplayName", "Gulpsuite"),
         ("DisplayVersion", version),
         ("Publisher", PUBLISHER),
-        ("DisplayIcon", &exe_path),
+        ("DisplayIcon", ico_str.as_str()),
         ("InstallLocation", &inst_dir),
         ("UninstallString", &uninst_str),
         ("URLInfoAbout", REPO_URL),
@@ -474,6 +490,7 @@ fn register_windows_installation(
         let vbs_path = std::env::temp_dir().join("gulpsuite_shortcuts.vbs");
         let exe_escaped = exe_path.replace('"', "\"\"");
         let dir_escaped = inst_dir.replace('"', "\"\"");
+        let ico_escaped = ico_str.replace('"', "\"\"");
         let vbs = format!(
             "On Error Resume Next\r\n\
              Set ws = CreateObject(\"WScript.Shell\")\r\n\
@@ -483,12 +500,14 @@ fn register_windows_installation(
              Set s1 = ws.CreateShortcut(smDir & \"\\Gulpsuite.lnk\")\r\n\
              s1.TargetPath = \"{exe_escaped}\"\r\n\
              s1.WorkingDirectory = \"{dir_escaped}\"\r\n\
+             s1.IconLocation = \"{ico_escaped}\"\r\n\
              s1.Description = \"Gulpsuite by {PUBLISHER}\"\r\n\
              s1.Save\r\n\
              desk = ws.SpecialFolders(\"Desktop\")\r\n\
              Set s2 = ws.CreateShortcut(desk & \"\\Gulpsuite.lnk\")\r\n\
              s2.TargetPath = \"{exe_escaped}\"\r\n\
              s2.WorkingDirectory = \"{dir_escaped}\"\r\n\
+             s2.IconLocation = \"{ico_escaped}\"\r\n\
              s2.Description = \"Gulpsuite by {PUBLISHER}\"\r\n\
              s2.Save\r\n"
         );
@@ -739,17 +758,22 @@ impl SetupWizard {
                 )
                 .show(ctx, |ui| {
                     ui.vertical(|ui| {
-                        ui.label(
-                            RichText::new("Gulpsuite Setup")
-                                .size(16.0)
-                                .strong()
-                                .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                        );
-                        ui.label(
-                            RichText::new(format!("Publisher: {PUBLISHER}"))
-                                .size(11.5)
-                                .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
-                        );
+                        ui.horizontal(|ui| {
+                            crate::paint_gulp_logo(ui, 30.0);
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new("Gulpsuite Setup")
+                                        .size(15.5)
+                                        .strong()
+                                        .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                );
+                                ui.label(
+                                    RichText::new(format!("Publisher: {PUBLISHER}"))
+                                        .size(11.0)
+                                        .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
+                                );
+                            });
+                        });
                         ui.add_space(18.0);
                         for step in SetupStep::ALL {
                             let active = self.step == step;

@@ -50,9 +50,13 @@ def assemble_layout(platform, binary, stage, output, version):
         shutil.copy2(binary, app / 'MacOS/Gulpsuite')
         (app / 'MacOS/Gulpsuite').chmod(0o755)
         shutil.copytree(stage / 'resources', app / 'Resources', symlinks=True)
+        icns_src = HERE / 'macos/Gulpsuite.icns'
+        if icns_src.is_file():
+            shutil.copy2(icns_src, app / 'Resources/Gulpsuite.icns')
         with (app / 'Info.plist').open('wb') as stream:
             plistlib.dump(dict(CFBundleName='Gulpsuite', CFBundleDisplayName='Gulpsuite',
-                               CFBundleExecutable='Gulpsuite', CFBundleIdentifier='net.gulpsuite.app',
+                               CFBundleExecutable='Gulpsuite', CFBundleIconFile='Gulpsuite',
+                               CFBundleIdentifier='net.gulpsuite.app',
                                CFBundlePackageType='APPL', CFBundleShortVersionString=version,
                                CFBundleVersion=version, NSHumanReadableCopyright='Copyright (c) Aryma-f4',
                                NSHighResolutionCapable=True,
@@ -60,6 +64,9 @@ def assemble_layout(platform, binary, stage, output, version):
     elif platform == 'windows-x64':
         output.mkdir(parents=True)
         shutil.copy2(binary, output / 'gulpsuite.exe')
+        ico_src = HERE / 'windows/gulpsuite.ico'
+        if ico_src.is_file():
+            shutil.copy2(ico_src, output / 'gulpsuite.ico')
         shutil.copytree(stage / 'resources', output / 'resources', symlinks=True)
     elif platform == 'linux-x64':
         app = output / 'opt/gulpsuite'
@@ -67,6 +74,12 @@ def assemble_layout(platform, binary, stage, output, version):
         shutil.copy2(binary, app / 'gulpsuite')
         (app / 'gulpsuite').chmod(0o755)
         shutil.copytree(stage / 'resources', app / 'resources', symlinks=True)
+        png_src = HERE.parent / 'assets/logo.png'
+        if png_src.is_file():
+            pixmaps = output / 'usr/share/pixmaps'
+            pixmaps.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(png_src, pixmaps / 'gulpsuite.png')
+            shutil.copy2(png_src, app / 'resources/gulpsuite.png')
         desktop = output / 'usr/share/applications'
         desktop.mkdir(parents=True)
         shutil.copy2(HERE / 'linux/gulpsuite.desktop', desktop)

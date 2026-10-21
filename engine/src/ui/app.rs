@@ -2762,6 +2762,7 @@ impl App {
 
     fn menu_bar(&mut self, ctx: &Context, ui: &mut Ui) {
         ui.horizontal(|ui| {
+            crate::paint_gulp_logo(ui, 16.0);
             ui.menu_button("Gulp", |ui| {
                 if ui.button("Gulp settings…").clicked() {
                     self.show_settings = true;
@@ -3087,7 +3088,7 @@ impl App {
             eframe::egui::Window::new("Settings")
                 .open(&mut open)
                 .resizable(true)
-                .default_size([860.0, 560.0])
+                .default_size([960.0, 620.0])
                 .show(ctx, |ui| self.settings(ui));
             self.show_settings = open;
         }
@@ -3223,86 +3224,211 @@ impl App {
         }
     }
 
-    /// Burp Suite Pro v2026.3.3 complete Settings dialog (`settings/index.html` & `settings/tools/proxy.html`):
-    /// Search bar, `All | User | Project` scope filter pills, `Manage global settings` menu,
-    /// and all 13 Settings pages across Tools, Project, Sessions, Network, User interface, Suite, and Extensions.
+    /// Complete Settings dialog (`settings-panel-01.jpg`, `settings/index.html`, `settings/tools/proxy.html`):
+    /// Left sidebar with Search input, `All | User | Project` rounded filter pills, hierarchical
+    /// Tools / Project / Sessions / Network / User interface / Suite / Extensions navigation tree,
+    /// `Configuration library` footer, and right pane with breadcrumb header, `Manage global settings ⋮`,
+    /// `↺` reset button, and `Project setting` / `User setting` badge pills.
     fn settings(&mut self, ui: &mut Ui) {
         let theme = self.theme.clone();
-        // (index, label, is_project_setting)
-        let categories: [(usize, &str, bool); 13] = [
-            (0, "Suite › Project files", true),
-            (1, "User interface › Appearance", false),
-            (2, "Tools › Proxy", true),
-            (3, "Tools › Intruder", true),
-            (4, "Tools › Repeater", false),
-            (5, "Tools › Collaborator", true),
-            (6, "Tools › Scanner", true),
-            (7, "Tools › Sequencer & Comparer", true),
-            (8, "Tools › Gulpsuite's browser", false),
-            (9, "Project › Scope, Tasks & Logging", true),
-            (10, "Sessions › Cookie jar & Handling", true),
-            (11, "Network › Connections, HTTP & TLS", true),
-            (12, "Extensions › Bambda & Script store", false),
+        // (index, full_label, group_name, leaf_name, is_project_setting)
+        let categories: [(usize, &str, &str, &str, bool); 13] = [
+            (2, "Tools › Proxy", "Tools", "Proxy", true),
+            (3, "Tools › Intruder", "Tools", "Intruder", true),
+            (4, "Tools › Repeater", "Tools", "Repeater", false),
+            (5, "Tools › Collaborator", "Tools", "Collaborator", true),
+            (6, "Tools › Scanner", "Tools", "Scanner", true),
+            (7, "Tools › Sequencer & Comparer", "Tools", "Sequencer", true),
+            (8, "Tools › Gulpsuite's browser", "Tools", "Gulp's browser", false),
+            (9, "Project › Scope, Tasks & Logging", "Project", "Scope, Tasks & Logging", true),
+            (10, "Sessions › Cookie jar & Handling", "Sessions", "Cookie jar & Handling", true),
+            (11, "Network › Connections, HTTP & TLS", "Network", "Connections, HTTP & TLS", true),
+            (1, "User interface › Appearance", "User interface", "Display, Inspector & Hotkeys", false),
+            (0, "Suite › Project files", "Suite", "Project files, API & Updates", true),
+            (12, "Extensions › Bambda & Script store", "Extensions", "Bambda & Script store", false),
         ];
-
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Search:");
-            ui.add(
-                eframe::egui::TextEdit::singleline(&mut self.settings_search)
-                    .hint_text("Search settings (e.g. proxy, tls, listener, hotkeys)…")
-                    .desired_width(240.0),
-            );
-            ui.separator();
-            ui.selectable_value(&mut self.settings_scope_filter, 0, "All");
-            ui.selectable_value(&mut self.settings_scope_filter, 1, "User");
-            ui.selectable_value(&mut self.settings_scope_filter, 2, "Project");
-            ui.separator();
-            ui.menu_button("Manage global settings ▾", |ui| {
-                if ui.button("Restore default settings").clicked() {
-                    self.panels.proxy_panel = Default::default();
-                    self.status = "Restored default proxy and project settings".into();
-                    ui.close();
-                }
-                if ui.button("Save settings (project JSON)").clicked() {
-                    self.save_project();
-                    ui.close();
-                }
-                if ui.button("Load settings (project JSON)").clicked() {
-                    self.open_project();
-                    ui.close();
-                }
-            });
-        });
-        ui.separator();
 
         let search_needle = self.settings_search.trim().to_lowercase();
         let scope_filter = self.settings_scope_filter;
 
         ui.horizontal_top(|ui| {
+            // Left Sidebar (`settings-panel-01.jpg`: Search box + All/User/Project pills + Tree + Configuration library)
             ui.vertical(|ui| {
-                ui.set_width(215.0);
-                ui.label(eframe::egui::RichText::new("Navigation").strong());
+                ui.set_width(235.0);
+                ui.horizontal(|ui| {
+                    ui.add(
+                        eframe::egui::TextEdit::singleline(&mut self.settings_search)
+                            .hint_text("Search")
+                            .desired_width(198.0),
+                    );
+                    ui.label("🔍");
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    for (filter_val, label) in [(0usize, "All"), (1, "User"), (2, "Project")] {
+                        let active = self.settings_scope_filter == filter_val;
+                        let fill = if active {
+                            eframe::egui::Color32::from_rgb(0x2A, 0x67, 0xAD)
+                        } else if theme.dark {
+                            eframe::egui::Color32::from_rgb(0x45, 0x48, 0x4E)
+                        } else {
+                            eframe::egui::Color32::from_rgb(0xDE, 0xE2, 0xE8)
+                        };
+                        let text_col = if active {
+                            eframe::egui::Color32::WHITE
+                        } else {
+                            theme.color("ui.text.body")
+                        };
+                        let btn = eframe::egui::Button::new(
+                            eframe::egui::RichText::new(label)
+                                .size(11.5)
+                                .strong()
+                                .color(text_col),
+                        )
+                        .fill(fill)
+                        .corner_radius(10.0);
+                        if ui.add(btn).clicked() {
+                            self.settings_scope_filter = filter_val;
+                        }
+                    }
+                });
+                ui.add_space(4.0);
                 ui.separator();
-                for (idx, label, is_project) in categories {
+
+                let mut last_group = "";
+                for (idx, full_label, group_name, _leaf_name, is_project) in categories {
                     if scope_filter == 1 && is_project {
                         continue;
                     }
                     if scope_filter == 2 && !is_project {
                         continue;
                     }
-                    if !search_needle.is_empty() && !label.to_lowercase().contains(&search_needle) {
+                    if !search_needle.is_empty()
+                        && !full_label.to_lowercase().contains(&search_needle)
+                    {
                         continue;
                     }
-                    if ui
-                        .selectable_label(self.settings_category == idx, label)
-                        .clicked()
-                    {
+                    if group_name != last_group {
+                        ui.add_space(2.0);
+                        ui.label(
+                            eframe::egui::RichText::new(format!("⌄ {group_name}"))
+                                .size(11.5)
+                                .strong()
+                                .color(theme.color("ui.text.muted")),
+                        );
+                        last_group = group_name;
+                    }
+                    let selected = self.settings_category == idx;
+                    if ui.selectable_label(selected, full_label).clicked() {
                         self.settings_category = idx;
                     }
                 }
+                ui.add_space(6.0);
+                ui.separator();
+                if ui.small_button("📖 Configuration library").clicked() {
+                    self.settings_category = 0;
+                }
             });
+
             ui.separator();
+
+            // Right Content Area: Top Breadcrumb + Manage global settings + Section header + Scrollable Controls
             ui.vertical(|ui| {
+                let (_, _, active_group, active_leaf, active_is_project) = categories
+                    .iter()
+                    .copied()
+                    .find(|(idx, _, _, _, _)| *idx == self.settings_category)
+                    .unwrap_or(categories[0]);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        eframe::egui::RichText::new(active_group)
+                            .size(12.5)
+                            .color(theme.color("ui.text.muted")),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new("›")
+                            .size(12.5)
+                            .color(theme.color("ui.text.muted")),
+                    );
+                    ui.label(
+                        eframe::egui::RichText::new(active_leaf)
+                            .size(12.5)
+                            .strong()
+                            .color(eframe::egui::Color32::from_rgb(0x4E, 0x94, 0xEA)),
+                    );
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            ui.menu_button("Manage global settings ⋮", |ui| {
+                                if ui.button("Restore default settings").clicked() {
+                                    self.panels.proxy_panel = Default::default();
+                                    self.status =
+                                        "Restored default proxy and project settings".into();
+                                    ui.close();
+                                }
+                                if ui.button("Save settings (project JSON)").clicked() {
+                                    self.save_project();
+                                    ui.close();
+                                }
+                                if ui.button("Load settings (project JSON)").clicked() {
+                                    self.open_project();
+                                    ui.close();
+                                }
+                            });
+                        },
+                    );
+                });
+                ui.separator();
+
+                // Section badge pill row (`Project setting` / `User setting` + `↺` reset button)
+                ui.horizontal(|ui| {
+                    if ui
+                        .small_button("↺")
+                        .on_hover_text("Restore default settings for this section")
+                        .clicked()
+                    {
+                        if self.settings_category == 2 {
+                            self.panels.proxy_panel = Default::default();
+                        }
+                        self.status = format!("Restored defaults for {active_group} › {active_leaf}");
+                    }
+                    ui.label(
+                        eframe::egui::RichText::new(format!("{active_group} — {active_leaf}"))
+                            .size(14.0)
+                            .strong(),
+                    );
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            let badge_label = if active_is_project {
+                                "Project setting"
+                            } else {
+                                "User setting"
+                            };
+                            let badge_fill = if active_is_project {
+                                eframe::egui::Color32::from_rgb(0x2A, 0x67, 0xAD)
+                            } else {
+                                eframe::egui::Color32::from_rgb(0x20, 0x4A, 0x7A)
+                            };
+                            eframe::egui::Frame::new()
+                                .fill(badge_fill)
+                                .corner_radius(10.0)
+                                .inner_margin(eframe::egui::Margin::symmetric(10, 3))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        eframe::egui::RichText::new(badge_label)
+                                            .size(11.0)
+                                            .strong()
+                                            .color(eframe::egui::Color32::WHITE),
+                                    );
+                                });
+                        },
+                    );
+                });
+                ui.add_space(4.0);
+
                 match self.settings_category {
                     0 => {
                         super::panels::heading(ui, &theme, "Suite — Project files & Performance");

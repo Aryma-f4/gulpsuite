@@ -734,7 +734,7 @@ fn native_setup_wizard_steps_through_welcome_and_directory_screens() {
     harness.run();
     assert_eq!(harness.state().step, SetupStep::Welcome);
     assert!(harness
-        .query_by_label("Welcome to the Gulpsuite 0.0.4 Setup Wizard")
+        .query_by_label("Welcome to the Gulpsuite 0.0.5 Setup Wizard")
         .is_some());
     harness.get_by_label("Next >").click();
     harness.run();

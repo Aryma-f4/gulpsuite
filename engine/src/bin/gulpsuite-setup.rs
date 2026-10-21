@@ -60,7 +60,8 @@ fn main() -> eframe::Result<()> {
                 .with_inner_size([1280.0, 800.0])
                 .with_min_inner_size([760.0, 480.0])
                 .with_resizable(true)
-                .with_title("Gulpsuite"),
+                .with_title("Gulpsuite")
+                .with_icon(gulpsuite::app_icon()),
             ..Default::default()
         };
         return eframe::run_native(
@@ -115,7 +116,8 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([720.0, 460.0])
             .with_min_inner_size([400.0, 300.0])
             .with_resizable(true)
-            .with_title("Gulpsuite Setup — Publisher: Aryma-f4"),
+            .with_title("Gulpsuite Setup — Publisher: Aryma-f4")
+            .with_icon(gulpsuite::app_icon()),
         ..Default::default()
     };
     eframe::run_native(

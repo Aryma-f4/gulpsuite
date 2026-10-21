@@ -12,7 +12,8 @@ fn main() -> eframe::Result<()> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1360.0, 820.0])
             .with_min_inner_size([860.0, 540.0])
-            .with_title("Gulpsuite"),
+            .with_title("Gulpsuite")
+            .with_icon(gulpsuite::app_icon()),
         ..Default::default()
     };
     eframe::run_native(

@@ -26,3 +26,36 @@ pub mod tls;
 pub mod ui;
 pub mod updater;
 pub mod workspace;
+
+/// Official 64×64 RGBA icon bytes for Gulpsuite (orange `#F56700` rounded square with white serif `"g"`).
+pub const APP_ICON_64_RGBA: &[u8] = include_bytes!("../assets/icon_64.rgba");
+
+/// Returns `eframe::egui::IconData` for attaching the official Gulpsuite icon to native OS windows.
+pub fn app_icon() -> std::sync::Arc<eframe::egui::IconData> {
+    std::sync::Arc::new(eframe::egui::IconData {
+        rgba: APP_ICON_64_RGBA.to_vec(),
+        width: 64,
+        height: 64,
+    })
+}
+
+/// Paints the official Gulpsuite logo badge at `size × size` points inside `ui`.
+pub fn paint_gulp_logo(ui: &mut eframe::egui::Ui, size: f32) -> eframe::egui::Response {
+    use eframe::egui::{ColorImage, TextureHandle, TextureOptions, Vec2};
+    let tex_id = eframe::egui::Id::new("gulpsuite_official_logo_tex");
+    let handle: TextureHandle = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<TextureHandle>(tex_id))
+        .unwrap_or_else(|| {
+            let img = ColorImage::from_rgba_unmultiplied([64, 64], APP_ICON_64_RGBA);
+            let h = ui
+                .ctx()
+                .load_texture("gulpsuite-logo-64", img, TextureOptions::LINEAR);
+            ui.ctx().data_mut(|d| d.insert_temp(tex_id, h.clone()));
+            h
+        });
+    ui.add(eframe::egui::Image::from_texture((
+        handle.id(),
+        Vec2::splat(size),
+    )))
+}

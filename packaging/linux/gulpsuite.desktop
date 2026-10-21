@@ -3,6 +3,7 @@ Type=Application
 Name=Gulpsuite
 Comment=HTTP testing suite with integrated Chromium
 Exec=/opt/gulpsuite/gulpsuite
+Icon=gulpsuite
 Terminal=false
 Categories=Development;Network;
 StartupNotify=true
