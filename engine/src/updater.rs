@@ -493,11 +493,14 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new(installer_path)
-            .spawn()
+        let mut cmd = std::process::Command::new(installer_path);
+        if name.contains("setup") {
+            cmd.arg("--install").arg("--yes");
+        }
+        cmd.spawn()
             .map_err(|e| format!("Failed to launch Windows setup {}: {e}", name))?;
         return Ok(format!(
-            "Launched Windows setup wizard: {}",
+            "Launched Windows setup installer: {}",
             installer_path.display()
         ));
     }

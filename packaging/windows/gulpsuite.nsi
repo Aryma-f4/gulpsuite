@@ -4,9 +4,16 @@ Name "Gulpsuite ${VERSION}"
 OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\Gulpsuite"
 RequestExecutionLevel user
+VIProductVersion "${VERSION}.0"
+VIAddVersionKey "ProductName" "Gulpsuite"
+VIAddVersionKey "CompanyName" "Aryma-f4"
+VIAddVersionKey "LegalCopyright" "Copyright (c) Aryma-f4"
+VIAddVersionKey "FileDescription" "Gulpsuite Setup Wizard"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Welcome to Gulpsuite ${VERSION} Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will install Gulpsuite and its preconfigured integrated Chromium browser on your computer.$\r$\n$\r$\nNo system-wide proxy settings or personal browser profiles will be modified."
+!define MUI_WELCOMEPAGE_TEXT "Publisher: Aryma-f4$\r$\n$\r$\nThis wizard will install Gulpsuite and its preconfigured integrated Chromium browser on your computer.$\r$\n$\r$\nNo system-wide proxy settings or personal browser profiles will be modified."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -26,9 +33,13 @@ Section "Gulpsuite & Integrated Chromium"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "DisplayName" "Gulpsuite"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "Publisher" "Gulpsuite Project"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "Publisher" "Aryma-f4"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "DisplayIcon" "$INSTDIR\gulpsuite.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "URLInfoAbout" "https://github.com/Aryma-f4/gulpsuite"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "NoModify" 1
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"

@@ -966,19 +966,1380 @@ pub fn attach_message_context_menu(
     });
 }
 
+fn is_meaningful_decode(op_name: &str, input: &str, output: &str) -> bool {
+    if output.is_empty() || output == input {
+        return false;
+    }
+    if output
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+    {
+        return false;
+    }
+    match op_name {
+        "URL decode" => input.contains('%') || input.contains('+'),
+        "HTML decode" => input.contains('&') && input.contains(';'),
+        "Base64 decode" | "Base64 URL-safe decode" => input.ends_with('=') || input.len() >= 16,
+        "Hex decode" => input.len() >= 12 && !input.chars().all(|c| c.is_ascii_digit()),
+        _ => false,
+    }
+}
+
 fn auto_decode_value(val: &str) -> String {
     let mut cur = val.to_string();
     for _ in 0..3 {
-        let Some(op) = crate::logic::magic_decode(&cur).and_then(crate::logic::find_op) else {
+        let Some(op_name) = crate::logic::magic_decode(&cur) else {
+            break;
+        };
+        let Some(op) = crate::logic::find_op(op_name) else {
             break;
         };
         let Ok(next) = (op.run)(&cur) else { break };
-        if next == cur {
+        if !is_meaningful_decode(op_name, &cur, &next) {
             break;
         }
         cur = next;
     }
     cur
+}
+
+/// Returns each auto-decoded step `(encoding_label, decoded_value)` in order (up to 3 steps),
+/// matching Burp's multi-step `Decoded from: [URL encoding / Base64 / HTML / ASCII hex]` chain
+/// (`inspector-cookie-decoding.png`).
+pub fn decode_chain_steps(val: &str) -> Vec<(String, String)> {
+    let mut steps = Vec::new();
+    let mut cur = val.to_string();
+    for _ in 0..3 {
+        let Some(op_name) = crate::logic::magic_decode(&cur) else {
+            break;
+        };
+        let Some(op) = crate::logic::find_op(op_name) else {
+            break;
+        };
+        let Ok(next) = (op.run)(&cur) else { break };
+        if !is_meaningful_decode(op_name, &cur, &next) {
+            break;
+        }
+        let label = match op_name {
+            "URL decode" => "URL encoding",
+            "Base64 decode" | "Base64 URL-safe decode" => "Base64",
+            "HTML decode" => "HTML",
+            "Hex decode" => "ASCII hex",
+            other => other,
+        };
+        steps.push((label.to_string(), next.clone()));
+        cur = next;
+    }
+    steps
+}
+
+/// Re-encodes an edited decoded value back through the inverse of `steps` in reverse order.
+pub fn reencode_chain(decoded_edit: &str, steps: &[(String, String)]) -> String {
+    let mut cur = decoded_edit.to_string();
+    for (label, _) in steps.iter().rev() {
+        let inv_op = match label.as_str() {
+            "URL encoding" => "URL encode",
+            "Base64" => "Base64 encode",
+            "HTML" => "HTML encode",
+            "ASCII hex" => "Hex encode",
+            _ => continue,
+        };
+        if let Some(op) = crate::logic::find_op(inv_op) {
+            if let Ok(next) = (op.run)(&cur) {
+                cur = next;
+            }
+        }
+    }
+    cur
+}
+
+/// Paints Burp's 16x16 `resources/Media/svg/inspector.svg` icon (spy fedora hat + glasses).
+pub fn paint_inspector_icon(ui: &mut Ui, color: eframe::egui::Color32) {
+    use eframe::egui::{Pos2, Sense, Shape, Stroke, Vec2, pos2};
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let u = rect.width() / 16.0;
+    let p = |x: f32, y: f32| -> Pos2 { pos2(rect.min.x + x * u, rect.min.y + y * u) };
+    // Hat crown
+    painter.add(Shape::convex_polygon(
+        vec![p(3.5, 7.2), p(5.5, 2.2), p(8.0, 3.0), p(10.5, 2.2), p(12.5, 7.2)],
+        color,
+        Stroke::NONE,
+    ));
+    // Hat brim
+    painter.line_segment([p(1.2, 8.0), p(14.8, 8.0)], Stroke::new(1.6 * u, color));
+    // Glasses left & right lenses + bridge
+    painter.circle_stroke(p(5.2, 11.8), 2.1 * u, Stroke::new(1.3 * u, color));
+    painter.circle_stroke(p(10.8, 11.8), 2.1 * u, Stroke::new(1.3 * u, color));
+    painter.line_segment([p(7.3, 11.6), p(8.7, 11.6)], Stroke::new(1.3 * u, color));
+}
+
+/// Paints Burp's 16x16 `resources/Media/svg/notes.svg` icon (lined document sheet).
+pub fn paint_notes_icon(ui: &mut Ui, color: eframe::egui::Color32) {
+    use eframe::egui::{Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2};
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    let u = rect.width() / 16.0;
+    let p = |x: f32, y: f32| -> Pos2 { pos2(rect.min.x + x * u, rect.min.y + y * u) };
+    let sheet = Rect::from_min_max(p(2.5, 1.8), p(13.5, 14.2));
+    painter.rect_stroke(sheet, 1.2 * u, Stroke::new(1.3 * u, color), StrokeKind::Inside);
+    painter.line_segment([p(5.0, 5.5), p(11.0, 5.5)], Stroke::new(1.2 * u, color));
+    painter.line_segment([p(5.0, 8.2), p(11.0, 8.2)], Stroke::new(1.2 * u, color));
+    painter.line_segment([p(5.0, 10.9), p(9.0, 10.9)], Stroke::new(1.2 * u, color));
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum InspectorCategory {
+    #[default]
+    QueryParam,
+    BodyParam,
+    Cookie,
+    ReqHeader,
+    RespHeader,
+}
+
+impl InspectorCategory {
+    fn title(self) -> &'static str {
+        match self {
+            Self::QueryParam => "Request query parameter",
+            Self::BodyParam => "Request body parameter",
+            Self::Cookie => "Request cookie",
+            Self::ReqHeader => "Request header",
+            Self::RespHeader => "Response header",
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct InspectorDrillState {
+    open: bool,
+    cat: InspectorCategory,
+    index: usize,
+    name_draft: String,
+    value_draft: String,
+    decoded_draft: String,
+    manual_format: usize,
+    expand_all: Option<bool>,
+}
+
+fn rebuild_http_request(
+    raw_request: &str,
+    method: &str,
+    path: &str,
+    proto: &str,
+    query_params: &[(String, String)],
+    body_params: Option<&[(String, String)]>,
+    req_headers: &[(String, String)],
+) -> String {
+    let (_, req_body) = crate::analysis::split_message(raw_request);
+    let query_part = if query_params.is_empty() {
+        String::new()
+    } else {
+        let joined: Vec<String> = query_params
+            .iter()
+            .map(|(k, v)| {
+                if v.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{k}={v}")
+                }
+            })
+            .collect();
+        format!("?{}", joined.join("&"))
+    };
+    let clean_path = if path.is_empty() { "/" } else { path };
+    let mut out = format!("{method} {clean_path}{query_part} {proto}\r\n");
+    let body_out = if let Some(bp) = body_params {
+        bp.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&")
+    } else {
+        req_body.to_string()
+    };
+    for (k, v) in req_headers {
+        if k.eq_ignore_ascii_case("content-length") {
+            out.push_str(&format!("{k}: {}\r\n", body_out.len()));
+        } else {
+            out.push_str(&format!("{k}: {v}\r\n"));
+        }
+    }
+    out.push_str("\r\n");
+    out.push_str(&body_out);
+    out
+}
+
+fn sync_cookies_into_headers(
+    req_headers: &mut Vec<(String, String)>,
+    cookies: &[(String, String)],
+) {
+    let cookie_val = cookies
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if let Some((_, val)) = req_headers
+        .iter_mut()
+        .find(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+    {
+        *val = cookie_val;
+    } else if !cookie_val.is_empty() {
+        req_headers.push(("Cookie".to_string(), cookie_val));
+    }
+}
+
+/// Burp Suite Pro v2026.3.3 Dockable Right/Left Side Panel (`Inspector` | `Notes`):
+/// Matches `inspector.png`, `inspector-cookie-decoding.png`, `inspector-edit-cookie.png`,
+/// and `inspector-selector-widget.png`.
+pub fn draw_inspector_and_notes_sidebar(
+    ui: &mut Ui,
+    theme: &Theme,
+    id: &str,
+    raw_request: &mut String,
+    raw_response: &str,
+    notes: &mut String,
+    active_tab: &mut usize,
+    dock_left: &mut bool,
+    collapsed: &mut bool,
+) {
+    use eframe::egui::{Color32, RichText, Sense, Stroke, StrokeKind, Vec2};
+    let orange = Color32::from_rgb(0xFF, 0x66, 0x33);
+    let border_col = theme.color("ui.border.default");
+    let header_bg = theme.color("ui.background.1");
+    let body_bg = theme.color("ui.background.0");
+    let state_id = ui.make_persistent_id((id, "insp-drill-state"));
+    let mut drill = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<InspectorDrillState>(state_id))
+        .unwrap_or_default();
+
+    // Top tab strip: [ Inspector ] [ Notes ] ................. [ |▤ | ▤| ] [ ⊟ ] [ ⊞ ] [ × ]
+    eframe::egui::Frame::new()
+        .fill(header_bg)
+        .inner_margin(eframe::egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (idx, label) in [(0usize, "Inspector"), (1usize, "Notes")] {
+                    let selected = *active_tab == idx;
+                    let text_col = if selected {
+                        orange
+                    } else {
+                        theme.color("ui.text.body")
+                    };
+                    let resp = ui
+                        .horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            if idx == 0 {
+                                paint_inspector_icon(ui, text_col);
+                            } else {
+                                paint_notes_icon(ui, text_col);
+                            }
+                            ui.add(
+                                eframe::egui::Button::new(
+                                    RichText::new(label).size(12.0).strong().color(text_col),
+                                )
+                                .frame(false),
+                            )
+                        })
+                        .inner;
+                    if selected {
+                        let r = resp.rect;
+                        ui.painter().line_segment(
+                            [
+                                eframe::egui::pos2(r.left() - 16.0, r.bottom() + 3.0),
+                                eframe::egui::pos2(r.right() + 2.0, r.bottom() + 3.0),
+                            ],
+                            Stroke::new(2.5, orange),
+                        );
+                    }
+                    if resp.clicked() {
+                        *active_tab = idx;
+                    }
+                }
+
+                ui.with_layout(
+                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        if ui
+                            .small_button("×")
+                            .on_hover_text("Collapse side panel")
+                            .clicked()
+                        {
+                            *collapsed = true;
+                        }
+                        if *active_tab == 0 && !drill.open {
+                            if ui
+                                .small_button("⊟")
+                                .on_hover_text("Collapse all Inspector sections")
+                                .clicked()
+                            {
+                                drill.expand_all = Some(false);
+                            }
+                            if ui
+                                .small_button("⊞")
+                                .on_hover_text("Expand all Inspector sections")
+                                .clicked()
+                            {
+                                drill.expand_all = Some(true);
+                            }
+                        }
+                        let dock_label = if *dock_left { "▤|" } else { "|▤" };
+                        if ui
+                            .small_button(dock_label)
+                            .on_hover_text(if *dock_left {
+                                "Move side panel to right"
+                            } else {
+                                "Move side panel to left"
+                            })
+                            .clicked()
+                        {
+                            *dock_left = !*dock_left;
+                        }
+                    },
+                );
+            });
+        });
+    ui.separator();
+
+    if *active_tab == 1 {
+        // Notes tab
+        eframe::egui::Frame::new()
+            .fill(body_bg)
+            .inner_margin(eframe::egui::Margin::symmetric(8, 8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Request & Tab Notes")
+                            .size(12.0)
+                            .strong()
+                            .color(theme.color("ui.text.heading")),
+                    );
+                    ui.with_layout(
+                        eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                        |ui| {
+                            if !notes.is_empty() && ui.small_button("Clear").clicked() {
+                                notes.clear();
+                            }
+                            muted(ui, theme, &format!("{} chars", notes.len()));
+                        },
+                    );
+                });
+                ui.add_space(4.0);
+                let avail_h = (ui.available_height() - 12.0).max(120.0);
+                eframe::egui::ScrollArea::vertical()
+                    .id_salt((id, "notes-scroll"))
+                    .max_height(avail_h)
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            [ui.available_width(), avail_h.max(180.0)],
+                            eframe::egui::TextEdit::multiline(notes)
+                                .hint_text(
+                                    "Add notes to record observations, payloads, or findings for this request…",
+                                ),
+                        );
+                    });
+            });
+        ui.ctx().data_mut(|d| d.insert_temp(state_id, drill));
+        return;
+    }
+
+    // Parse HTTP request & response for Inspector
+    let (req_head, req_body) = crate::analysis::split_message(raw_request);
+    let (resp_head, _) = crate::analysis::split_message(raw_response);
+    let mut req_lines = req_head.lines();
+    let first_line = req_lines.next().unwrap_or("");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let uri = parts.next().unwrap_or("/");
+    let proto = parts.next().unwrap_or("HTTP/1.1").to_string();
+    let (path_str, query_str) = uri.split_once('?').unwrap_or((uri, ""));
+    let path = path_str.to_string();
+
+    let mut query_params: Vec<(String, String)> = query_str
+        .split('&')
+        .filter(|s| !s.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            (k.to_string(), v.to_string())
+        })
+        .collect();
+
+    let is_urlencoded_body = (!req_body.trim().is_empty()
+        && req_body.contains('=')
+        && !req_body.trim_start().starts_with('{')
+        && !req_body.trim_start().starts_with('<'))
+        || req_head
+            .to_ascii_lowercase()
+            .contains("application/x-www-form-urlencoded");
+    let mut body_params: Vec<(String, String)> = if is_urlencoded_body {
+        req_body
+            .trim()
+            .split('&')
+            .filter(|s| !s.is_empty())
+            .map(|pair| {
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                (k.to_string(), v.to_string())
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let mut req_headers: Vec<(String, String)> = Vec::new();
+    let mut req_cookies: Vec<(String, String)> = Vec::new();
+    for line in req_lines {
+        if let Some((k, v)) = line.split_once(':') {
+            let k_trim = k.trim().to_string();
+            let v_trim = v.trim().to_string();
+            if k_trim.eq_ignore_ascii_case("cookie") {
+                for pair in v_trim.split(';') {
+                    let pair = pair.trim();
+                    if !pair.is_empty() {
+                        let (ck, cv) = pair.split_once('=').unwrap_or((pair, ""));
+                        req_cookies.push((ck.trim().to_string(), cv.trim().to_string()));
+                    }
+                }
+            }
+            req_headers.push((k_trim, v_trim));
+        }
+    }
+
+    let resp_headers: Vec<(String, String)> = resp_head
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect();
+
+    eframe::egui::Frame::new()
+        .fill(body_bg)
+        .inner_margin(eframe::egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            let avail_h = (ui.available_height() - 6.0).max(140.0);
+            eframe::egui::ScrollArea::vertical()
+                .id_salt((id, "inspector-sidebar-scroll"))
+                .max_height(avail_h)
+                .show(ui, |ui| {
+                    // Drill-down editor view (`inspector-edit-cookie.png` / `inspector-cookie-decoding.png`)
+                    if drill.open {
+                        let items_len = match drill.cat {
+                            InspectorCategory::QueryParam => query_params.len(),
+                            InspectorCategory::BodyParam => body_params.len(),
+                            InspectorCategory::Cookie => req_cookies.len(),
+                            InspectorCategory::ReqHeader => req_headers.len(),
+                            InspectorCategory::RespHeader => resp_headers.len(),
+                        };
+                        ui.horizontal(|ui| {
+                            if ui.button("‹ Back to all items").clicked() {
+                                drill.open = false;
+                            }
+                            ui.with_layout(
+                                eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add_enabled(
+                                            drill.index + 1 < items_len,
+                                            eframe::egui::Button::new("›").small(),
+                                        )
+                                        .on_hover_text("Next item")
+                                        .clicked()
+                                    {
+                                        drill.index += 1;
+                                        if let Some((n, v)) = get_cat_item(
+                                            drill.cat,
+                                            drill.index,
+                                            &query_params,
+                                            &body_params,
+                                            &req_cookies,
+                                            &req_headers,
+                                            &resp_headers,
+                                        ) {
+                                            drill.name_draft = n;
+                                            drill.value_draft = v.clone();
+                                            drill.decoded_draft = auto_decode_value(&v);
+                                        }
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            drill.index > 0,
+                                            eframe::egui::Button::new("‹").small(),
+                                        )
+                                        .on_hover_text("Previous item")
+                                        .clicked()
+                                    {
+                                        drill.index -= 1;
+                                        if let Some((n, v)) = get_cat_item(
+                                            drill.cat,
+                                            drill.index,
+                                            &query_params,
+                                            &body_params,
+                                            &req_cookies,
+                                            &req_headers,
+                                            &resp_headers,
+                                        ) {
+                                            drill.name_draft = n;
+                                            drill.value_draft = v.clone();
+                                            drill.decoded_draft = auto_decode_value(&v);
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                        ui.separator();
+                        ui.label(
+                            RichText::new(drill.cat.title())
+                                .size(12.5)
+                                .strong()
+                                .color(theme.color("ui.text.heading")),
+                        );
+                        ui.add_space(4.0);
+
+                        let read_only = drill.cat == InspectorCategory::RespHeader;
+                        ui.label(RichText::new("Name").size(11.0).strong());
+                        ui.add_enabled(
+                            !read_only,
+                            eframe::egui::TextEdit::singleline(&mut drill.name_draft)
+                                .font(eframe::egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(6.0);
+
+                        ui.label(RichText::new("Value").size(11.0).strong());
+                        let val_changed = ui
+                            .add_enabled(
+                                !read_only,
+                                eframe::egui::TextEdit::multiline(&mut drill.value_draft)
+                                    .font(eframe::egui::TextStyle::Monospace)
+                                    .desired_rows(3)
+                                    .desired_width(f32::INFINITY),
+                            )
+                            .changed();
+                        if val_changed {
+                            drill.decoded_draft = auto_decode_value(&drill.value_draft);
+                        }
+
+                        let chain = decode_chain_steps(&drill.value_draft);
+                        if !chain.is_empty() {
+                            for (step_idx, (fmt_name, step_val)) in chain.iter().enumerate() {
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("Decoded from")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(theme.color("ui.text.secondary")),
+                                    );
+                                    eframe::egui::Frame::new()
+                                        .fill(theme.color("ui.background.2"))
+                                        .corner_radius(3.0)
+                                        .inner_margin(eframe::egui::Margin::symmetric(6, 2))
+                                        .show(ui, |ui| {
+                                            ui.label(RichText::new(fmt_name).size(11.0).strong());
+                                        });
+                                });
+                                if step_idx + 1 < chain.len() {
+                                    let mut preview = step_val.clone();
+                                    ui.add_enabled(
+                                        false,
+                                        eframe::egui::TextEdit::multiline(&mut preview)
+                                            .font(eframe::egui::TextStyle::Monospace)
+                                            .desired_rows(2)
+                                            .desired_width(f32::INFINITY),
+                                    );
+                                } else {
+                                    let dec_changed = ui
+                                        .add_enabled(
+                                            !read_only,
+                                            eframe::egui::TextEdit::multiline(
+                                                &mut drill.decoded_draft,
+                                            )
+                                            .font(eframe::egui::TextStyle::Monospace)
+                                            .desired_rows(3)
+                                            .desired_width(f32::INFINITY),
+                                        )
+                                        .changed();
+                                    if dec_changed && !read_only {
+                                        drill.value_draft =
+                                            reencode_chain(&drill.decoded_draft, &chain);
+                                    }
+                                }
+                            }
+                        } else {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new("Decoded from")
+                                        .size(11.0)
+                                        .color(theme.color("ui.text.secondary")),
+                                );
+                                eframe::egui::ComboBox::from_id_salt((id, "insp-manual-fmt"))
+                                    .selected_text(
+                                        ["Auto", "URL encoding", "Base64", "HTML", "ASCII hex"]
+                                            [drill.manual_format.min(4)],
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        for (fi, fl) in [
+                                            "Auto",
+                                            "URL encoding",
+                                            "Base64",
+                                            "HTML",
+                                            "ASCII hex",
+                                        ]
+                                        .iter()
+                                        .enumerate()
+                                        {
+                                            ui.selectable_value(&mut drill.manual_format, fi, *fl);
+                                        }
+                                    });
+                            });
+                            let dec_changed = ui
+                                .add_enabled(
+                                    !read_only,
+                                    eframe::egui::TextEdit::multiline(&mut drill.decoded_draft)
+                                        .font(eframe::egui::TextStyle::Monospace)
+                                        .desired_rows(2)
+                                        .desired_width(f32::INFINITY),
+                                )
+                                .changed();
+                            if dec_changed && !read_only {
+                                let op_id = match drill.manual_format {
+                                    1 => Some("URL encode"),
+                                    2 => Some("Base64 encode"),
+                                    3 => Some("HTML encode"),
+                                    4 => Some("Hex encode"),
+                                    _ => None,
+                                };
+                                if let Some(op_id) = op_id.and_then(crate::logic::find_op) {
+                                    if let Ok(enc) = (op_id.run)(&drill.decoded_draft) {
+                                        drill.value_draft = enc;
+                                    }
+                                } else {
+                                    drill.value_draft = drill.decoded_draft.clone();
+                                }
+                            }
+                        }
+
+                        if !read_only {
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if crate::ui::app::primary_button(ui, theme, "Apply changes")
+                                    .clicked()
+                                {
+                                    match drill.cat {
+                                        InspectorCategory::QueryParam => {
+                                            if let Some(slot) = query_params.get_mut(drill.index) {
+                                                *slot = (
+                                                    drill.name_draft.clone(),
+                                                    drill.value_draft.clone(),
+                                                );
+                                            }
+                                            *raw_request = rebuild_http_request(
+                                                raw_request,
+                                                &method,
+                                                &path,
+                                                &proto,
+                                                &query_params,
+                                                if is_urlencoded_body {
+                                                    Some(&body_params)
+                                                } else {
+                                                    None
+                                                },
+                                                &req_headers,
+                                            );
+                                        }
+                                        InspectorCategory::BodyParam => {
+                                            if let Some(slot) = body_params.get_mut(drill.index) {
+                                                *slot = (
+                                                    drill.name_draft.clone(),
+                                                    drill.value_draft.clone(),
+                                                );
+                                            }
+                                            *raw_request = rebuild_http_request(
+                                                raw_request,
+                                                &method,
+                                                &path,
+                                                &proto,
+                                                &query_params,
+                                                Some(&body_params),
+                                                &req_headers,
+                                            );
+                                        }
+                                        InspectorCategory::Cookie => {
+                                            if let Some(slot) = req_cookies.get_mut(drill.index) {
+                                                *slot = (
+                                                    drill.name_draft.clone(),
+                                                    drill.value_draft.clone(),
+                                                );
+                                            }
+                                            sync_cookies_into_headers(
+                                                &mut req_headers,
+                                                &req_cookies,
+                                            );
+                                            *raw_request = rebuild_http_request(
+                                                raw_request,
+                                                &method,
+                                                &path,
+                                                &proto,
+                                                &query_params,
+                                                if is_urlencoded_body {
+                                                    Some(&body_params)
+                                                } else {
+                                                    None
+                                                },
+                                                &req_headers,
+                                            );
+                                        }
+                                        InspectorCategory::ReqHeader => {
+                                            if let Some(slot) = req_headers.get_mut(drill.index) {
+                                                *slot = (
+                                                    drill.name_draft.clone(),
+                                                    drill.value_draft.clone(),
+                                                );
+                                            }
+                                            *raw_request = rebuild_http_request(
+                                                raw_request,
+                                                &method,
+                                                &path,
+                                                &proto,
+                                                &query_params,
+                                                if is_urlencoded_body {
+                                                    Some(&body_params)
+                                                } else {
+                                                    None
+                                                },
+                                                &req_headers,
+                                            );
+                                        }
+                                        InspectorCategory::RespHeader => {}
+                                    }
+                                    drill.open = false;
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    drill.open = false;
+                                }
+                            });
+                        }
+                        return;
+                    }
+
+                    // 1. Selection widget (`inspector-selector-widget.png`)
+                    let active_sel = LAST_MESSAGE_SELECTION.with(|cell| {
+                        cell.borrow().as_ref().and_then(|(_, range, full)| {
+                            let s = full.get(range.clone()).unwrap_or_default().to_string();
+                            (!s.is_empty()).then_some(s)
+                        })
+                    });
+                    if let Some(sel_text) = active_sel {
+                        draw_inspector_section_header(
+                            ui,
+                            theme,
+                            (id, "sec-selection"),
+                            "Selection",
+                            Some(sel_text.chars().count()),
+                            true,
+                            drill.expand_all,
+                            |ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Selected text ({} chars)",
+                                        sel_text.len()
+                                    ))
+                                    .size(11.0)
+                                    .color(theme.color("ui.text.secondary")),
+                                );
+                                let mut sel_preview = sel_text.clone();
+                                ui.add(
+                                    eframe::egui::TextEdit::multiline(&mut sel_preview)
+                                        .font(eframe::egui::TextStyle::Monospace)
+                                        .desired_rows(2)
+                                        .desired_width(f32::INFINITY),
+                                );
+                                let steps = decode_chain_steps(&sel_text);
+                                for (fmt_label, dec_val) in &steps {
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("Decoded from")
+                                                .size(11.0)
+                                                .color(theme.color("ui.text.secondary")),
+                                        );
+                                        ui.label(RichText::new(fmt_label).size(11.0).strong());
+                                    });
+                                    let mut dec_copy = dec_val.clone();
+                                    ui.add(
+                                        eframe::egui::TextEdit::multiline(&mut dec_copy)
+                                            .font(eframe::egui::TextStyle::Monospace)
+                                            .desired_rows(2)
+                                            .desired_width(f32::INFINITY),
+                                    );
+                                }
+                            },
+                        );
+                    }
+
+                    // 2. Request Attributes section
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-req-attrs"),
+                        "Request Attributes",
+                        None,
+                        true,
+                        drill.expand_all,
+                        |ui| {
+                            let mut edit_method = method.clone();
+                            let mut edit_path = path.clone();
+                            let mut edit_proto = proto.clone();
+                            let mut attr_changed = false;
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Protocol").size(11.0).strong());
+                                for p_opt in ["HTTP/1.1", "HTTP/2"] {
+                                    let active = edit_proto.eq_ignore_ascii_case(p_opt);
+                                    if ui.selectable_label(active, p_opt).clicked() && !active {
+                                        edit_proto = p_opt.to_string();
+                                        attr_changed = true;
+                                    }
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Method ").size(11.0).strong());
+                                eframe::egui::ComboBox::from_id_salt((id, "insp-attr-method"))
+                                    .selected_text(&edit_method)
+                                    .width(96.0)
+                                    .show_ui(ui, |ui| {
+                                        for m_opt in
+                                            ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+                                        {
+                                            if ui
+                                                .selectable_value(
+                                                    &mut edit_method,
+                                                    m_opt.to_string(),
+                                                    m_opt,
+                                                )
+                                                .changed()
+                                            {
+                                                attr_changed = true;
+                                            }
+                                        }
+                                    });
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("Path     ").size(11.0).strong());
+                                if ui
+                                    .add(
+                                        eframe::egui::TextEdit::singleline(&mut edit_path)
+                                            .font(eframe::egui::TextStyle::Monospace)
+                                            .desired_width(f32::INFINITY),
+                                    )
+                                    .changed()
+                                {
+                                    attr_changed = true;
+                                }
+                            });
+                            if attr_changed {
+                                *raw_request = rebuild_http_request(
+                                    raw_request,
+                                    &edit_method,
+                                    &edit_path,
+                                    &edit_proto,
+                                    &query_params,
+                                    if is_urlencoded_body {
+                                        Some(&body_params)
+                                    } else {
+                                        None
+                                    },
+                                    &req_headers,
+                                );
+                            }
+                        },
+                    );
+
+                    // 3. Request Query Parameters
+                    let mut delete_query: Option<usize> = None;
+                    let mut add_query = false;
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-query-params"),
+                        "Request Query Parameters",
+                        Some(query_params.len()),
+                        !query_params.is_empty(),
+                        drill.expand_all,
+                        |ui| {
+                            draw_inspector_kv_table(
+                                ui,
+                                theme,
+                                (id, "tbl-query"),
+                                &query_params,
+                                true,
+                                &mut |idx| {
+                                    if let Some((n, v)) = query_params.get(idx) {
+                                        drill.open = true;
+                                        drill.cat = InspectorCategory::QueryParam;
+                                        drill.index = idx;
+                                        drill.name_draft = n.clone();
+                                        drill.value_draft = v.clone();
+                                        drill.decoded_draft = auto_decode_value(v);
+                                    }
+                                },
+                                &mut |idx| delete_query = Some(idx),
+                            );
+                            if ui.small_button("+ Add query parameter").clicked() {
+                                add_query = true;
+                            }
+                        },
+                    );
+                    if let Some(idx) = delete_query {
+                        if idx < query_params.len() {
+                            query_params.remove(idx);
+                            *raw_request = rebuild_http_request(
+                                raw_request,
+                                &method,
+                                &path,
+                                &proto,
+                                &query_params,
+                                if is_urlencoded_body {
+                                    Some(&body_params)
+                                } else {
+                                    None
+                                },
+                                &req_headers,
+                            );
+                        }
+                    }
+                    if add_query {
+                        query_params.push(("param".into(), "value".into()));
+                        let idx = query_params.len() - 1;
+                        *raw_request = rebuild_http_request(
+                            raw_request,
+                            &method,
+                            &path,
+                            &proto,
+                            &query_params,
+                            if is_urlencoded_body {
+                                Some(&body_params)
+                            } else {
+                                None
+                            },
+                            &req_headers,
+                        );
+                        drill.open = true;
+                        drill.cat = InspectorCategory::QueryParam;
+                        drill.index = idx;
+                        drill.name_draft = "param".into();
+                        drill.value_draft = "value".into();
+                        drill.decoded_draft = "value".into();
+                    }
+
+                    // 4. Request Body Parameters
+                    let mut delete_body: Option<usize> = None;
+                    let mut add_body = false;
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-body-params"),
+                        "Request Body Parameters",
+                        Some(body_params.len()),
+                        !body_params.is_empty(),
+                        drill.expand_all,
+                        |ui| {
+                            draw_inspector_kv_table(
+                                ui,
+                                theme,
+                                (id, "tbl-body"),
+                                &body_params,
+                                true,
+                                &mut |idx| {
+                                    if let Some((n, v)) = body_params.get(idx) {
+                                        drill.open = true;
+                                        drill.cat = InspectorCategory::BodyParam;
+                                        drill.index = idx;
+                                        drill.name_draft = n.clone();
+                                        drill.value_draft = v.clone();
+                                        drill.decoded_draft = auto_decode_value(v);
+                                    }
+                                },
+                                &mut |idx| delete_body = Some(idx),
+                            );
+                            if ui.small_button("+ Add body parameter").clicked() {
+                                add_body = true;
+                            }
+                        },
+                    );
+                    if let Some(idx) = delete_body {
+                        if idx < body_params.len() {
+                            body_params.remove(idx);
+                            *raw_request = rebuild_http_request(
+                                raw_request,
+                                &method,
+                                &path,
+                                &proto,
+                                &query_params,
+                                Some(&body_params),
+                                &req_headers,
+                            );
+                        }
+                    }
+                    if add_body {
+                        body_params.push(("param".into(), "value".into()));
+                        let idx = body_params.len() - 1;
+                        *raw_request = rebuild_http_request(
+                            raw_request,
+                            &method,
+                            &path,
+                            &proto,
+                            &query_params,
+                            Some(&body_params),
+                            &req_headers,
+                        );
+                        drill.open = true;
+                        drill.cat = InspectorCategory::BodyParam;
+                        drill.index = idx;
+                        drill.name_draft = "param".into();
+                        drill.value_draft = "value".into();
+                        drill.decoded_draft = "value".into();
+                    }
+
+                    // 5. Request Cookies
+                    let mut delete_cookie: Option<usize> = None;
+                    let mut add_cookie = false;
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-cookies"),
+                        "Request Cookies",
+                        Some(req_cookies.len()),
+                        !req_cookies.is_empty(),
+                        drill.expand_all,
+                        |ui| {
+                            draw_inspector_kv_table(
+                                ui,
+                                theme,
+                                (id, "tbl-cookies"),
+                                &req_cookies,
+                                true,
+                                &mut |idx| {
+                                    if let Some((n, v)) = req_cookies.get(idx) {
+                                        drill.open = true;
+                                        drill.cat = InspectorCategory::Cookie;
+                                        drill.index = idx;
+                                        drill.name_draft = n.clone();
+                                        drill.value_draft = v.clone();
+                                        drill.decoded_draft = auto_decode_value(v);
+                                    }
+                                },
+                                &mut |idx| delete_cookie = Some(idx),
+                            );
+                            if ui.small_button("+ Add cookie").clicked() {
+                                add_cookie = true;
+                            }
+                        },
+                    );
+                    if let Some(idx) = delete_cookie {
+                        if idx < req_cookies.len() {
+                            req_cookies.remove(idx);
+                            sync_cookies_into_headers(&mut req_headers, &req_cookies);
+                            *raw_request = rebuild_http_request(
+                                raw_request,
+                                &method,
+                                &path,
+                                &proto,
+                                &query_params,
+                                if is_urlencoded_body {
+                                    Some(&body_params)
+                                } else {
+                                    None
+                                },
+                                &req_headers,
+                            );
+                        }
+                    }
+                    if add_cookie {
+                        req_cookies.push(("session".into(), "value".into()));
+                        let idx = req_cookies.len() - 1;
+                        sync_cookies_into_headers(&mut req_headers, &req_cookies);
+                        *raw_request = rebuild_http_request(
+                            raw_request,
+                            &method,
+                            &path,
+                            &proto,
+                            &query_params,
+                            if is_urlencoded_body {
+                                Some(&body_params)
+                            } else {
+                                None
+                            },
+                            &req_headers,
+                        );
+                        drill.open = true;
+                        drill.cat = InspectorCategory::Cookie;
+                        drill.index = idx;
+                        drill.name_draft = "session".into();
+                        drill.value_draft = "value".into();
+                        drill.decoded_draft = "value".into();
+                    }
+
+                    // 6. Request Headers
+                    let mut delete_hdr: Option<usize> = None;
+                    let mut add_hdr = false;
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-req-headers"),
+                        "Request Headers",
+                        Some(req_headers.len()),
+                        true,
+                        drill.expand_all,
+                        |ui| {
+                            draw_inspector_kv_table(
+                                ui,
+                                theme,
+                                (id, "tbl-req-hdrs"),
+                                &req_headers,
+                                true,
+                                &mut |idx| {
+                                    if let Some((n, v)) = req_headers.get(idx) {
+                                        drill.open = true;
+                                        drill.cat = InspectorCategory::ReqHeader;
+                                        drill.index = idx;
+                                        drill.name_draft = n.clone();
+                                        drill.value_draft = v.clone();
+                                        drill.decoded_draft = auto_decode_value(v);
+                                    }
+                                },
+                                &mut |idx| delete_hdr = Some(idx),
+                            );
+                            if ui.small_button("+ Add request header").clicked() {
+                                add_hdr = true;
+                            }
+                        },
+                    );
+                    if let Some(idx) = delete_hdr {
+                        if idx < req_headers.len() {
+                            req_headers.remove(idx);
+                            *raw_request = rebuild_http_request(
+                                raw_request,
+                                &method,
+                                &path,
+                                &proto,
+                                &query_params,
+                                if is_urlencoded_body {
+                                    Some(&body_params)
+                                } else {
+                                    None
+                                },
+                                &req_headers,
+                            );
+                        }
+                    }
+                    if add_hdr {
+                        req_headers.push(("X-Custom-Header".into(), "value".into()));
+                        let idx = req_headers.len() - 1;
+                        *raw_request = rebuild_http_request(
+                            raw_request,
+                            &method,
+                            &path,
+                            &proto,
+                            &query_params,
+                            if is_urlencoded_body {
+                                Some(&body_params)
+                            } else {
+                                None
+                            },
+                            &req_headers,
+                        );
+                        drill.open = true;
+                        drill.cat = InspectorCategory::ReqHeader;
+                        drill.index = idx;
+                        drill.name_draft = "X-Custom-Header".into();
+                        drill.value_draft = "value".into();
+                        drill.decoded_draft = "value".into();
+                    }
+
+                    // 7. Response Headers
+                    draw_inspector_section_header(
+                        ui,
+                        theme,
+                        (id, "sec-resp-headers"),
+                        "Response Headers",
+                        Some(resp_headers.len()),
+                        !resp_headers.is_empty(),
+                        drill.expand_all,
+                        |ui| {
+                            draw_inspector_kv_table(
+                                ui,
+                                theme,
+                                (id, "tbl-resp-hdrs"),
+                                &resp_headers,
+                                false,
+                                &mut |idx| {
+                                    if let Some((n, v)) = resp_headers.get(idx) {
+                                        drill.open = true;
+                                        drill.cat = InspectorCategory::RespHeader;
+                                        drill.index = idx;
+                                        drill.name_draft = n.clone();
+                                        drill.value_draft = v.clone();
+                                        drill.decoded_draft = auto_decode_value(v);
+                                    }
+                                },
+                                &mut |_| {},
+                            );
+                        },
+                    );
+                    drill.expand_all = None;
+                });
+        });
+    let _ = border_col;
+    let _ = Sense::hover();
+    let _ = StrokeKind::Inside;
+    let _ = Vec2::ZERO;
+    ui.ctx().data_mut(|d| d.insert_temp(state_id, drill));
+}
+
+fn get_cat_item(
+    cat: InspectorCategory,
+    index: usize,
+    query_params: &[(String, String)],
+    body_params: &[(String, String)],
+    req_cookies: &[(String, String)],
+    req_headers: &[(String, String)],
+    resp_headers: &[(String, String)],
+) -> Option<(String, String)> {
+    match cat {
+        InspectorCategory::QueryParam => query_params.get(index).cloned(),
+        InspectorCategory::BodyParam => body_params.get(index).cloned(),
+        InspectorCategory::Cookie => req_cookies.get(index).cloned(),
+        InspectorCategory::ReqHeader => req_headers.get(index).cloned(),
+        InspectorCategory::RespHeader => resp_headers.get(index).cloned(),
+    }
+}
+
+fn draw_inspector_section_header(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: impl std::hash::Hash + Copy,
+    title: &str,
+    badge_count: Option<usize>,
+    default_open: bool,
+    expand_override: Option<bool>,
+    add_body: impl FnOnce(&mut Ui),
+) {
+    let header_label = if let Some(c) = badge_count {
+        format!("{title}  ({c})")
+    } else {
+        title.to_string()
+    };
+    eframe::egui::CollapsingHeader::new(
+        eframe::egui::RichText::new(header_label)
+            .size(11.5)
+            .strong()
+            .color(theme.color("ui.text.heading")),
+    )
+    .id_salt(id_salt)
+    .default_open(default_open)
+    .open(expand_override)
+    .show(ui, add_body);
+    ui.separator();
+}
+
+fn draw_inspector_kv_table(
+    ui: &mut Ui,
+    theme: &Theme,
+    id_salt: impl std::hash::Hash,
+    rows: &[(String, String)],
+    allow_delete: bool,
+    on_select: &mut dyn FnMut(usize),
+    on_delete: &mut dyn FnMut(usize),
+) {
+    if rows.is_empty() {
+        muted(ui, theme, "None");
+        return;
+    }
+    eframe::egui::Grid::new(id_salt)
+        .num_columns(if allow_delete { 4 } else { 3 })
+        .striped(true)
+        .spacing([6.0, 3.0])
+        .show(ui, |ui| {
+            ui.label(
+                eframe::egui::RichText::new("Name")
+                    .size(10.5)
+                    .strong()
+                    .color(theme.color("ui.text.secondary")),
+            );
+            ui.label(
+                eframe::egui::RichText::new("Value")
+                    .size(10.5)
+                    .strong()
+                    .color(theme.color("ui.text.secondary")),
+            );
+            ui.label("");
+            if allow_delete {
+                ui.label("");
+            }
+            ui.end_row();
+
+            for (idx, (k, v)) in rows.iter().enumerate() {
+                let decoded = auto_decode_value(v);
+                let display_val = if decoded != *v {
+                    format!("{} → {}", truncate_insp(v, 10), truncate_insp(&decoded, 14))
+                } else {
+                    truncate_insp(v, 22)
+                };
+                if ui
+                    .add(
+                        eframe::egui::Button::new(
+                            eframe::egui::RichText::new(truncate_insp(k, 16))
+                                .monospace()
+                                .size(11.0),
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text(format!("{k} = {v}\nClick to inspect & edit"))
+                    .clicked()
+                {
+                    on_select(idx);
+                }
+                if ui
+                    .add(
+                        eframe::egui::Button::new(
+                            eframe::egui::RichText::new(display_val)
+                                .monospace()
+                                .size(11.0),
+                        )
+                        .frame(false),
+                    )
+                    .on_hover_text(format!("Raw: {v}\nDecoded: {decoded}\nClick to inspect & edit"))
+                    .clicked()
+                {
+                    on_select(idx);
+                }
+                if ui
+                    .small_button("›")
+                    .on_hover_text("Inspect & edit item")
+                    .clicked()
+                {
+                    on_select(idx);
+                }
+                if allow_delete && ui.small_button("×").on_hover_text("Delete item").clicked() {
+                    on_delete(idx);
+                }
+                ui.end_row();
+            }
+        });
+}
+
+fn truncate_insp(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
 }
 
 /// Burp's Inspector accordion: parses and displays Request attributes, Query parameters,

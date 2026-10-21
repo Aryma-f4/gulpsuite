@@ -70,7 +70,16 @@ pub fn draw_panel(ui: &mut Ui, feature: WipFeature, theme: &Theme) -> bool {
         ui.label(RichText::new(feature.purpose()).color(theme.color("ui.text.body")));
         ui.add_space(6.0);
         ui.label(RichText::new(feature.status()).color(theme.color("ui.text.disabled")));
-        ui.add_space(18.0);
+        ui.add_space(14.0);
+        if ui
+            .button("★ Star Gulpsuite on GitHub (https://github.com/Aryma-f4/gulpsuite)")
+            .clicked()
+        {
+            ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                "https://github.com/Aryma-f4/gulpsuite",
+            ));
+        }
+        ui.add_space(10.0);
         close = ui.button("Return").clicked();
     });
     close

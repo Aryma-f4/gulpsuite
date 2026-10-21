@@ -961,37 +961,85 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         });
 
     ui.add_space(6.0);
-    // Burp Message Formatter Bar (`Request` / `Response` + `Pretty | Raw | Hex` with 3px orange `#FF6633` underline + right icons)
-    super::burp_message_formatter_bar(
-        ui,
-        &theme,
-        "proxy-intercept-fmt",
-        if is_response { "Response" } else { "Request" },
-        &mut app.panels.proxy_panel.intercept_fmt_mode,
-        is_response,
-        &mut app.panels.proxy_panel.intercept_wrap,
-        &mut app.panels.proxy_panel.intercept_non_printable,
-    );
-
     let intercept_h = app.panels.proxy_panel.intercept_height;
     let fmt_mode = app.panels.proxy_panel.intercept_fmt_mode;
-    let (response, changed) = super::burp_numbered_message_editor_wrapped(
+    let target_url = destination.clone().unwrap_or_else(|_| current.target.clone());
+    let mut intercept_split = 0.72f32;
+    let mut insp_tab = 0usize;
+    let mut insp_left = false;
+    let mut insp_collapsed = false;
+    let mut intercept_notes = String::new();
+    let mut edited_changed = false;
+    vertical_split(
         ui,
         &theme,
-        "proxy-intercept-editor",
-        intercept_h,
-        &mut edited,
-        fmt_mode,
-        app.panels.proxy_panel.intercept_wrap,
+        "proxy-intercept-inspector-split",
+        &mut intercept_split,
+        intercept_h + 36.0,
+        |pane, ui| {
+            if pane == 0 {
+                // Burp Message Formatter Bar (`Request` / `Response` + `Pretty | Raw | Hex` with 3px orange `#FF6633` underline + right icons)
+                super::burp_message_formatter_bar(
+                    ui,
+                    &theme,
+                    "proxy-intercept-fmt",
+                    if is_response { "Response" } else { "Request" },
+                    &mut app.panels.proxy_panel.intercept_fmt_mode,
+                    is_response,
+                    &mut app.panels.proxy_panel.intercept_wrap,
+                    &mut app.panels.proxy_panel.intercept_non_printable,
+                );
+                let (response, changed) = super::burp_numbered_message_editor_wrapped(
+                    ui,
+                    &theme,
+                    "proxy-intercept-editor",
+                    intercept_h,
+                    &mut edited,
+                    fmt_mode,
+                    app.panels.proxy_panel.intercept_wrap,
+                );
+                if changed {
+                    edited_changed = true;
+                }
+                if is_response {
+                    super::attach_message_context_menu(app, &response, &target_url, "", &edited);
+                } else {
+                    super::attach_message_context_menu(app, &response, &target_url, &edited, "");
+                }
+            } else if is_response {
+                let mut empty_req = String::new();
+                super::draw_inspector_and_notes_sidebar(
+                    ui,
+                    &theme,
+                    "proxy-intercept-sidebar",
+                    &mut empty_req,
+                    &edited,
+                    &mut intercept_notes,
+                    &mut insp_tab,
+                    &mut insp_left,
+                    &mut insp_collapsed,
+                );
+            } else {
+                let before = edited.clone();
+                super::draw_inspector_and_notes_sidebar(
+                    ui,
+                    &theme,
+                    "proxy-intercept-sidebar",
+                    &mut edited,
+                    "",
+                    &mut intercept_notes,
+                    &mut insp_tab,
+                    &mut insp_left,
+                    &mut insp_collapsed,
+                );
+                if edited != before {
+                    edited_changed = true;
+                }
+            }
+        },
     );
-    if changed {
+    if edited_changed {
         app.panels.proxy_panel.held_edit = Some((selected, edited.clone()));
-    }
-    let target_url = destination.clone().unwrap_or_else(|_| current.target.clone());
-    if is_response {
-        super::attach_message_context_menu(app, &response, &target_url, "", &edited);
-    } else {
-        super::attach_message_context_menu(app, &response, &target_url, &edited, "");
     }
     horizontal_resize_handle(
         ui,
@@ -1002,11 +1050,6 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         640.0,
         320.0,
     );
-    if is_response {
-        super::draw_inspector(ui, &theme, "proxy-intercept-insp", "", &edited);
-    } else {
-        super::draw_inspector(ui, &theme, "proxy-intercept-insp", &edited, "");
-    }
 }
 
 /// Shortens a label so a row of held requests still fits.

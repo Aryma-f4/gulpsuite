@@ -10,10 +10,14 @@ use gulpsuite::ui::app::App;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([1024.0, 640.0])
+            .with_inner_size([1360.0, 820.0])
+            .with_min_inner_size([860.0, 540.0])
             .with_title("Gulpsuite"),
         ..Default::default()
     };
-    eframe::run_native("Gulpsuite", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+    eframe::run_native(
+        "Gulpsuite",
+        options,
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
+    )
 }

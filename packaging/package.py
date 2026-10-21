@@ -52,10 +52,11 @@ def assemble_layout(platform, binary, stage, output, version):
         shutil.copytree(stage / 'resources', app / 'Resources', symlinks=True)
         with (app / 'Info.plist').open('wb') as stream:
             plistlib.dump(dict(CFBundleName='Gulpsuite', CFBundleDisplayName='Gulpsuite',
-                              CFBundleExecutable='Gulpsuite', CFBundleIdentifier='net.gulpsuite.app',
-                              CFBundlePackageType='APPL', CFBundleShortVersionString=version,
-                              CFBundleVersion=version, NSHighResolutionCapable=True,
-                              LSMinimumSystemVersion='11.0'), stream)
+                               CFBundleExecutable='Gulpsuite', CFBundleIdentifier='net.gulpsuite.app',
+                               CFBundlePackageType='APPL', CFBundleShortVersionString=version,
+                               CFBundleVersion=version, NSHumanReadableCopyright='Copyright (c) Aryma-f4',
+                               NSHighResolutionCapable=True,
+                               LSMinimumSystemVersion='11.0'), stream)
     elif platform == 'windows-x64':
         output.mkdir(parents=True)
         shutil.copy2(binary, output / 'gulpsuite.exe')
@@ -75,7 +76,7 @@ def assemble_layout(platform, binary, stage, output, version):
         control.mkdir()
         (control / 'control').write_text(
             f'Package: gulpsuite\nVersion: {version}\nArchitecture: amd64\n'
-            'Maintainer: Gulpsuite project\nSection: net\nPriority: optional\n'
+            'Maintainer: Aryma-f4 <https://github.com/Aryma-f4/gulpsuite>\nSection: net\nPriority: optional\n'
             'Depends: libasound2t64, libatk-bridge2.0-0t64, libatk1.0-0t64, libatspi2.0-0t64, '
             'libc6 (>= 2.39), libcairo2, libcups2t64, libdbus-1-3, libdrm2, libexpat1, '
             'libgbm1, libglib2.0-0t64, libgtk-3-0t64, libnspr4, libnss3, libpango-1.0-0, '

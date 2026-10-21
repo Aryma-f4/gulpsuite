@@ -177,6 +177,10 @@ pub struct RepeaterPanel {
     pub force_getting_started: bool,
     pub hide_getting_started_forever: bool,
     pub show_analysis_drawer: bool,
+    pub sidebar_open: bool,
+    pub sidebar_tab: usize,
+    pub sidebar_dock_left: bool,
+    pub sidebar_ratio: f32,
     pub req_wrap: bool,
     pub resp_wrap: bool,
 }
@@ -201,6 +205,10 @@ impl Default for RepeaterPanel {
             force_getting_started: false,
             hide_getting_started_forever: false,
             show_analysis_drawer: false,
+            sidebar_open: true,
+            sidebar_tab: 0,
+            sidebar_dock_left: false,
+            sidebar_ratio: 0.74,
             req_wrap: true,
             resp_wrap: true,
         }
@@ -722,8 +730,48 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     app.send_to_intruder(&host, &raw);
                 }
 
-                // Right-aligned `Target: https://...` matching `quick-start-pro-repeater.png`
+                // Right-aligned `Target: https://...` + `Inspector` & `Notes` side-panel buttons
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let has_notes = !app.panels.repeater.active().notes.trim().is_empty();
+                    for (tab_idx, tab_lbl) in [(1usize, "Notes"), (0usize, "Inspector")] {
+                        let is_active = app.panels.repeater.sidebar_open
+                            && app.panels.repeater.sidebar_tab == tab_idx;
+                        let icon_col = if is_active {
+                            Color32::from_rgb(0xFF, 0x66, 0x33)
+                        } else if tab_idx == 1 && has_notes {
+                            theme.color("ui.icon.accent.blue")
+                        } else {
+                            theme.color("ui.text.body")
+                        };
+                        let resp = ui
+                            .horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                if tab_idx == 0 {
+                                    super::paint_inspector_icon(ui, icon_col);
+                                } else {
+                                    super::paint_notes_icon(ui, icon_col);
+                                }
+                                ui.selectable_label(
+                                    is_active,
+                                    RichText::new(tab_lbl).size(11.5).strong().color(icon_col),
+                                )
+                            })
+                            .inner;
+                        if resp
+                            .on_hover_text(format!("Toggle {tab_lbl} side panel"))
+                            .clicked()
+                        {
+                            if is_active {
+                                app.panels.repeater.sidebar_open = false;
+                            } else {
+                                app.panels.repeater.sidebar_open = true;
+                                app.panels.repeater.sidebar_tab = tab_idx;
+                            }
+                        }
+                    }
+                    ui.separator();
+
                     let (edit_rect, edit_resp) =
                         ui.allocate_exact_size(Vec2::new(22.0, 22.0), egui::Sense::click());
                     let ep = ui.painter_at(edit_rect);
@@ -809,9 +857,9 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     let stacked = app.panels.repeater.stacked_layout;
     let avail_h = (ui.available_height()
         - if app.panels.repeater.show_analysis_drawer {
-            220.0
+            190.0
         } else {
-            26.0
+            24.0
         })
     .max(220.0);
     let editor_h = (avail_h - 68.0).max(160.0);
@@ -820,7 +868,103 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         .fill(bar_bg)
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
-            if stacked {
+            let sidebar_open = app.panels.repeater.sidebar_open;
+            let dock_left = app.panels.repeater.sidebar_dock_left;
+            if sidebar_open {
+                let mut outer_ratio = if dock_left {
+                    (1.0 - app.panels.repeater.sidebar_ratio).clamp(0.20, 0.45)
+                } else {
+                    app.panels.repeater.sidebar_ratio.clamp(0.55, 0.82)
+                };
+                let mut collapsed = false;
+                let mut active_tab = app.panels.repeater.sidebar_tab;
+                let mut side_dock_left = dock_left;
+                let tab_idx = app.panels.repeater.active;
+                let sidebar_id = format!("repeater-sidebar-{tab_idx}");
+                super::vertical_split(
+                    ui,
+                    &theme,
+                    "repeater-outer-inspector-split",
+                    &mut outer_ratio,
+                    avail_h - 12.0,
+                    |pane, ui| {
+                        let is_sidebar_pane = (dock_left && pane == 0) || (!dock_left && pane == 1);
+                        if is_sidebar_pane {
+                            let mut raw_edit = app.panels.repeater.active().raw.clone();
+                            let mut notes_edit = app.panels.repeater.active().notes.clone();
+                            super::draw_inspector_and_notes_sidebar(
+                                ui,
+                                &theme,
+                                &sidebar_id,
+                                &mut raw_edit,
+                                &response,
+                                &mut notes_edit,
+                                &mut active_tab,
+                                &mut side_dock_left,
+                                &mut collapsed,
+                            );
+                            if raw_edit != app.panels.repeater.active().raw {
+                                app.panels.repeater.active_mut().raw = raw_edit;
+                            }
+                            if notes_edit != app.panels.repeater.active().notes {
+                                app.panels.repeater.active_mut().notes = notes_edit;
+                            }
+                        } else if stacked {
+                            let half_h = (editor_h * 0.5).max(110.0);
+                            draw_request_pane(app, ui, &theme, &request, half_h, message_bg);
+                            ui.separator();
+                            draw_response_pane(
+                                app,
+                                ui,
+                                &theme,
+                                &response,
+                                colour,
+                                elapsed_ms,
+                                half_h,
+                                message_bg,
+                            );
+                        } else {
+                            let mut ratio = app.panels.repeater.split_ratio;
+                            super::vertical_split(
+                                ui,
+                                &theme,
+                                "repeater-side-by-side-split",
+                                &mut ratio,
+                                avail_h - 12.0,
+                                |side, ui| {
+                                    if side == 0 {
+                                        draw_request_pane(
+                                            app, ui, &theme, &request, editor_h, message_bg,
+                                        );
+                                    } else {
+                                        draw_response_pane(
+                                            app,
+                                            ui,
+                                            &theme,
+                                            &response,
+                                            colour,
+                                            elapsed_ms,
+                                            editor_h,
+                                            message_bg,
+                                        );
+                                    }
+                                },
+                            );
+                            app.panels.repeater.split_ratio = ratio;
+                        }
+                    },
+                );
+                app.panels.repeater.sidebar_tab = active_tab;
+                app.panels.repeater.sidebar_dock_left = side_dock_left;
+                app.panels.repeater.sidebar_ratio = if dock_left {
+                    (1.0 - outer_ratio).clamp(0.55, 0.82)
+                } else {
+                    outer_ratio.clamp(0.55, 0.82)
+                };
+                if collapsed {
+                    app.panels.repeater.sidebar_open = false;
+                }
+            } else if stacked {
                 let half_h = (editor_h * 0.5).max(110.0);
                 draw_request_pane(app, ui, &theme, &request, half_h, message_bg);
                 ui.separator();

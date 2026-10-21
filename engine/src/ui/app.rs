@@ -1586,6 +1586,59 @@ impl eframe::App for App {
                     self.apply_shell_command(command);
                 }
 
+                if let Some(release) = self.update_available.clone() {
+                    let ver = release.clean_version();
+                    let accent_bg = eframe::egui::Color32::from_rgb(0xFF, 0x66, 0x33);
+                    Frame::new()
+                        .fill(accent_bg)
+                        .inner_margin(eframe::egui::Margin::symmetric(12, 4))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.label(
+                                    eframe::egui::RichText::new(format!(
+                                        "Update available: Gulpsuite v{ver} is ready to install"
+                                    ))
+                                    .color(eframe::egui::Color32::WHITE)
+                                    .strong()
+                                    .size(12.0),
+                                );
+                                if ui
+                                    .add(
+                                        eframe::egui::Button::new(
+                                            eframe::egui::RichText::new(if self.update_downloading {
+                                                "Downloading update…"
+                                            } else {
+                                                "Install update now"
+                                            })
+                                            .strong()
+                                            .size(11.5)
+                                            .color(accent_bg),
+                                        )
+                                        .fill(eframe::egui::Color32::WHITE),
+                                    )
+                                    .clicked()
+                                {
+                                    self.download_and_install_update();
+                                }
+                                if ui
+                                    .add(
+                                        eframe::egui::Button::new(
+                                            eframe::egui::RichText::new("Release details")
+                                                .size(11.5)
+                                                .color(eframe::egui::Color32::WHITE)
+                                                .underline(),
+                                        )
+                                        .frame(false),
+                                    )
+                                    .clicked()
+                                {
+                                    self.show_update_modal = true;
+                                }
+                            });
+                        });
+                }
+
                 let status_height = crate::ui::reference::burp_2026_3_3().shell.status_height;
                 let drawer_height = self.shell.drawer_height();
                 let panel_height =
@@ -2797,6 +2850,15 @@ impl App {
                 }
             });
             ui.menu_button("Help", |ui| {
+                if ui.button("★ Star Gulpsuite on GitHub").clicked() {
+                    ctx.open_url(eframe::egui::OpenUrl::new_tab(
+                        "https://github.com/Aryma-f4/gulpsuite",
+                    ));
+                    self.status =
+                        "Opened https://github.com/Aryma-f4/gulpsuite — Star Gulpsuite on GitHub!"
+                            .into();
+                    ui.close();
+                }
                 if ui.button("Check for updates…").clicked() {
                     self.check_for_updates(true);
                     ui.close();

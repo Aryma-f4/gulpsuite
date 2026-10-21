@@ -1,7 +1,12 @@
-//! Native GUI & CLI Setup Wizard binary (`gulpsuite-setup`).
+//! Self-contained cross-platform Setup Wizard & Application binary (`gulpsuite-setup`).
 //!
-//! Runs as a native GUI Setup Wizard window by default (Welcome -> Destination -> Installing ->
-//! Finished), or non-interactively with `--yes [--prefix DIR]` / `--uninstall [--prefix DIR]`.
+//! Dual-mode executable:
+//! - When invoked as `*-setup*` or with `--setup` / `--yes`: runs the 4-step Graphical Setup Wizard
+//!   (or headless CLI installer) and installs itself as `gulpsuite.exe` / `Gulpsuite.app` / `gulpsuite`
+//!   plus `Uninstall.exe`, desktop/start-menu shortcuts, and publisher metadata (`Aryma-f4`).
+//! - When invoked as the installed `gulpsuite.exe` / `gulpsuite` / `Gulpsuite`: launches the main
+//!   `Gulpsuite` security suite directly.
+//! - When invoked as `Uninstall.exe` or with `--uninstall`: removes the installation cleanly.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -10,12 +15,19 @@ use std::path::PathBuf;
 use gulpsuite::installer::{
     default_install_dir, detect_source_root, perform_install, perform_uninstall, SetupWizard,
 };
+use gulpsuite::ui::app::App;
 
 fn main() -> eframe::Result<()> {
+    let exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()))
+        .unwrap_or_default();
+
     let mut args = std::env::args().skip(1);
     let mut prefix: Option<PathBuf> = None;
     let mut yes = false;
-    let mut uninstall = false;
+    let mut uninstall = exe_name.contains("uninstall");
+    let mut force_setup = false;
     let mut source_root = detect_source_root();
 
     while let Some(arg) = args.next() {
@@ -32,11 +44,29 @@ fn main() -> eframe::Result<()> {
             }
             "--yes" | "-y" | "/S" => yes = true,
             "--uninstall" => uninstall = true,
+            "--setup" | "--install" => force_setup = true,
             _ if arg.starts_with("--prefix=") => {
                 prefix = Some(PathBuf::from(&arg["--prefix=".len()..]));
             }
             _ => {}
         }
+    }
+
+    // If launched as the installed `gulpsuite.exe` / `gulpsuite` / `Gulpsuite` binary, run the main app!
+    let is_setup_exe = exe_name.contains("setup") || exe_name.contains("install");
+    if !is_setup_exe && !uninstall && !yes && !force_setup && prefix.is_none() {
+        let options = eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_inner_size([1360.0, 820.0])
+                .with_min_inner_size([860.0, 540.0])
+                .with_title("Gulpsuite"),
+            ..Default::default()
+        };
+        return eframe::run_native(
+            "Gulpsuite",
+            options,
+            Box::new(|cc| Ok(Box::new(App::new(cc)))),
+        );
     }
 
     let platform = gulpsuite::browser::platform();
@@ -62,7 +92,10 @@ fn main() -> eframe::Result<()> {
             |msg, pct| println!("[{:>3.0}%] {msg}", pct * 100.0),
         ) {
             Ok(installed) => {
-                println!("Installed Gulpsuite + Integrated Chromium to {}", installed.display());
+                println!(
+                    "Installed Gulpsuite (Publisher: Aryma-f4) to {}",
+                    installed.display()
+                );
                 return Ok(());
             }
             Err(err) => {
@@ -78,15 +111,18 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([680.0, 440.0])
-            .with_min_inner_size([640.0, 420.0])
-            .with_resizable(false)
-            .with_title("Gulpsuite Setup Wizard"),
+            .with_inner_size([720.0, 460.0])
+            .with_min_inner_size([660.0, 420.0])
+            .with_resizable(true)
+            .with_title("Gulpsuite Setup — Publisher: Aryma-f4"),
         ..Default::default()
     };
     eframe::run_native(
-        "Gulpsuite Setup Wizard",
+        "Gulpsuite Setup — Publisher: Aryma-f4",
         options,
-        Box::new(|_cc| Ok(Box::new(wizard))),
+        Box::new(|cc| {
+            gulpsuite::ui::app::install_fonts(&cc.egui_ctx);
+            Ok(Box::new(wizard))
+        }),
     )
 }

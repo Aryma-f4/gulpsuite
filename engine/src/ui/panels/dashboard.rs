@@ -510,15 +510,15 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
                 Glyph::Diamond,
             );
             heading(ui, &theme, &task.name);
-            let (star_rect, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+            let (star_rect, star_resp) =
+                ui.allocate_exact_size(Vec2::splat(13.0), Sense::click());
             crate::ui::icons::paint(
                 ui.painter(),
                 star_rect,
                 theme.color("icon.link"),
                 Glyph::Star,
             );
-            let rate = ui.add_enabled(
-                false,
+            let rate = ui.add(
                 egui::Button::new(
                     egui::RichText::new("Rate this scan")
                         .color(theme.color("icon.link"))
@@ -527,9 +527,20 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
                 .frame(false),
             );
             rate.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, false, "Rate this scan")
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Rate this scan")
             });
-            rate.on_hover_text("WIP: scan rating requires an external service");
+            if star_resp.clicked()
+                || rate
+                    .on_hover_text("Enjoying Gulpsuite? Star https://github.com/Aryma-f4/gulpsuite on GitHub!")
+                    .clicked()
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(
+                    "https://github.com/Aryma-f4/gulpsuite",
+                ));
+                app.status =
+                    "Opened https://github.com/Aryma-f4/gulpsuite — Star Gulpsuite on GitHub!"
+                        .into();
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if app.shell.detail_location != crate::ui::shell::DetailLocation::Detached
                     && ui.button("Detach").clicked()

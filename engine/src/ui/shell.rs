@@ -289,7 +289,14 @@ impl SuiteShell {
             theme.color("palette.tertiary.core"),
             crate::ui::icons::Glyph::Star,
         );
+        if ai.hovered() {
+            ai.clone()
+                .on_hover_text("Star Gulpsuite on GitHub (https://github.com/Aryma-f4/gulpsuite)");
+        }
         if ai.clicked() {
+            ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                "https://github.com/Aryma-f4/gulpsuite",
+            ));
             commands.push(ShellCommand::OpenAi);
         }
 
