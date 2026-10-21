@@ -738,6 +738,20 @@ impl CustomScanCheck {
                 check_runs: "Per request".into(),
                 script: "metadata:\n  language: v2-beta\n  name: \"Server version banner\"\ngiven response then\n  if {latest.response.headers} matches \"Server: .*/[0-9]\" then\n    report issue:\n      severity: info\n      confidence: certain".into(),
             },
+            Self {
+                enabled: true,
+                name: "Nuclei: CVE-2026-0545 MLflow Job API Auth Bypass".into(),
+                check_type: "Nuclei".into(),
+                check_runs: "Per host".into(),
+                script: "id: CVE-2026-0545\n\ninfo:\n  name: MLflow Job API - Authentication Bypass\n  author: DhiyaneshDk\n  severity: critical\n  description: MLflow unprotected FastAPI job endpoints under /ajax-api/3.0/jobs/* allow unauthenticated job execution.\n  reference:\n    - https://nvd.nist.gov/vuln/detail/CVE-2026-0545\n  classification:\n    cvss-score: 9.1\n    cve-id: CVE-2026-0545\n    cwe-id: CWE-306\n  tags: cve,cve2026,mlflow,auth-bypass\n\nhttp:\n  - raw:\n      - |\n        POST /ajax-api/3.0/jobs/ HTTP/1.1\n        Host: {{Hostname}}\n        Content-Type: application/json\n\n        {\"job_name\":\"run_task\",\"params\":{\"command\":\"id\"}}\n\n    matchers:\n      - type: dsl\n        dsl:\n          - 'contains_all(body, \"\\\"job_id\\\":\", \"\\\"job_name\\\":\")'\n          - 'contains(content_type, \"application/json\")'\n          - 'status_code == 200'\n        condition: and\n".into(),
+            },
+            Self {
+                enabled: true,
+                name: "Nuclei: OpenAPI / Swagger Specification Exposure".into(),
+                check_type: "Nuclei".into(),
+                check_runs: "Per host".into(),
+                script: "id: openapi-exposure\n\ninfo:\n  name: OpenAPI / Swagger Specification Exposed\n  author: gulpsuite\n  severity: info\n  description: Publicly accessible OpenAPI/Swagger specification discloses API routes and schemas.\n  classification:\n    cwe-id: CWE-200\n  tags: exposure,api,swagger,openapi\n\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/openapi.json\"\n      - \"{{BaseURL}}/swagger.json\"\n    stop-at-first-match: true\n    matchers:\n      - type: dsl\n        dsl:\n          - 'contains_any(body, \"\\\"openapi\\\":\", \"\\\"swagger\\\":\")'\n          - 'contains(body, \"\\\"paths\\\":\")'\n          - 'status_code == 200'\n        condition: and\n".into(),
+            },
         ]
     }
 }
@@ -1899,13 +1913,13 @@ fn draw_launcher_step_configuration(app: &mut App, ui: &mut Ui) {
 fn draw_bchecks_section(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Custom scan checks (BChecks)").strong());
+        ui.label(RichText::new("Custom scan checks (BChecks & Nuclei YAML Templates)").strong());
         ui.checkbox(
             &mut app.panels.scanner.bchecks_master_enabled,
             "Enabled",
         );
         ui.separator();
-        for f in ["ALL", "Active", "Passive"] {
+        for f in ["ALL", "Nuclei", "Active", "Passive"] {
             let active = app.panels.scanner.bchecks_filter_type == f;
             if ui.selectable_label(active, f).clicked() {
                 app.panels.scanner.bchecks_filter_type = f.into();
@@ -1913,46 +1927,75 @@ fn draw_bchecks_section(app: &mut App, ui: &mut Ui) {
         }
         ui.add(
             egui::TextEdit::singleline(&mut app.panels.scanner.bchecks_search)
-                .hint_text("Search custom checks…")
-                .desired_width(150.0),
+                .hint_text("Search BChecks & Nuclei templates…")
+                .desired_width(175.0),
         );
+        if ui
+            .small_button("Load ~/nuclei-templates CVEs")
+            .on_hover_text("Import recent CVE YAML templates from ~/nuclei-templates/http/cves/")
+            .clicked()
+        {
+            let loaded = load_local_nuclei_cve_templates(&mut app.panels.scanner.bchecks);
+            app.status = if loaded > 0 {
+                format!("Loaded {loaded} Nuclei CVE YAML template(s) from ~/nuclei-templates")
+            } else {
+                "No additional templates found in ~/nuclei-templates/http/cves".into()
+            };
+        }
     });
     let filter_t = app.panels.scanner.bchecks_filter_type.clone();
     let needle = app.panels.scanner.bchecks_search.trim().to_lowercase();
-    egui::Grid::new("scanner-bchecks-grid")
-        .num_columns(4)
-        .striped(true)
+    egui::ScrollArea::vertical()
+        .id_salt("scanner-bchecks-scroll")
+        .max_height(155.0)
         .show(ui, |ui| {
-            ui.strong("Enabled");
-            ui.strong("Name");
-            ui.strong("Type");
-            ui.strong("Check runs");
-            ui.end_row();
-            for chk in &mut app.panels.scanner.bchecks {
-                if filter_t != "ALL" && chk.check_type != filter_t {
-                    continue;
-                }
-                if !needle.is_empty() && !chk.name.to_lowercase().contains(&needle) {
-                    continue;
-                }
-                ui.checkbox(&mut chk.enabled, "");
-                ui.label(&chk.name);
-                ui.label(&chk.check_type);
-                ui.label(&chk.check_runs);
-                ui.end_row();
-            }
+            egui::Grid::new("scanner-bchecks-grid")
+                .num_columns(4)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong("Enabled");
+                    ui.strong("Name");
+                    ui.strong("Type");
+                    ui.strong("Check runs");
+                    ui.end_row();
+                    for chk in &mut app.panels.scanner.bchecks {
+                        if filter_t != "ALL" && chk.check_type != filter_t {
+                            continue;
+                        }
+                        if !needle.is_empty()
+                            && !chk.name.to_lowercase().contains(&needle)
+                            && !chk.script.to_lowercase().contains(&needle)
+                        {
+                            continue;
+                        }
+                        ui.checkbox(&mut chk.enabled, "");
+                        if ui
+                            .selectable_label(false, &chk.name)
+                            .on_hover_text("Click to load template/script into editor below")
+                            .clicked()
+                        {
+                            app.panels.scanner.new_bcheck_name = chk.name.clone();
+                            app.panels.scanner.new_bcheck_type = chk.check_type.clone();
+                            app.panels.scanner.new_bcheck_runs = chk.check_runs.clone();
+                            app.panels.scanner.new_bcheck_script = chk.script.clone();
+                        }
+                        ui.label(&chk.check_type);
+                        ui.label(&chk.check_runs);
+                        ui.end_row();
+                    }
+                });
         });
     ui.horizontal_wrapped(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut app.panels.scanner.new_bcheck_name)
-                .hint_text("New BCheck name")
-                .desired_width(150.0),
+                .hint_text("Template / BCheck name")
+                .desired_width(160.0),
         );
         egui::ComboBox::from_id_salt("bcheck-new-type")
             .selected_text(&app.panels.scanner.new_bcheck_type)
             .width(85.0)
             .show_ui(ui, |ui| {
-                for t in ["Active", "Passive"] {
+                for t in ["Nuclei", "Active", "Passive"] {
                     ui.selectable_value(&mut app.panels.scanner.new_bcheck_type, t.into(), t);
                 }
             });
@@ -1964,13 +2007,30 @@ fn draw_bchecks_section(app: &mut App, ui: &mut Ui) {
                     ui.selectable_value(&mut app.panels.scanner.new_bcheck_runs, r.into(), r);
                 }
             });
-        if ui.button("+ Add BCheck").clicked()
-            && !app.panels.scanner.new_bcheck_name.trim().is_empty()
+        if ui.small_button("Nuclei YAML preset").clicked() {
+            app.panels.scanner.new_bcheck_type = "Nuclei".into();
+            app.panels.scanner.new_bcheck_runs = "Per host".into();
+            app.panels.scanner.new_bcheck_script = "id: custom-cve-check\n\ninfo:\n  name: Custom Nuclei DSL Check\n  author: gulpsuite\n  severity: high\n  classification:\n    cwe-id: CWE-200\n\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/\"\n    matchers:\n      - type: dsl\n        dsl:\n          - 'status_code == 200'\n          - 'contains(body, \"admin\")'\n        condition: and\n".into();
+        }
+        if ui.button("+ Add BCheck / Nuclei").clicked()
+            && (!app.panels.scanner.new_bcheck_name.trim().is_empty()
+                || crate::scanner::nuclei::is_nuclei_template(&app.panels.scanner.new_bcheck_script))
         {
-            let name = app.panels.scanner.new_bcheck_name.trim().to_string();
-            let check_type = app.panels.scanner.new_bcheck_type.clone();
-            let check_runs = app.panels.scanner.new_bcheck_runs.clone();
             let script = app.panels.scanner.new_bcheck_script.clone();
+            let parsed_nuclei = crate::scanner::nuclei::parse_nuclei_template(&script).ok();
+            let name = if !app.panels.scanner.new_bcheck_name.trim().is_empty() {
+                app.panels.scanner.new_bcheck_name.trim().to_string()
+            } else if let Some(ref nt) = parsed_nuclei {
+                format!("Nuclei: {} ({})", nt.info.name, nt.id)
+            } else {
+                "Custom check".into()
+            };
+            let check_type = if parsed_nuclei.is_some() {
+                "Nuclei".to_string()
+            } else {
+                app.panels.scanner.new_bcheck_type.clone()
+            };
+            let check_runs = app.panels.scanner.new_bcheck_runs.clone();
             app.panels.scanner.bchecks.push(CustomScanCheck {
                 enabled: true,
                 name,
@@ -1981,7 +2041,66 @@ fn draw_bchecks_section(app: &mut App, ui: &mut Ui) {
             app.panels.scanner.new_bcheck_name.clear();
         }
     });
+    ui.add_space(4.0);
+    ui.add(
+        egui::TextEdit::multiline(&mut app.panels.scanner.new_bcheck_script)
+            .font(egui::TextStyle::Monospace)
+            .desired_rows(5)
+            .desired_width(f32::INFINITY)
+            .hint_text("Paste a ProjectDiscovery Nuclei .yaml template (with `http:` and `matchers: - type: dsl`) or BCheck script…"),
+    );
     let _ = theme;
+}
+
+fn load_local_nuclei_cve_templates(out: &mut Vec<CustomScanCheck>) -> usize {
+    let Some(home) = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+    else {
+        return 0;
+    };
+    let cves_root = home.join("nuclei-templates").join("http").join("cves");
+    if !cves_root.is_dir() {
+        return 0;
+    }
+    let mut loaded = 0usize;
+    for year in ["2026", "2025", "2024"] {
+        let dir = cves_root.join(year);
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if loaded >= 40 {
+                return loaded;
+            }
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let Ok(yaml) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let Ok(tmpl) = crate::scanner::nuclei::parse_nuclei_template(&yaml) else {
+                continue;
+            };
+            if tmpl.http.is_empty() {
+                continue;
+            }
+            let name = format!("Nuclei: {} ({})", tmpl.info.name, tmpl.id);
+            if out.iter().any(|c| c.name == name) {
+                continue;
+            }
+            out.push(CustomScanCheck {
+                enabled: true,
+                name,
+                check_type: "Nuclei".into(),
+                check_runs: "Per host".into(),
+                script: yaml,
+            });
+            loaded += 1;
+        }
+    }
+    loaded
 }
 
 /// Renders one of the 4 preset cards in `Pro-QSG-3-scan-configuration.png`:
@@ -3280,11 +3399,25 @@ pub(crate) fn start(app: &mut App) {
                     std::collections::HashSet::new();
                 let mut total_probes_sent = 0usize;
 
-                // Phase 1: Origin-level high-impact CVE & exposure probes (`CVE-2025-29927`, `CVE-2021-41773`, `CVE-2021-28164`, `CVE-2022-22965`)
+                // Phase 1: Origin-level high-impact CVE & exposure probes + active Nuclei YAML templates
                 for start_url in &target_urls {
-                    let origin_cves =
+                    let mut origin_cves =
                         crate::scanner::active::audit_origin_cve_probes(start_url, &pages, &proxy)
                             .await;
+                    for bchk in &active_bchecks {
+                        if crate::scanner::nuclei::is_nuclei_template(&bchk.script) {
+                            if let Ok(tmpl) =
+                                crate::scanner::nuclei::parse_nuclei_template(&bchk.script)
+                            {
+                                origin_cves.extend(
+                                    crate::scanner::nuclei::execute_template_active(
+                                        &tmpl, start_url, &proxy,
+                                    )
+                                    .await,
+                                );
+                            }
+                        }
+                    }
                     let mut live_cves = Vec::new();
                     for cf in origin_cves {
                         let dup = findings

@@ -11,14 +11,16 @@
 pub mod active;
 pub mod crawler;
 pub mod http;
+pub mod nuclei;
 pub mod passive;
 pub mod retirejs_data;
 
 use std::collections::BTreeMap;
 
 /// How confident we are and how bad it is.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub enum Severity {
+    #[default]
     Info,
     Low,
     Medium,

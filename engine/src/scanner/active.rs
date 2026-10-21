@@ -744,13 +744,19 @@ pub fn evaluate_against_baseline(
     evaluate(check, url, parameter, payload, response)
 }
 
-/// Evaluates a declarative Custom Scan Check (`.bcheck` script) against `response` (`scanner/bchecks/index.html`).
+/// Evaluates a declarative Custom Scan Check (`.bcheck` script or ProjectDiscovery Nuclei `.yaml` template)
+/// against `response`.
 pub fn evaluate_bcheck(
     name: &str,
     script: &str,
     url: &str,
     response: &Response,
 ) -> Option<Finding> {
+    if super::nuclei::is_nuclei_template(script) {
+        if let Ok(tmpl) = super::nuclei::parse_nuclei_template(script) {
+            return super::nuclei::evaluate_template_on_response(&tmpl, url, response);
+        }
+    }
     // Extract quoted condition string from `if "<needle>" in {latest.response.body}` or `matches "<regex>"`
     for line in script.lines() {
         let trimmed = line.trim();
