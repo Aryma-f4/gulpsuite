@@ -332,7 +332,12 @@ impl SuiteShell {
 
         let status_x = issues_rect.max.x + 14.0;
         if memory_x - status_x > 40.0 {
-            painter.text(
+            let clip_rect = Rect::from_min_max(
+                pos2(status_x, rect.min.y),
+                pos2(memory_x - 10.0, rect.max.y),
+            )
+            .intersect(ui.clip_rect());
+            painter.with_clip_rect(clip_rect).text(
                 pos2(status_x, baseline),
                 eframe::egui::Align2::LEFT_CENTER,
                 status,

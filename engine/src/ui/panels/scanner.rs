@@ -612,16 +612,47 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
                         app.panels.scanner.preset_name()
                     )
                 };
-                ui.label(RichText::new(status_txt).size(12.0).strong().color(heading_fg));
+                let short_status = if status_txt.chars().count() > 30 {
+                    let mut s: String = status_txt.chars().take(29).collect();
+                    s.push('…');
+                    s
+                } else {
+                    status_txt.clone()
+                };
+                ui.allocate_ui_with_layout(
+                    Vec2::new(205.0, 20.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(205.0);
+                        ui.set_max_width(205.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&short_status)
+                                    .size(12.0)
+                                    .strong()
+                                    .color(heading_fg),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&status_txt);
+                    },
+                );
                 ui.add_space(4.0);
                 paint_burp_progress_bar_animated(ui, 210.0, ratio, is_running, &theme);
                 let pct = (ratio * 100.0).round() as u32;
-                ui.label(
-                    RichText::new(format!("{pct}%"))
-                        .size(11.5)
-                        .monospace()
-                        .strong()
-                        .color(body_fg),
+                ui.allocate_ui_with_layout(
+                    Vec2::new(38.0, 20.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(38.0);
+                        ui.label(
+                            RichText::new(format!("{pct:>2}%"))
+                                .size(11.5)
+                                .monospace()
+                                .strong()
+                                .color(body_fg),
+                        );
+                    },
                 );
                 if is_running && ui.small_button("Cancel").clicked() {
                     app.panels.scanner.running = false;
@@ -2534,7 +2565,23 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     LauncherIcon::CheckCircle,
                 );
             }
-            muted(ui, &theme, &app.panels.scanner.progress);
+            let prog_txt = &app.panels.scanner.progress;
+            let short_prog = if prog_txt.chars().count() > 54 {
+                let mut s: String = prog_txt.chars().take(53).collect();
+                s.push('…');
+                s
+            } else {
+                prog_txt.clone()
+            };
+            ui.add(
+                egui::Label::new(
+                    RichText::new(short_prog)
+                        .size(12.0)
+                        .color(theme.color("ui.icon.default")),
+                )
+                .truncate(),
+            )
+            .on_hover_text(prog_txt);
         });
     }
     ui.add_space(4.0);

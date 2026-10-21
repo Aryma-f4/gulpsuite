@@ -389,7 +389,17 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                 } else {
                     "Paused task due to: Reached time limit for task"
                 };
-                ui.label(egui::RichText::new(status_lbl).size(11.5));
+                let short_status = if status_lbl.chars().count() > 40 {
+                    let mut s: String = status_lbl.chars().take(39).collect();
+                    s.push('…');
+                    s
+                } else {
+                    status_lbl.to_string()
+                };
+                ui.add(
+                    egui::Label::new(egui::RichText::new(short_status).size(11.5)).truncate(),
+                )
+                .on_hover_text(status_lbl);
             });
             ui.add_space(4.0);
         } else {
@@ -710,22 +720,32 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                         theme.color("ui.icon.default"),
                         super::scanner::LauncherIcon::ScanDetails,
                     );
-                    let status_lbl = if !task.progress.status.is_empty() {
-                        task.progress.status.as_str()
-                    } else {
-                        "Auditing"
-                    };
-                    ui.label(egui::RichText::new(status_lbl).strong());
-                    ui.add_space(6.0);
                     super::scanner::paint_burp_progress_bar_animated(
                         ui,
-                        180.0,
+                        150.0,
                         ratio,
                         true,
                         &theme,
                     );
                     let pct = (ratio * 100.0).round() as u32;
-                    ui.label(egui::RichText::new(format!("{pct}%")).monospace().strong());
+                    ui.label(egui::RichText::new(format!("{pct:>2}%")).monospace().strong());
+                    let status_lbl = if !task.progress.status.is_empty() {
+                        task.progress.status.as_str()
+                    } else {
+                        "Auditing"
+                    };
+                    let short_status = if status_lbl.chars().count() > 26 {
+                        let mut s: String = status_lbl.chars().take(25).collect();
+                        s.push('…');
+                        s
+                    } else {
+                        status_lbl.to_string()
+                    };
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(short_status).size(11.5).strong())
+                            .truncate(),
+                    )
+                    .on_hover_text(status_lbl);
                 });
                 ui.add_space(6.0);
             }
