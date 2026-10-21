@@ -18,6 +18,7 @@ use crate::ui::theme::Theme;
 
 pub const PUBLISHER: &str = "Aryma-f4";
 pub const REPO_URL: &str = "https://github.com/Aryma-f4/gulpsuite";
+pub const ATTACHED_BUNDLE_MAGIC: &[u8; 16] = b"GULPCHROMIUMZIP1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetupStep {
@@ -201,6 +202,71 @@ fn copy_tree_preserving_links(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks if `binary_path` carries an attached `[zip_bytes][u64 zip_len_le][b"GULPCHROMIUMZIP1"]`
+/// self-extracting Chromium bundle trailer.
+/// - Always writes the clean executable prefix (`0..exe_len`) to `target_bin`.
+/// - When `include_chromium` is true and an attached bundle is present, extracts it into `dest_resources`
+///   and returns `Ok(true)`.
+pub fn install_binary_and_extract_attached_bundle(
+    binary_path: &Path,
+    target_bin: &Path,
+    dest_resources: &Path,
+    include_chromium: bool,
+) -> Result<bool, String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = std::fs::File::open(binary_path).map_err(|e| e.to_string())?;
+    let total_len = file.metadata().map_err(|e| e.to_string())?.len();
+    if total_len > 24 {
+        file.seek(SeekFrom::End(-24)).map_err(|e| e.to_string())?;
+        let mut trailer = [0u8; 24];
+        if file.read_exact(&mut trailer).is_ok() && &trailer[8..24] == ATTACHED_BUNDLE_MAGIC {
+            let zip_len = u64::from_le_bytes(trailer[0..8].try_into().unwrap());
+            if zip_len > 0 && zip_len + 24 < total_len {
+                let exe_len = total_len - 24 - zip_len;
+                file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+                {
+                    let mut out_bin =
+                        std::fs::File::create(target_bin).map_err(|e| e.to_string())?;
+                    let mut take_exe = (&mut file).take(exe_len);
+                    std::io::copy(&mut take_exe, &mut out_bin).map_err(|e| e.to_string())?;
+                    out_bin.flush().map_err(|e| e.to_string())?;
+                }
+                if !include_chromium {
+                    return Ok(false);
+                }
+                std::fs::create_dir_all(dest_resources).map_err(|e| e.to_string())?;
+                let tmp_zip = dest_resources.join(".gulpsuite-chromium-bundle.zip");
+                file.seek(SeekFrom::Start(exe_len))
+                    .map_err(|e| e.to_string())?;
+                {
+                    let mut out_zip =
+                        std::fs::File::create(&tmp_zip).map_err(|e| e.to_string())?;
+                    let mut take_zip = (&mut file).take(zip_len);
+                    std::io::copy(&mut take_zip, &mut out_zip).map_err(|e| e.to_string())?;
+                    out_zip.flush().map_err(|e| e.to_string())?;
+                }
+                let zip_str = tmp_zip.to_string_lossy().into_owned();
+                let dst_str = dest_resources.to_string_lossy().into_owned();
+                run_windows_hidden("tar", &["-xf", &zip_str, "-C", &dst_str]);
+                if !dest_resources.join("chromium-manifest.json").is_file() {
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = std::process::Command::new("unzip")
+                            .args(["-q", "-o", &zip_str, "-d", &dst_str])
+                            .status();
+                    }
+                }
+                let _ = std::fs::remove_file(&tmp_zip);
+                return Ok(dest_resources.join("chromium-manifest.json").is_file());
+            }
+        }
+    }
+
+    std::fs::copy(binary_path, target_bin).map_err(|e| e.to_string())?;
+    Ok(false)
+}
+
 /// Performs the installation into `destination` for `platform`.
 pub fn perform_install(
     source_root: &Path,
@@ -232,20 +298,27 @@ pub fn perform_install(
         on_progress(&format!("Creating bundle {}…", app_dir.display()), 0.35);
         let contents = app_dir.join("Contents");
         let macos = contents.join("MacOS");
+        let res_dir = contents.join("Resources");
         std::fs::create_dir_all(&macos).map_err(|e| e.to_string())?;
         let target_bin = macos.join("Gulpsuite");
-        std::fs::copy(&binary, &target_bin).map_err(|e| e.to_string())?;
+        on_progress("Installing Gulpsuite & attached Chromium runtime…", 0.55);
+        let extracted_attached = install_binary_and_extract_attached_bundle(
+            &binary,
+            &target_bin,
+            &res_dir,
+            include_chromium,
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&target_bin, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| e.to_string())?;
         }
-        if let Some(res) = resources {
-            on_progress("Installing bundled Chromium browser…", 0.65);
-            copy_tree_preserving_links(&res, &contents.join("Resources"))?;
-        } else {
-            on_progress("Configured automatic system Chrome/Chromium discovery…", 0.65);
+        if !extracted_attached {
+            if let Some(res) = resources {
+                on_progress("Installing bundled Chromium browser…", 0.65);
+                copy_tree_preserving_links(&res, &res_dir)?;
+            }
         }
         let plist = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -281,10 +354,17 @@ pub fn perform_install(
             "gulpsuite"
         };
         let target_bin = destination.join(exe_name);
-        std::fs::copy(&binary, &target_bin).map_err(|e| e.to_string())?;
+        let res_dir = destination.join("resources");
+        on_progress("Installing Gulpsuite & attached Chromium browser…", 0.55);
+        let extracted_attached = install_binary_and_extract_attached_bundle(
+            &binary,
+            &target_bin,
+            &res_dir,
+            include_chromium,
+        )?;
         if platform == "windows-x64" {
             let uninst_bin = destination.join("Uninstall.exe");
-            let _ = std::fs::copy(&binary, &uninst_bin);
+            let _ = std::fs::copy(&target_bin, &uninst_bin);
         }
         #[cfg(unix)]
         {
@@ -292,11 +372,11 @@ pub fn perform_install(
             std::fs::set_permissions(&target_bin, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| e.to_string())?;
         }
-        if let Some(res) = resources {
-            on_progress("Installing bundled Chromium browser…", 0.65);
-            copy_tree_preserving_links(&res, &destination.join("resources"))?;
-        } else {
-            on_progress("Configured automatic system Chrome/Edge/Chromium discovery…", 0.65);
+        if !extracted_attached {
+            if let Some(res) = resources {
+                on_progress("Installing bundled Chromium browser…", 0.65);
+                copy_tree_preserving_links(&res, &res_dir)?;
+            }
         }
         if create_shortcut && platform == "linux-x64" {
             on_progress("Creating desktop entry and launcher symlink…", 0.90);

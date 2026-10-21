@@ -236,6 +236,34 @@ def build_macos_pkg(layout, artifact, version, scratch):
     return artifact
 
 
+def build_windows_sfx_setup(setup_bin, resources_dir, artifact):
+    """Builds a self-extracting Windows GUI Setup Wizard executable (`Gulpsuite-*-windows-x64-setup.exe`)
+    by appending a ZIP archive of `resources/` (`chromium-manifest.json` + `chromium/chrome.exe` + DLLs)
+    and the 24-byte trailer `[u64 zip_len_le][b'GULPCHROMIUMZIP1']` onto `gulpsuite-setup.exe`.
+    """
+    import os
+    import struct
+    import zipfile
+
+    with tempfile.NamedTemporaryFile(prefix='gulp-win-res-', suffix='.zip', delete=False) as tmp_zf:
+        tmp_zip_path = Path(tmp_zf.name)
+    try:
+        with zipfile.ZipFile(tmp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(resources_dir):
+                for file in sorted(files):
+                    full = Path(root) / file
+                    rel = full.relative_to(resources_dir).as_posix()
+                    zf.write(full, rel)
+        zip_bytes = tmp_zip_path.read_bytes()
+        exe_bytes = Path(setup_bin).read_bytes()
+        trailer = struct.pack('<Q', len(zip_bytes)) + b'GULPCHROMIUMZIP1'
+        artifact.write_bytes(exe_bytes + zip_bytes + trailer)
+    finally:
+        if tmp_zip_path.exists():
+            tmp_zip_path.unlink()
+    return artifact
+
+
 def create_installer(platform, binary, stage, output, version, development):
     expected_os = 'Darwin' if platform.startswith('macos-') else ('Windows' if platform == 'windows-x64' else 'Linux')
     if host_platform.system() != expected_os:
@@ -269,8 +297,12 @@ def create_installer(platform, binary, stage, output, version, development):
                 run_artifact.with_suffix('.run.sha256').write_text(f'{run_sum}  {run_artifact.name}\n')
             subprocess.run(['dpkg-deb', '--root-owner-group', '--build', str(layout), str(artifact)], check=True)
         else:
-            subprocess.run(['makensis', f'/DAPPDIR={layout.resolve()}', f'/DOUTPUT={artifact}',
-                            f'/DVERSION={version}', str(HERE / 'windows/gulpsuite.nsi')], check=True)
+            setup_bin = binary.parent / 'gulpsuite-setup.exe'
+            if setup_bin.is_file():
+                build_windows_sfx_setup(setup_bin, stage / 'resources', artifact)
+            else:
+                subprocess.run(['makensis', f'/DAPPDIR={layout.resolve()}', f'/DOUTPUT={artifact}',
+                                f'/DVERSION={version}', str(HERE / 'windows/gulpsuite.nsi')], check=True)
     checksum = chromium.digest(artifact)
     artifact.with_suffix(artifact.suffix + '.sha256').write_text(f'{checksum}  {artifact.name}\n')
     shutil.copy2(stage / 'resources/chromium-manifest.json', output / f'{name}.chromium.json')

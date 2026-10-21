@@ -93,13 +93,16 @@ impl BrowserInstall {
     }
 
     pub fn from_app_executable(app: &Path) -> Result<Self, String> {
-        let mut resources = Self::resource_dir(app, platform())?;
-        if !resources.join("chromium-manifest.json").is_file()
+        let is_gulpsuite_bin = app.is_file()
             && app
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .is_some_and(|s| s.eq_ignore_ascii_case("gulpsuite"))
-        {
+                .is_some_and(|s| {
+                    let lower = s.to_ascii_lowercase();
+                    lower == "gulpsuite" || lower.starts_with("gulpsuite-setup")
+                });
+        let mut resources = Self::resource_dir(app, platform())?;
+        if !resources.join("chromium-manifest.json").is_file() && is_gulpsuite_bin {
             let mut ancestor = app.parent();
             for _ in 0..4 {
                 let Some(dir) = ancestor else { break };
@@ -109,6 +112,14 @@ impl BrowserInstall {
                     break;
                 }
                 ancestor = dir.parent();
+            }
+        }
+        if !resources.join("chromium-manifest.json").is_file() && is_gulpsuite_bin {
+            if let Some(sys_browser) = Self::find_system_chromium_browser() {
+                return Ok(Self {
+                    executable: sys_browser,
+                    revision: "system-chromium".into(),
+                });
             }
         }
         let raw = std::fs::read(resources.join("chromium-manifest.json"))
@@ -129,6 +140,14 @@ impl BrowserInstall {
         }
         let executable = resources.join("chromium").join(relative);
         if !executable.is_file() {
+            if is_gulpsuite_bin {
+                if let Some(sys_browser) = Self::find_system_chromium_browser() {
+                    return Ok(Self {
+                        executable: sys_browser,
+                        revision: "system-chromium".into(),
+                    });
+                }
+            }
             return Err(format!(
                 "bundled Chromium executable is missing: {}",
                 executable.display()
@@ -141,6 +160,69 @@ impl BrowserInstall {
                 .ok_or("browser revision missing")?
                 .into(),
         })
+    }
+
+    /// Discovers an installed Chromium-based browser (Chromium, Google Chrome, Brave, Microsoft Edge)
+    /// when the standalone binary is run without a staged `resources/chromium` bundle.
+    pub fn find_system_chromium_browser() -> Option<PathBuf> {
+        if let Ok(custom) = std::env::var("GULPSUITE_BROWSER_PATH") {
+            let p = PathBuf::from(custom);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if cfg!(target_os = "macos") {
+            if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+                candidates.push(home.join(
+                    "Applications/Gulpsuite.app/Contents/Resources/chromium/Chromium.app/Contents/MacOS/Chromium",
+                ));
+                candidates.push(home.join("Applications/Chromium.app/Contents/MacOS/Chromium"));
+                candidates.push(
+                    home.join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                );
+                candidates.push(
+                    home.join("Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+                );
+            }
+            candidates.extend([
+                PathBuf::from(
+                    "/Applications/Gulpsuite.app/Contents/Resources/chromium/Chromium.app/Contents/MacOS/Chromium",
+                ),
+                PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+                PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            ]);
+        } else if cfg!(target_os = "windows") {
+            for env_key in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
+                if let Some(base) = std::env::var_os(env_key).map(PathBuf::from) {
+                    candidates.push(base.join("Google/Chrome/Application/chrome.exe"));
+                    candidates.push(base.join("Chromium/Application/chrome.exe"));
+                    candidates.push(base.join("BraveSoftware/Brave-Browser/Application/brave.exe"));
+                    candidates.push(base.join("Microsoft/Edge/Application/msedge.exe"));
+                    candidates.push(base.join("Programs/Gulpsuite/resources/chromium/chrome.exe"));
+                }
+            }
+            candidates.extend([
+                PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+                PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+                PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+                PathBuf::from(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
+                PathBuf::from(r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"),
+            ]);
+        } else {
+            candidates.extend([
+                PathBuf::from("/usr/bin/chromium"),
+                PathBuf::from("/usr/bin/chromium-browser"),
+                PathBuf::from("/usr/bin/google-chrome"),
+                PathBuf::from("/usr/bin/google-chrome-stable"),
+                PathBuf::from("/usr/bin/brave-browser"),
+                PathBuf::from("/usr/bin/microsoft-edge"),
+                PathBuf::from("/snap/bin/chromium"),
+            ]);
+        }
+        candidates.into_iter().find(|p| p.is_file())
     }
 
     pub fn command(&self, config: &LaunchConfig) -> Result<Command, String> {
