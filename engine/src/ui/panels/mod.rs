@@ -307,11 +307,13 @@ pub fn vertical_split(
     let right_w = (total_width - handle_w - left_w).max(80.0);
 
     ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         ui.allocate_ui_with_layout(
             eframe::egui::Vec2::new(left_w, height),
             eframe::egui::Layout::top_down(eframe::egui::Align::Min),
             |ui| {
-                ui.set_width(left_w);
+                ui.set_min_width(left_w);
+                ui.set_max_width(left_w);
                 pane(0, ui);
             },
         );
@@ -340,7 +342,7 @@ pub fn vertical_split(
         let x = rect.center().x;
         painter.line_segment(
             [eframe::egui::pos2(x, rect.min.y), eframe::egui::pos2(x, rect.max.y)],
-            eframe::egui::Stroke::new(1.0, line_col),
+            eframe::egui::Stroke::new(1.0_f32, line_col),
         );
         for dy in [-8.0_f32, 0.0, 8.0] {
             painter.circle_filled(
@@ -354,7 +356,8 @@ pub fn vertical_split(
             eframe::egui::Vec2::new(right_w, height),
             eframe::egui::Layout::top_down(eframe::egui::Align::Min),
             |ui| {
-                ui.set_width(right_w);
+                ui.set_min_width(right_w);
+                ui.set_max_width(right_w);
                 pane(1, ui);
             },
         );
@@ -1491,6 +1494,33 @@ pub fn burp_numbered_message_view_wrapped(
 }
 
 fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
+    if mode == 1 && !non_printable {
+        return raw.to_string();
+    }
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    mode.hash(&mut hasher);
+    non_printable.hash(&mut hasher);
+    raw.hash(&mut hasher);
+    let key = hasher.finish();
+
+    thread_local! {
+        static DISPLAY_CACHE: std::cell::RefCell<std::collections::VecDeque<(u64, String)>> =
+            std::cell::RefCell::new(std::collections::VecDeque::with_capacity(16));
+    }
+
+    if let Some(cached) = DISPLAY_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, s)| s.clone())
+    }) {
+        return cached;
+    }
+
     let display = if mode == 2 {
         format_burp_hex_dump(raw)
     } else if mode == 0 {
@@ -1501,11 +1531,16 @@ fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
             .or_else(|| raw.find("\n\n").map(|i| (i, 2)));
         if let Some((at, separator)) = boundary {
             let (head, body) = (&raw[..at], &raw[at + separator..]);
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
-                format!(
-                    "{head}\n\n{}",
-                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| body.to_string())
-                )
+            let trimmed = body.trim_start();
+            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    format!(
+                        "{head}\n\n{}",
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| body.to_string())
+                    )
+                } else {
+                    raw.to_string()
+                }
             } else {
                 raw.to_string()
             }
@@ -1515,11 +1550,19 @@ fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
     } else {
         raw.to_string()
     };
-    if non_printable && mode != 2 {
+    let out = if non_printable && mode != 2 {
         format_non_printable(&display)
     } else {
         display
-    }
+    };
+    DISPLAY_CACHE.with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard.len() >= 16 {
+            guard.pop_front();
+        }
+        guard.push_back((key, out.clone()));
+    });
+    out
 }
 
 fn html_text_preview(raw: &str) -> String {

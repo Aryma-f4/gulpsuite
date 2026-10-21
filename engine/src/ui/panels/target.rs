@@ -908,20 +908,29 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                 app.panels.target_panel.selected_issue = issues.first().map(|(i, _)| *i);
             }
 
-            // Flat Bordered Discovered Issues Table (`Pro-QSG-6-view-issues.png`)
+            // Flat Bordered Discovered Issues Table (`Pro-QSG-6-view-issues.png`) — responsive column widths
+            let avail_tbl_w = (ui.available_width() - 2.0).max(560.0);
+            let base_w = 240.0 + 260.0 + 110.0 + 86.0 + 86.0 + 120.0;
+            let extra = (avail_tbl_w - base_w).max(0.0);
+            let scale = if avail_tbl_w < base_w {
+                avail_tbl_w / base_w
+            } else {
+                1.0
+            };
             let cols = [
-                ("Issue type", 240.0f32),
-                ("Host / URL", 260.0),
-                ("Parameter", 110.0),
-                ("Severity", 86.0),
-                ("Confidence", 86.0),
-                ("CWE", 120.0),
+                ("Issue type", 240.0 * scale + extra * 0.28),
+                ("Host / URL", 260.0 * scale + extra * 0.34),
+                ("Parameter", 110.0 * scale + extra * 0.10),
+                ("Severity", 86.0 * scale),
+                ("Confidence", 86.0 * scale),
+                ("CWE", 120.0 * scale + extra * 0.28),
             ];
-            let tbl_w = cols
-                .iter()
-                .map(|(_, w)| *w)
-                .sum::<f32>()
-                .max(ui.available_width());
+            let tbl_w = cols.iter().map(|(_, w)| *w).sum::<f32>();
+            let issues_tbl_h = if app.panels.target_panel.selected_issue.is_some() {
+                (ui.available_height() * 0.32).clamp(135.0, 260.0)
+            } else {
+                (ui.available_height() - 36.0).max(185.0)
+            };
 
             egui::Frame::new()
                 .fill(card_bg)
@@ -960,7 +969,7 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
 
                     egui::ScrollArea::vertical()
                         .id_salt("target-issues-scroll")
-                        .max_height(185.0)
+                        .max_height(issues_tbl_h)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -2534,23 +2543,32 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                 })
                                 .collect();
 
-                            // 2. Flat Bordered Contents Table (`Host | Method | URL ▲ | Params | Status Code | Length | MIME type | Title`)
-                            let tbl_h = app.panels.target_panel.contents_table_height;
+                            // 2. Flat Bordered Contents Table (`Host | Method | URL ▲ | Params | Status Code | Length | MIME type | Title`) — responsive columns
+                            let tbl_h = app
+                                .panels
+                                .target_panel
+                                .contents_table_height
+                                .min((ui.available_height() * 0.42).max(120.0));
+                            let avail_right_w = ui.available_width().max(520.0);
+                            let base_contents_w =
+                                170.0 + 64.0 + 220.0 + 56.0 + 84.0 + 68.0 + 76.0 + 200.0;
+                            let extra_c = (avail_right_w - base_contents_w).max(0.0);
+                            let c_scale = if avail_right_w < base_contents_w {
+                                avail_right_w / base_contents_w
+                            } else {
+                                1.0
+                            };
                             let cols = [
-                                ("Host", 170.0f32),
-                                ("Method", 64.0),
-                                ("URL ▲", 220.0),
-                                ("Params", 56.0),
-                                ("Status Code", 84.0),
-                                ("Length", 68.0),
-                                ("MIME type", 76.0),
-                                ("Title", 200.0),
+                                ("Host", 170.0 * c_scale + extra_c * 0.25),
+                                ("Method", 64.0 * c_scale),
+                                ("URL ▲", 220.0 * c_scale + extra_c * 0.45),
+                                ("Params", 56.0 * c_scale),
+                                ("Status Code", 84.0 * c_scale),
+                                ("Length", 68.0 * c_scale),
+                                ("MIME type", 76.0 * c_scale),
+                                ("Title", 200.0 * c_scale + extra_c * 0.30),
                             ];
-                            let total_w = cols
-                                .iter()
-                                .map(|(_, w)| *w)
-                                .sum::<f32>()
-                                .max(ui.available_width());
+                            let total_w = cols.iter().map(|(_, w)| *w).sum::<f32>();
 
                             egui::ScrollArea::horizontal()
                                 .id_salt("target-contents-hscroll")

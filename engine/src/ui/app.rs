@@ -1458,6 +1458,30 @@ pub fn install_fonts(ctx: &Context) {
             break;
         }
     }
+
+    let symbol_candidates = [
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "C:\\Windows\\Fonts\\seguisym.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ];
+    for path in symbol_candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "system-symbols".to_owned(),
+                eframe::egui::FontData::from_owned(bytes).into(),
+            );
+            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
+                let pos = family.len().min(1);
+                family.insert(pos, "system-symbols".to_owned());
+            }
+            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
+                let pos = family.len().min(1);
+                family.insert(pos, "system-symbols".to_owned());
+            }
+            break;
+        }
+    }
     ctx.set_fonts(fonts);
 
     let mut style = (*ctx.style()).clone();
@@ -2148,21 +2172,23 @@ impl App {
     /// The right-click actions offered on a captured transaction. Burp exposes these through
     /// `ui/contextmenu/*`; each one here either already exists or is honest about being absent.
     pub fn context_menu(&mut self, trigger: &eframe::egui::Response, index: usize) {
-        let Some(tx) = self.log.get(index) else {
+        if index >= self.log.len() {
             return;
-        };
-        let (request, response, target, method, host_url) = (
-            tx.request.clone(),
-            tx.response.clone(),
-            tx.target.clone(),
-            tx.method.clone(),
-            tx.host_url(),
-        );
-        let has_request = !request.trim().is_empty();
-
-        let ctx = trigger.ctx.clone();
-        let ctx = &ctx;
+        }
         super::panels::show_persistent_context_menu(trigger, |ui| {
+            let Some(tx) = self.log.get(index) else {
+                return;
+            };
+            let (request, response, target, method, host_url) = (
+                tx.request.clone(),
+                tx.response.clone(),
+                tx.target.clone(),
+                tx.method.clone(),
+                tx.host_url(),
+            );
+            let has_request = !request.trim().is_empty();
+            let ctx = ui.ctx().clone();
+            let ctx = &ctx;
             ui.set_min_width(235.0);
             let short_u: String = target.chars().take(48).collect();
             ui.label(eframe::egui::RichText::new(short_u).strong());

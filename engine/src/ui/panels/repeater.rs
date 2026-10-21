@@ -590,16 +590,14 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     }
                 }
 
-                // Layout & Tab-specific `⚙` Repeater settings (`tab-settings.html`)
+                // Layout & Tab-specific Repeater settings (`tab-settings.html`) with vector gear icon
                 let custom_settings = app.panels.repeater.active().custom_tab_settings;
-                let gear_label = if custom_settings {
-                    RichText::new("⚙")
-                        .color(theme.color("palette.secondary.core"))
-                        .strong()
+                let gear_col = if custom_settings {
+                    theme.color("palette.secondary.core")
                 } else {
-                    RichText::new("⚙")
+                    theme.color("ui.icon.default")
                 };
-                ui.menu_button(gear_label, |ui| {
+                let menu_resp = ui.menu_button("   ", |ui| {
                     ui.set_min_width(270.0);
                     let tab = app.panels.repeater.active_mut();
                     ui.label(RichText::new("Connections").strong());
@@ -684,6 +682,15 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         ui.close();
                     }
                 });
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    egui::Rect::from_center_size(
+                        menu_resp.response.rect.center(),
+                        Vec2::splat(14.0),
+                    ),
+                    gear_col,
+                    crate::ui::icons::Glyph::Gear,
+                );
 
                 let layout_lbl = if app.panels.repeater.stacked_layout {
                     "Top/Bottom"
@@ -1458,7 +1465,7 @@ fn draw_repeater_getting_started(app: &mut App, ui: &mut Ui, theme: &crate::ui::
                         .clicked()
                     {
                         app.status =
-                            "Repeater documentation: Right-click any HTTP request and select Send to Repeater, or click ✕ to open a manual Repeater tab.".into();
+                            "Repeater documentation: Right-click any HTTP request and select Send to Repeater, or click + to open a manual Repeater tab.".into();
                     }
                     ui.add_space(18.0);
                     if ui

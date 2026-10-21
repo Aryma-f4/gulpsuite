@@ -307,12 +307,17 @@ impl SuiteShell {
                 "Status settings",
             )
         });
-        painter.text(
-            settings_rect.center(),
-            eframe::egui::Align2::CENTER_CENTER,
-            "⌄",
-            FontId::proportional(16.0),
-            if settings.hovered() { accent } else { idle },
+        let chev_col = if settings.hovered() { accent } else { idle };
+        let c = settings_rect.center();
+        let half = 4.0;
+        let chev_stroke = eframe::egui::Stroke::new(1.4_f32, chev_col);
+        painter.line_segment(
+            [pos2(c.x - half, c.y - half * 0.5), pos2(c.x, c.y + half * 0.5)],
+            chev_stroke,
+        );
+        painter.line_segment(
+            [pos2(c.x, c.y + half * 0.5), pos2(c.x + half, c.y - half * 0.5)],
+            chev_stroke,
         );
         if settings.clicked() {
             commands.push(ShellCommand::OpenSettings);

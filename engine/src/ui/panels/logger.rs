@@ -165,7 +165,14 @@ fn http(app: &mut App, ui: &mut Ui) {
         });
     }
 
-    let table_h = app.panels.logger.table_height;
+    let table_h = if app.panels.logger.selected.is_some() {
+        app.panels
+            .logger
+            .table_height
+            .min((ui.available_height() * 0.44).max(120.0))
+    } else {
+        (ui.available_height() - 36.0).max(app.panels.logger.table_height)
+    };
     eframe::egui::ScrollArea::vertical()
         .id_salt("logger-table-scroll")
         .max_height(table_h)
@@ -249,7 +256,7 @@ fn http(app: &mut App, ui: &mut Ui) {
 
     let selected = app.panels.logger.selected;
     if let Some(tx) = selected.and_then(|index| app.log.get(index).cloned()) {
-        let detail_h = app.panels.logger.detail_height;
+        let detail_h = (ui.available_height() - 16.0).max(app.panels.logger.detail_height.min(180.0));
         let mut ratio = app.panels.logger.split_ratio;
         super::vertical_split(
             ui,

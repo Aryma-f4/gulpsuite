@@ -1,4 +1,4 @@
-# Gulpsuite v0.0.1
+# Gulpsuite v0.0.2
 
 **Gulpsuite** is a native, cross-platform web application security testing and HTTP/HTTPS interception suite built in Rust (`eframe` / `egui` + `tokio` + `rustls`).
 
@@ -74,14 +74,14 @@ Interactive HTTP request manipulation and replay across multiple grouped tabs, f
 
 ---
 
-## Cross-Platform Installers (`v0.0.1`)
+## Cross-Platform Installers (`v0.0.2`)
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.1-macos-arm64.dmg` / `Gulpsuite-0.0.1-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.1-macos-x64.dmg` / `Gulpsuite-0.0.1-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.0.1-windows-x64-setup.exe` | Windows Graphical Setup Wizard (`.exe`) |
-| **Linux** | `x86_64` | `Gulpsuite-0.0.1-linux-x64-setup.run` / `gulpsuite_0.0.1_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.2-macos-arm64.dmg` / `Gulpsuite-0.0.2-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.2-macos-x64.dmg` / `Gulpsuite-0.0.2-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.0.2-windows-x64-setup.exe` | Windows Graphical Setup Wizard (`.exe`) |
+| **Linux** | `x86_64` | `Gulpsuite-0.0.2-linux-x64-setup.run` / `gulpsuite_0.0.2_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ---
 

@@ -436,7 +436,8 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
 
 fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<DashboardCommand>) {
     let controls = controls_for(task.state);
-    let menu = ui.menu_button("⋯", |ui| {
+    let dot_col = app.theme.color("ui.icon.default");
+    let menu = ui.menu_button("   ", |ui| {
         if controls.pause && ui.button("Pause").clicked() {
             commands.push(DashboardCommand::Pause(task.id));
             ui.close();
@@ -459,6 +460,11 @@ fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             ui.close();
         }
     });
+    let c = menu.response.rect.center();
+    for dy in [-4.5_f32, 0.0, 4.5] {
+        ui.painter()
+            .circle_filled(egui::pos2(c.x, c.y + dy), 1.4, dot_col);
+    }
     menu.response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
@@ -504,10 +510,17 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
                 Glyph::Diamond,
             );
             heading(ui, &theme, &task.name);
+            let (star_rect, _) = ui.allocate_exact_size(Vec2::splat(13.0), Sense::hover());
+            crate::ui::icons::paint(
+                ui.painter(),
+                star_rect,
+                theme.color("icon.link"),
+                Glyph::Star,
+            );
             let rate = ui.add_enabled(
                 false,
                 egui::Button::new(
-                    egui::RichText::new("☆  Rate this scan")
+                    egui::RichText::new("Rate this scan")
                         .color(theme.color("icon.link"))
                         .underline(),
                 )

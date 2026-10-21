@@ -1573,9 +1573,15 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     // Results header & filter bar (matching `getting-started-with-intruder-6-selected-entry-request.png`)
     ui.horizontal_wrapped(|ui| {
+        super::scanner::paint_launcher_icon(
+            ui,
+            Vec2::new(15.0, 15.0),
+            theme.color("palette.secondary.core"),
+            super::scanner::LauncherIcon::SpeedImpact,
+        );
         ui.label(
             RichText::new(format!(
-                "⚡ {}. Intruder attack of {}",
+                "{}. Intruder attack of {}",
                 app.panels.intruder.active_tab + 1,
                 app.panels.intruder.host
             ))
@@ -1948,11 +1954,16 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
             if ui.small_button("×").on_hover_text("Collapse side panel").clicked() {
                 app.panels.intruder.side_panel_collapsed = true;
             }
-            if ui
-                .small_button("⚙")
-                .on_hover_text("Open Intruder settings")
-                .clicked()
-            {
+            let gear_btn = ui
+                .small_button("   ")
+                .on_hover_text("Open Intruder settings");
+            crate::ui::icons::paint(
+                ui.painter(),
+                egui::Rect::from_center_size(gear_btn.rect.center(), Vec2::splat(13.0)),
+                theme.color("ui.icon.default"),
+                crate::ui::icons::Glyph::Gear,
+            );
+            if gear_btn.clicked() {
                 app.show_settings = true;
                 app.settings_category = 3;
             }

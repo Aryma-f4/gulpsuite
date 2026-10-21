@@ -1440,7 +1440,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                         p.status_4xx = true;
                         p.status_5xx = true;
                     }
-                    if ui.button("⇄ Convert to Bambda").clicked() {
+                    if ui.button("↔ Convert to Bambda").clicked() {
                         p.filter_mode_bambda = true;
                     }
                     ui.with_layout(
@@ -1502,6 +1502,7 @@ fn history(app: &mut App, ui: &mut Ui) {
         None
     };
 
+    #[derive(Clone)]
     struct RowSummary {
         index: usize,
         host_url: String,
@@ -1521,159 +1522,226 @@ fn history(app: &mut App, ui: &mut Ui) {
         cookies: String,
     }
 
-    let rows = app.log.len();
-    let mut visible: Vec<RowSummary> = (0..rows)
-        .filter_map(|index| {
-            let tx = &app.log[index];
-            let host_url = tx.host_url();
-            let path_query = tx.path_and_query();
-            let has_params = tx.has_params();
-            let mime = tx.mime_type();
-            let ext = tx.extension();
-            let title = tx.page_title();
-            let note = app
-                .panels
-                .proxy_panel
-                .notes
-                .get(&index)
-                .cloned()
-                .unwrap_or_default();
-            let highlight = app.panels.proxy_panel.highlights.get(&index).copied();
-            if filter_enabled {
-                if errors_only && tx.status < 400 {
-                    return None;
-                }
-                let status_allowed = match tx.status {
-                    200..=299 => s2,
-                    300..=399 => s3,
-                    400..=499 => s4,
-                    500..=599 => s5,
-                    _ => true,
-                };
-                if !status_allowed {
-                    return None;
-                }
-                if params_only && !has_params {
-                    return None;
-                }
-                if in_scope_only && !app.panels.target_panel.in_scope(&tx.target) {
-                    return None;
-                }
-                if mime_filter != "All" && mime != mime_filter {
-                    return None;
-                }
-                if only_notes && note.is_empty() {
-                    return None;
-                }
-                if only_highlighted && highlight.is_none() {
-                    return None;
-                }
-                if !show_exts.is_empty() && !show_exts.iter().any(|e| e == &ext) {
-                    return None;
-                }
-                if hide_ext_on && !ext.is_empty() && hide_exts.iter().any(|e| e == &ext) {
-                    return None;
-                }
-                if !raw_needle.is_empty() {
-                    let matched = if let Some(re) = &compiled_re {
-                        re.is_match(&tx.target)
-                            || re.is_match(&host_url)
-                            || re.is_match(&tx.method)
-                            || re.is_match(&title)
-                            || re.is_match(&note)
-                            || re.is_match(&tx.request)
-                            || re.is_match(&tx.response)
-                    } else if case_sensitive {
-                        tx.target.contains(&raw_needle)
-                            || host_url.contains(&raw_needle)
-                            || tx.method.contains(&raw_needle)
-                            || mime.contains(&raw_needle)
-                            || title.contains(&raw_needle)
-                            || note.contains(&raw_needle)
-                            || tx.status.to_string().contains(&raw_needle)
-                            || tx.request.contains(&raw_needle)
-                            || tx.response.contains(&raw_needle)
-                    } else {
-                        let lower_needle = raw_needle.to_lowercase();
-                        tx.target.to_lowercase().contains(&lower_needle)
-                            || host_url.to_lowercase().contains(&lower_needle)
-                            || tx.method.to_lowercase().contains(&lower_needle)
-                            || mime.to_lowercase().contains(&lower_needle)
-                            || title.to_lowercase().contains(&lower_needle)
-                            || note.to_lowercase().contains(&lower_needle)
-                            || tx.status.to_string().contains(&lower_needle)
-                            || tx.request.to_lowercase().contains(&lower_needle)
-                            || tx.response.to_lowercase().contains(&lower_needle)
-                    };
-                    if negative_search {
-                        if matched {
-                            return None;
-                        }
-                    } else if !matched {
+    let cache_key = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        app.log_version.hash(&mut h);
+        app.log.len().hash(&mut h);
+        filter_enabled.hash(&mut h);
+        errors_only.hash(&mut h);
+        (s2, s3, s4, s5, params_only, in_scope_only).hash(&mut h);
+        app.panels.target_panel.scope.hash(&mut h);
+        app.panels.target_panel.scope_exclude.hash(&mut h);
+        mime_filter.hash(&mut h);
+        (only_notes, only_highlighted, hide_ext_on).hash(&mut h);
+        show_exts.hash(&mut h);
+        hide_exts.hash(&mut h);
+        raw_needle.hash(&mut h);
+        (regex_search, case_sensitive, negative_search).hash(&mut h);
+        app.panels.proxy_panel.sort_column.hash(&mut h);
+        app.panels.proxy_panel.sort_ascending.hash(&mut h);
+        app.panels.proxy_panel.notes.len().hash(&mut h);
+        for (k, v) in &app.panels.proxy_panel.notes {
+            k.hash(&mut h);
+            v.hash(&mut h);
+        }
+        app.panels.proxy_panel.highlights.len().hash(&mut h);
+        for (k, v) in &app.panels.proxy_panel.highlights {
+            k.hash(&mut h);
+            v.hash(&mut h);
+        }
+        h.finish()
+    };
+
+    thread_local! {
+        static HISTORY_ROWS_CACHE: std::cell::RefCell<Option<(u64, std::sync::Arc<Vec<RowSummary>>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    let visible: std::sync::Arc<Vec<RowSummary>> = if let Some(cached) =
+        HISTORY_ROWS_CACHE.with(|c| {
+            c.borrow()
+                .as_ref()
+                .filter(|(k, _)| *k == cache_key)
+                .map(|(_, rows)| rows.clone())
+        }) {
+        cached
+    } else {
+        let rows = app.log.len();
+        let lower_needle = if !case_sensitive && !raw_needle.is_empty() {
+            raw_needle.to_lowercase()
+        } else {
+            String::new()
+        };
+        let mut built: Vec<RowSummary> = (0..rows)
+            .filter_map(|index| {
+                let tx = &app.log[index];
+                let host_url = tx.host_url();
+                let path_query = tx.path_and_query();
+                let has_params = tx.has_params();
+                let mime = tx.mime_type();
+                let ext = tx.extension();
+                let title = tx.page_title();
+                let note = app
+                    .panels
+                    .proxy_panel
+                    .notes
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_default();
+                let highlight = app.panels.proxy_panel.highlights.get(&index).copied();
+                if filter_enabled {
+                    if errors_only && tx.status < 400 {
                         return None;
                     }
+                    let status_allowed = match tx.status {
+                        200..=299 => s2,
+                        300..=399 => s3,
+                        400..=499 => s4,
+                        500..=599 => s5,
+                        _ => true,
+                    };
+                    if !status_allowed {
+                        return None;
+                    }
+                    if params_only && !has_params {
+                        return None;
+                    }
+                    if in_scope_only && !app.panels.target_panel.in_scope(&tx.target) {
+                        return None;
+                    }
+                    if mime_filter != "All" && mime != mime_filter {
+                        return None;
+                    }
+                    if only_notes && note.is_empty() {
+                        return None;
+                    }
+                    if only_highlighted && highlight.is_none() {
+                        return None;
+                    }
+                    if !show_exts.is_empty() && !show_exts.iter().any(|e| e == &ext) {
+                        return None;
+                    }
+                    if hide_ext_on && !ext.is_empty() && hide_exts.iter().any(|e| e == &ext) {
+                        return None;
+                    }
+                    if !raw_needle.is_empty() {
+                        let matched = if let Some(re) = &compiled_re {
+                            re.is_match(&tx.target)
+                                || re.is_match(&host_url)
+                                || re.is_match(&tx.method)
+                                || re.is_match(&title)
+                                || re.is_match(&note)
+                                || re.is_match(&tx.request)
+                                || re.is_match(&tx.response)
+                        } else if case_sensitive {
+                            tx.target.contains(&raw_needle)
+                                || host_url.contains(&raw_needle)
+                                || tx.method.contains(&raw_needle)
+                                || mime.contains(&raw_needle)
+                                || title.contains(&raw_needle)
+                                || note.contains(&raw_needle)
+                                || tx.status.to_string().contains(&raw_needle)
+                                || tx.request.contains(&raw_needle)
+                                || tx.response.contains(&raw_needle)
+                        } else {
+                            tx.target.to_lowercase().contains(&lower_needle)
+                                || host_url.to_lowercase().contains(&lower_needle)
+                                || tx.method.to_lowercase().contains(&lower_needle)
+                                || mime.to_lowercase().contains(&lower_needle)
+                                || title.to_lowercase().contains(&lower_needle)
+                                || note.to_lowercase().contains(&lower_needle)
+                                || tx.status.to_string().contains(&lower_needle)
+                                || tx.request.to_lowercase().contains(&lower_needle)
+                                || tx.response.to_lowercase().contains(&lower_needle)
+                        };
+                        if negative_search {
+                            if matched {
+                                return None;
+                            }
+                        } else if !matched {
+                            return None;
+                        }
+                    }
                 }
-            }
-            Some(RowSummary {
-                index,
-                host_url,
-                method: tx.method.clone(),
-                target: tx.target.clone(),
-                path_query,
-                has_params,
-                status: tx.status,
-                bytes: tx.bytes,
-                truncated: tx.truncated,
-                mime,
-                ext,
-                title,
-                secure: tx.secure,
-                note,
-                highlight,
-                cookies: tx.response
-                    .split("\r\n\r\n").next().unwrap_or("")
-                    .lines()
-                    .filter_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("set-cookie").then(|| {
-                            value.trim().split(';').next().unwrap_or("").to_string()
+                Some(RowSummary {
+                    index,
+                    host_url,
+                    method: tx.method.clone(),
+                    target: tx.target.clone(),
+                    path_query,
+                    has_params,
+                    status: tx.status,
+                    bytes: tx.bytes,
+                    truncated: tx.truncated,
+                    mime,
+                    ext,
+                    title,
+                    secure: tx.secure,
+                    note,
+                    highlight,
+                    cookies: tx
+                        .response
+                        .split("\r\n\r\n")
+                        .next()
+                        .unwrap_or("")
+                        .lines()
+                        .filter_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("set-cookie").then(|| {
+                                value.trim().split(';').next().unwrap_or("").to_string()
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>().join("; "),
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    if let Some(col) = app.panels.proxy_panel.sort_column {
-        let asc = app.panels.proxy_panel.sort_ascending;
-        visible.sort_by(|a, b| {
-            let ord = match col {
-                0 => a.index.cmp(&b.index),
-                1 => a.host_url.cmp(&b.host_url),
-                2 => a.method.cmp(&b.method),
-                3 => a.path_query.cmp(&b.path_query),
-                4 => a.has_params.cmp(&b.has_params),
-                6 => a.status.cmp(&b.status),
-                7 => a.bytes.cmp(&b.bytes),
-                8 => a.mime.cmp(b.mime),
-                9 => a.ext.cmp(&b.ext),
-                10 => a.title.cmp(&b.title),
-                11 => a.note.cmp(&b.note),
-                12 => a.secure.cmp(&b.secure),
-                14 => a.cookies.cmp(&b.cookies),
-                _ => a.index.cmp(&b.index),
-            };
-            if asc {
-                ord
-            } else {
-                ord.reverse()
-            }
+        if let Some(col) = app.panels.proxy_panel.sort_column {
+            let asc = app.panels.proxy_panel.sort_ascending;
+            built.sort_by(|a, b| {
+                let ord = match col {
+                    0 => a.index.cmp(&b.index),
+                    1 => a.host_url.cmp(&b.host_url),
+                    2 => a.method.cmp(&b.method),
+                    3 => a.path_query.cmp(&b.path_query),
+                    4 => a.has_params.cmp(&b.has_params),
+                    6 => a.status.cmp(&b.status),
+                    7 => a.bytes.cmp(&b.bytes),
+                    8 => a.mime.cmp(b.mime),
+                    9 => a.ext.cmp(&b.ext),
+                    10 => a.title.cmp(&b.title),
+                    11 => a.note.cmp(&b.note),
+                    12 => a.secure.cmp(&b.secure),
+                    14 => a.cookies.cmp(&b.cookies),
+                    _ => a.index.cmp(&b.index),
+                };
+                if asc {
+                    ord
+                } else {
+                    ord.reverse()
+                }
+            });
+        }
+        let arc = std::sync::Arc::new(built);
+        HISTORY_ROWS_CACHE.with(|c| {
+            *c.borrow_mut() = Some((cache_key, arc.clone()));
         });
-    }
+        arc
+    };
 
     // One horizontal viewport keeps header and body aligned; only the body scrolls
     // vertically. Column widths never depend on URL/title/note length.
-    let table_h = app.panels.proxy_panel.table_height;
+    let table_h = if app.panels.proxy_panel.selected.is_some() {
+        app.panels
+            .proxy_panel
+            .table_height
+            .min((ui.available_height() * 0.45).max(120.0))
+    } else {
+        (ui.available_height() - 48.0).max(app.panels.proxy_panel.table_height)
+    };
     let columns = [
         "#",
         "Host",
@@ -1944,7 +2012,8 @@ fn history(app: &mut App, ui: &mut Ui) {
                 app.panels.proxy_panel.history_req_fmt_mode = 2;
                 app.panels.proxy_panel.history_resp_fmt_mode = 2;
             }
-            let detail_h = app.panels.proxy_panel.detail_height;
+            let detail_h = (ui.available_height() - 18.0)
+                .max(app.panels.proxy_panel.detail_height.min(180.0));
             let mut ratio = app.panels.proxy_panel.split_ratio;
             vertical_split(
                 ui,
