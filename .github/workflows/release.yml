@@ -72,7 +72,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          for f in dist/*.dmg dist/*.pkg dist/*-setup.exe dist/*-setup.run dist/*.deb dist/*.sha256; do
+          for f in dist/*.dmg dist/*.pkg dist/*-setup.exe dist/*-setup.run dist/*.AppImage dist/*.pkg.tar.gz dist/*.deb dist/*.sha256; do
             if [ -f "$f" ]; then
               gh release upload "$TAG" "$f" --clobber
             fi

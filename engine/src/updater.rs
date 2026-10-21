@@ -128,7 +128,9 @@ pub fn select_installer_asset(assets: &[ReleaseAsset], platform: &str) -> Option
         ],
         "windows-x64" => &["windows-x64-setup.exe", "windows-x64.zip", ".exe"],
         "linux-x64" => &[
+            "x86_64.appimage",
             "linux-x64-setup.run",
+            ".pkg.tar.gz",
             "_amd64.deb",
             "linux-x64.tar.gz",
         ],
@@ -457,7 +459,12 @@ pub async fn download_and_verify_release(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if out_path.extension().and_then(|e| e.to_str()) == Some("run") {
+        let ext = out_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if ext == "run" || ext == "appimage" {
             let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(0o755));
         }
     }
@@ -507,6 +514,16 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
+        if name.ends_with(".appimage") {
+            std::process::Command::new(installer_path)
+                .arg("--install")
+                .spawn()
+                .map_err(|e| format!("Failed to install AppImage {}: {e}", name))?;
+            return Ok(format!(
+                "Installed Gulpsuite AppImage: {}",
+                installer_path.display()
+            ));
+        }
         if name.ends_with(".run") {
             std::process::Command::new("sh")
                 .arg(installer_path)

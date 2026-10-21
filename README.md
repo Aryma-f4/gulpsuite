@@ -73,7 +73,21 @@ Download pre-built native installers directly from [**GitHub Releases (`v0.0.5`)
 | **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.5-macos-arm64.dmg` / `Gulpsuite-0.0.5-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
 | **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.5-macos-x64.dmg` / `Gulpsuite-0.0.5-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
 | **Windows** | `x86_64` | `Gulpsuite-0.0.5-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
-| **Linux** | `x86_64` | `Gulpsuite-0.0.5-linux-x64-setup.run` / `gulpsuite_0.0.5_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.0.5-x86_64.AppImage` / `gulpsuite-0.0.5-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
+| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.0.5-linux-x64-setup.run` / `gulpsuite_0.0.5_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+
+### Quick Start on CachyOS / Arch Linux (`AppImage` or `pacman`)
+```bash
+# Option 1: Run Portable AppImage directly (FUSE-free — works out of the box on CachyOS)
+chmod +x Gulpsuite-0.0.5-x86_64.AppImage
+./Gulpsuite-0.0.5-x86_64.AppImage
+
+# Optional: Integrate AppImage into CachyOS desktop launcher & ~/.local/bin/gulpsuite
+./Gulpsuite-0.0.5-x86_64.AppImage --install
+
+# Option 2: Install native CachyOS / Arch Linux pacman package
+sudo pacman -U gulpsuite-0.0.5-1-x86_64.pkg.tar.gz
+```
 
 ---
 

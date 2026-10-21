@@ -187,6 +187,160 @@ __GULPSUITE_ARCHIVE_BELOW__
     return artifact
 
 
+def build_linux_appimage(layout, artifact, version):
+    """Builds `Gulpsuite-<version>-x86_64.AppImage` with a FUSE-free portable runtime
+    that works out of the box on CachyOS, Arch Linux, Ubuntu, Fedora, and Debian without
+    requiring legacy `libfuse.so.2`. Supports `--appimage-extract`, `--appimage-extract-and-run`,
+    `--appimage-version`, `--appimage-help`, and `--install`.
+    """
+    layout = Path(layout)
+    artifact = Path(artifact)
+    if artifact.exists():
+        raise ValueError(f'AppImage already exists: {artifact}')
+
+    with tempfile.TemporaryDirectory(prefix='gulpsuite-appdir-', dir=artifact.parent) as tmp_dir:
+        appdir = Path(tmp_dir) / 'Gulpsuite.AppDir'
+        (appdir / 'usr/opt').mkdir(parents=True)
+        (appdir / 'usr/bin').mkdir(parents=True)
+        shutil.copytree(layout / 'opt/gulpsuite', appdir / 'usr/opt/gulpsuite', symlinks=True)
+        (appdir / 'usr/bin/gulpsuite').symlink_to('../opt/gulpsuite/gulpsuite')
+
+        shutil.copy2(HERE / 'linux/gulpsuite.desktop', appdir / 'gulpsuite.desktop')
+        png_src = HERE.parent / 'assets/logo.png'
+        if png_src.is_file():
+            shutil.copy2(png_src, appdir / 'gulpsuite.png')
+            shutil.copy2(png_src, appdir / '.DirIcon')
+
+        apprun = appdir / 'AppRun'
+        apprun.write_text(
+            '#!/bin/sh\n'
+            'HERE="$(dirname "$(readlink -f "$0")")"\n'
+            'export APPDIR="$HERE"\n'
+            'exec "$HERE/usr/opt/gulpsuite/gulpsuite" "$@"\n'
+        )
+        apprun.chmod(0o755)
+
+        header = f"""#!/bin/sh
+# Gulpsuite {version} Portable AppImage (FUSE-free — CachyOS / Arch / Linux x86_64)
+# "Gulp it before burp" — Publisher: Aryma-f4
+set -e
+
+SELF="$(readlink -f "$0")"
+CACHE_ROOT="${{XDG_CACHE_HOME:-$HOME/.cache}}/gulpsuite"
+APPDIR="$CACHE_ROOT/AppDir-{version}"
+
+extract_appdir() {{
+  DEST="$1"
+  rm -rf "$DEST"
+  mkdir -p "$DEST"
+  ARCHIVE_LINE=$(awk '/^__GULPSUITE_APPIMAGE_BELOW__$/ {{print NR + 1; exit 0;}}' "$SELF")
+  tail -n +"$ARCHIVE_LINE" "$SELF" | tar -xzf - -C "$DEST"
+  chmod 0755 "$DEST/AppRun" "$DEST/usr/opt/gulpsuite/gulpsuite"
+}}
+
+case "${{1:-}}" in
+  --appimage-version)
+    echo "Gulpsuite AppImage {version} (FUSE-free portable runtime by Aryma-f4)"
+    exit 0
+    ;;
+  --appimage-help)
+    echo "Gulpsuite {version} AppImage options:"
+    echo "  --appimage-extract          Extract AppDir into ./squashfs-root"
+    echo "  --appimage-extract-and-run  Extract and run Gulpsuite"
+    echo "  --appimage-version          Print AppImage version"
+    echo "  --install                   Integrate Gulpsuite into desktop menu & ~/.local/bin"
+    exit 0
+    ;;
+  --appimage-extract)
+    extract_appdir "./squashfs-root"
+    echo "Extracted to ./squashfs-root"
+    exit 0
+    ;;
+  --appimage-extract-and-run)
+    shift
+    extract_appdir "$APPDIR"
+    exec "$APPDIR/AppRun" "$@"
+    ;;
+  --install)
+    extract_appdir "$APPDIR"
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/512x512/apps"
+    cp -f "$SELF" "$HOME/.local/bin/gulpsuite"
+    chmod 0755 "$HOME/.local/bin/gulpsuite"
+    if [ -f "$APPDIR/gulpsuite.png" ]; then
+      cp -f "$APPDIR/gulpsuite.png" "$HOME/.local/share/icons/hicolor/512x512/apps/gulpsuite.png"
+    fi
+    cat > "$HOME/.local/share/applications/gulpsuite.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Gulpsuite
+Comment=Gulp it before burp — Native Rust web security testing suite
+Exec=$HOME/.local/bin/gulpsuite
+Icon=gulpsuite
+Terminal=false
+Categories=Development;Network;Security;
+StartupNotify=true
+DESKTOP
+    echo "Installed Gulpsuite {version} to ~/.local/bin/gulpsuite and desktop menu."
+    exit 0
+    ;;
+esac
+
+if [ ! -x "$APPDIR/AppRun" ]; then
+  extract_appdir "$APPDIR"
+fi
+exec "$APPDIR/AppRun" "$@"
+__GULPSUITE_APPIMAGE_BELOW__
+""".encode('utf-8')
+
+        tar_path = Path(tmp_dir) / 'appdir.tar.gz'
+        with tarfile.open(tar_path, 'w:gz') as archive:
+            for item in sorted(appdir.iterdir()):
+                archive.add(item, arcname=item.name)
+        with artifact.open('xb') as out:
+            out.write(header)
+            out.write(tar_path.read_bytes())
+        artifact.chmod(0o755)
+    return artifact
+
+
+def build_arch_pkg(layout, artifact, version):
+    """Builds a native CachyOS / Arch Linux pacman package (`gulpsuite-<version>-1-x86_64.pkg.tar.gz`)."""
+    layout = Path(layout)
+    artifact = Path(artifact)
+    if artifact.exists():
+        raise ValueError(f'Arch package already exists: {artifact}')
+
+    with tempfile.TemporaryDirectory(prefix='gulpsuite-archpkg-', dir=artifact.parent) as tmp_dir:
+        pkg_root = Path(tmp_dir) / 'pkg'
+        pkg_root.mkdir()
+        shutil.copytree(layout / 'opt', pkg_root / 'opt', symlinks=True)
+        shutil.copytree(layout / 'usr', pkg_root / 'usr', symlinks=True)
+        size_bytes = sum(f.stat().st_size for f in pkg_root.rglob('*') if f.is_file() and not f.is_symlink())
+        pkginfo = (
+            f'# Generated by Gulpsuite packaging (Aryma-f4)\n'
+            f'pkgname = gulpsuite\n'
+            f'pkgbase = gulpsuite\n'
+            f'pkgver = {version}-1\n'
+            f'pkgdesc = Gulp it before burp - Native Rust web security testing, DAST scanner & proxy suite\n'
+            f'url = https://github.com/Aryma-f4/gulpsuite\n'
+            f'builddate = 1776816000\n'
+            f'packager = Aryma-f4 <https://github.com/Aryma-f4/gulpsuite>\n'
+            f'size = {size_bytes}\n'
+            f'arch = x86_64\n'
+            f'license = custom\n'
+            f'depend = gtk3\n'
+            f'depend = nss\n'
+            f'depend = alsa-lib\n'
+            f'depend = libxss\n'
+        )
+        (pkg_root / '.PKGINFO').write_text(pkginfo)
+        with tarfile.open(artifact, 'w:gz') as archive:
+            archive.add(pkg_root / '.PKGINFO', arcname='.PKGINFO')
+            for sub in ['opt', 'usr']:
+                archive.add(pkg_root / sub, arcname=sub)
+    return artifact
+
+
 def build_macos_pkg(layout, artifact, version, scratch):
     layout = Path(layout)
     artifact = Path(artifact)
@@ -308,6 +462,16 @@ def create_installer(platform, binary, stage, output, version, development):
                 build_linux_setup_run(layout, run_artifact, version)
                 run_sum = chromium.digest(run_artifact)
                 run_artifact.with_suffix('.run.sha256').write_text(f'{run_sum}  {run_artifact.name}\n')
+            appimage_artifact = (output / f'Gulpsuite-{version}-x86_64.AppImage').resolve()
+            if not appimage_artifact.exists():
+                build_linux_appimage(layout, appimage_artifact, version)
+                ai_sum = chromium.digest(appimage_artifact)
+                appimage_artifact.with_suffix('.AppImage.sha256').write_text(f'{ai_sum}  {appimage_artifact.name}\n')
+            arch_artifact = (output / f'gulpsuite-{version}-1-x86_64.pkg.tar.gz').resolve()
+            if not arch_artifact.exists():
+                build_arch_pkg(layout, arch_artifact, version)
+                arch_sum = chromium.digest(arch_artifact)
+                arch_artifact.with_suffix('.gz.sha256').write_text(f'{arch_sum}  {arch_artifact.name}\n')
             subprocess.run(['dpkg-deb', '--root-owner-group', '--build', str(layout), str(artifact)], check=True)
         else:
             setup_bin = binary.parent / 'gulpsuite-setup.exe'

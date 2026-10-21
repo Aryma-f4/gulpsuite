@@ -1,0 +1,26 @@
+# Maintainer: Aryma-f4 <https://github.com/Aryma-f4/gulpsuite>
+pkgname=gulpsuite
+pkgver=0.0.5
+pkgrel=1
+pkgdesc="Gulp it before burp — Ultra-fast native Rust web security testing, DAST scanner, Nuclei engine & HTTP/HTTPS/WebSocket proxy suite"
+arch=('x86_64')
+url="https://github.com/Aryma-f4/gulpsuite"
+license=('custom')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'xdg-utils')
+makedepends=('cargo' 'python')
+source=("git+https://github.com/Aryma-f4/gulpsuite.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/gulpsuite"
+  CARGO_INCREMENTAL=0 cargo build --locked --release --manifest-path engine/Cargo.toml --bin gulpsuite
+}
+
+package() {
+  cd "$srcdir/gulpsuite"
+  install -Dm755 "engine/target/release/gulpsuite" "$pkgdir/opt/gulpsuite/gulpsuite"
+  install -d "$pkgdir/usr/bin"
+  ln -s "/opt/gulpsuite/gulpsuite" "$pkgdir/usr/bin/gulpsuite"
+  install -Dm644 "packaging/linux/gulpsuite.desktop" "$pkgdir/usr/share/applications/gulpsuite.desktop"
+  install -Dm644 "assets/logo.png" "$pkgdir/usr/share/pixmaps/gulpsuite.png"
+}
