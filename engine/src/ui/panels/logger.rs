@@ -226,11 +226,30 @@ fn http(app: &mut App, ui: &mut Ui) {
                             } else {
                                 eframe::egui::RichText::new(&tx.method)
                             };
+                            let short_target = if tx.target.chars().count() > 44 {
+                                let mut s: String = tx.target.chars().take(43).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                tx.target.clone()
+                            };
+                            let host_full = tx.host_url();
+                            let short_host = if host_full.chars().count() > 28 {
+                                let mut s: String = host_full.chars().take(27).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                host_full.clone()
+                            };
                             let c_method = ui.selectable_label(selected, text);
-                            let c_target = ui.selectable_label(selected, &tx.target);
+                            let c_target = ui
+                                .selectable_label(selected, short_target)
+                                .on_hover_text(&tx.target);
                             let c_status = ui.selectable_label(selected, tx.status.to_string());
                             let c_bytes = ui.selectable_label(selected, tx.bytes.to_string());
-                            let c_host = ui.selectable_label(selected, tx.host_url());
+                            let c_host = ui
+                                .selectable_label(selected, short_host)
+                                .on_hover_text(&host_full);
                             for cell in [&c_idx, &c_method, &c_target, &c_status, &c_bytes, &c_host]
                             {
                                 if cell.clicked() || cell.secondary_clicked() {

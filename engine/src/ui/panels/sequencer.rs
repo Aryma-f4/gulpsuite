@@ -239,12 +239,28 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                     })
                                     .collect();
                                 for (i, host_url, req_line, target, req, resp) in recent {
+                                    let short_host = if host_url.chars().count() > 28 {
+                                        let mut s: String = host_url.chars().take(27).collect();
+                                        s.push('…');
+                                        s
+                                    } else {
+                                        host_url.clone()
+                                    };
+                                    let short_req = if req_line.chars().count() > 42 {
+                                        let mut s: String = req_line.chars().take(41).collect();
+                                        s.push('…');
+                                        s
+                                    } else {
+                                        req_line.clone()
+                                    };
                                     let r1 = ui.label(format!("{}", i + 1));
-                                    let r2 = ui.label(&host_url);
-                                    let r3 = ui.selectable_label(
-                                        app.panels.sequencer.text == resp && !resp.is_empty(),
-                                        eframe::egui::RichText::new(&req_line).monospace(),
-                                    );
+                                    let r2 = ui.label(short_host).on_hover_text(&host_url);
+                                    let r3 = ui
+                                        .selectable_label(
+                                            app.panels.sequencer.text == resp && !resp.is_empty(),
+                                            eframe::egui::RichText::new(short_req).monospace(),
+                                        )
+                                        .on_hover_text(&req_line);
                                     if r1.clicked() || r2.clicked() || r3.clicked() {
                                         app.panels.sequencer.text = resp.clone();
                                     }

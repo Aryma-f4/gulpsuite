@@ -368,6 +368,16 @@ impl DurationMs for std::time::Duration {
     }
 }
 
+fn truncate_host_text(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
 /// The name on a tab: the host, with a number when the name is taken.
 fn name_for(host: &str, fallback: usize) -> String {
     let rest = host
@@ -378,7 +388,7 @@ fn name_for(host: &str, fallback: usize) -> String {
     if authority.is_empty() {
         fallback.to_string()
     } else {
-        authority.to_string()
+        truncate_host_text(authority, 22)
     }
 }
 
@@ -522,15 +532,13 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     .map(|(idx, ex)| {
                         let first_line = ex.request.lines().next().unwrap_or("GET /");
                         let path = first_line.split_whitespace().nth(1).unwrap_or("/");
-                        (
-                            idx,
-                            format!(
-                                "{}. {}{}",
-                                idx + 1,
-                                ex.host.trim_end_matches('/'),
-                                path
-                            ),
-                        )
+                        let full_entry = format!(
+                            "{}. {}{}",
+                            idx + 1,
+                            ex.host.trim_end_matches('/'),
+                            path
+                        );
+                        (idx, truncate_host_text(&full_entry, 56))
                     })
                     .rev()
                     .collect();
@@ -796,20 +804,28 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             !app.panels.repeater.show_target_modal;
                     }
                     let host_txt = app.panels.repeater.active().host.clone();
-                    if ui
-                        .add(
-                            egui::Label::new(
-                                RichText::new(format!("Target: {host_txt}"))
-                                    .strong()
-                                    .size(12.5)
-                                    .color(theme.color("ui.text.heading")),
+                    let rem_w = ui.available_width();
+                    if rem_w > 58.0 {
+                        let max_chars = (((rem_w - 58.0) / 7.2) as usize).clamp(4, 34);
+                        let display_host = truncate_host_text(&host_txt, max_chars);
+                        if ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(format!("Target: {display_host}"))
+                                        .strong()
+                                        .size(12.5)
+                                        .color(theme.color("ui.text.heading")),
+                                )
+                                .truncate()
+                                .sense(egui::Sense::click()),
                             )
-                            .sense(egui::Sense::click()),
-                        )
-                        .on_hover_text("Click to edit Target URL and SNI settings")
-                        .clicked()
-                    {
-                        app.panels.repeater.show_target_modal = true;
+                            .on_hover_text(format!(
+                                "Target: {host_txt}\nClick to edit Target URL and SNI settings"
+                            ))
+                            .clicked()
+                        {
+                            app.panels.repeater.show_target_modal = true;
+                        }
                     }
                 });
             });

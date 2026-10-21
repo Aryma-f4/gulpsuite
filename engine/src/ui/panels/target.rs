@@ -1895,19 +1895,32 @@ fn draw_sitemap_tree_row(
     paint_sitemap_node_icon(&mut icon_ui, icon, dot_color);
     cursor_x += 20.0;
 
-    // Node text label
+    // Node text label (truncated to fit row width so long hosts never overflow)
     let txt_col = if muted_text {
         theme.color("ui.icon.disabled")
     } else {
         theme.color("ui.text.heading")
     };
-    p.text(
+    let avail_text_w = (rect.max.x - cursor_x - 6.0).max(20.0);
+    let max_chars = ((avail_text_w / 6.8) as usize).max(4);
+    let display_label = if label.chars().count() > max_chars {
+        let mut s: String = label.chars().take(max_chars.saturating_sub(1)).collect();
+        s.push('…');
+        s
+    } else {
+        label.to_string()
+    };
+    let clip_p = p.with_clip_rect(rect.shrink2(egui::vec2(2.0, 0.0)).intersect(ui.clip_rect()));
+    clip_p.text(
         egui::pos2(cursor_x, cy),
         egui::Align2::LEFT_CENTER,
-        label,
+        &display_label,
         egui::FontId::proportional(12.0),
         txt_col,
     );
+    if display_label != label {
+        resp.clone().on_hover_text(label);
+    }
 
     resp
 }
@@ -2694,6 +2707,26 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                                 val,
                                                             )
                                                         });
+                                                        let max_cell_chars =
+                                                            (((*cw - 12.0) / 6.8) as usize).max(3);
+                                                        let cell_display =
+                                                            if val.chars().count() > max_cell_chars
+                                                            {
+                                                                let mut s: String = val
+                                                                    .chars()
+                                                                    .take(
+                                                                        max_cell_chars
+                                                                            .saturating_sub(1),
+                                                                    )
+                                                                    .collect();
+                                                                s.push('…');
+                                                                s
+                                                            } else {
+                                                                val.clone()
+                                                            };
+                                                        if cell_display != *val {
+                                                            c_resp.clone().on_hover_text(val);
+                                                        }
                                                         let clip_p = ui.painter().with_clip_rect(
                                                             c_rect
                                                                 .shrink2(egui::vec2(4.0, 0.0))
@@ -2705,7 +2738,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                                 c_rect.center().y,
                                                             ),
                                                             egui::Align2::LEFT_CENTER,
-                                                            val,
+                                                            &cell_display,
                                                             egui::FontId::proportional(12.0),
                                                             theme.color("ui.text.heading"),
                                                         );

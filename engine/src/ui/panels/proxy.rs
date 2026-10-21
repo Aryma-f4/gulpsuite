@@ -1970,7 +1970,9 @@ fn history(app: &mut App, ui: &mut Ui) {
                                     app.panels.proxy_panel.detached_row = Some(index);
                                 }
                                 app.context_menu(&response, index);
-                                if col == 3 {
+                                if col == 1 {
+                                    response.on_hover_text(&row.host_url);
+                                } else if col == 3 {
                                     response.on_hover_text(&row.target);
                                 } else if matches!(col, 5 | 13 | 15..=18) {
                                     response.on_hover_text(
@@ -2002,7 +2004,9 @@ fn history(app: &mut App, ui: &mut Ui) {
     if let Some(index) = app.panels.proxy_panel.selected {
         if let Some(tx) = app.log.get(index).cloned() {
             ui.horizontal_wrapped(|ui| {
-                ui.label(eframe::egui::RichText::new(&tx.target).strong());
+                let short_target = truncate(&tx.target, 48);
+                ui.label(eframe::egui::RichText::new(short_target).strong())
+                    .on_hover_text(&tx.target);
                 ui.radio_value(&mut app.panels.proxy_panel.hex_view, false, "Pretty");
                 ui.radio_value(&mut app.panels.proxy_panel.hex_view, true, "Hex");
                 ui.separator();

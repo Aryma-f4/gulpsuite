@@ -887,9 +887,24 @@ fn audit_items(app: &App, ui: &mut Ui, task: &Task) {
                                 .iter()
                                 .filter(|i| i.url == tx.target)
                                 .count();
+                            let host_full = tx.host_url();
+                            let host_short = if host_full.chars().count() > 28 {
+                                let mut s: String = host_full.chars().take(27).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                host_full.clone()
+                            };
+                            let path_short = if path_q.chars().count() > 36 {
+                                let mut s: String = path_q.chars().take(35).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                path_q.clone()
+                            };
                             ui.label((idx + 1).to_string());
-                            ui.label(tx.host_url());
-                            ui.monospace(path_q);
+                            ui.label(host_short).on_hover_text(&host_full);
+                            ui.monospace(path_short).on_hover_text(&path_q);
                             ui.label("Finished");
                             ui.label("2 / 2");
                             ui.label("5 / 5");
@@ -920,9 +935,23 @@ fn audit_items(app: &App, ui: &mut Ui, task: &Task) {
                             } else {
                                 "Finished"
                             };
+                            let host_short = if host.chars().count() > 28 {
+                                let mut s: String = host.chars().take(27).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                host.clone()
+                            };
+                            let path_short = if path.chars().count() > 36 {
+                                let mut s: String = path.chars().take(35).collect();
+                                s.push('…');
+                                s
+                            } else {
+                                path.clone()
+                            };
                             ui.label((idx + 1).to_string());
-                            ui.label(host);
-                            ui.monospace(path);
+                            ui.label(host_short).on_hover_text(&host);
+                            ui.monospace(path_short).on_hover_text(&path);
                             ui.label(format!("{status_lbl} ({code})"));
                             ui.label("2 / 2");
                             ui.label(if app.panels.scanner.active_checks {
