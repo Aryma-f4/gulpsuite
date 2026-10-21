@@ -336,7 +336,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
             muted(
                 ui,
                 &theme,
-                "Burp's proxy listener accepts HTTP and HTTPS traffic on loopback and routes the integrated browser.",
+                "Gulp's proxy listener accepts HTTP and HTTPS traffic on loopback and routes the integrated browser.",
             );
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
@@ -463,7 +463,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                 ui,
                 &theme,
                 "The integrated Chromium browser trusts this session CA automatically via SPKI pinning. \
-                 External browsers can download the certificate from http://burp/cert or http://burpsuite/cert.",
+                 External browsers can download the certificate from http://gulp/cert or http://gulpsuite/cert.",
             );
             if let Some(path) = app.proxy.authority_path() {
                 ui.horizontal(|ui| {
@@ -488,7 +488,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                         app.status = format!("Copied session CA SPKI pin: {pin}");
                     }
                 }
-                ui.monospace("http://burp/cert");
+                ui.monospace("http://gulp/cert");
             });
 
             // 2. Request and response interception rules
@@ -710,11 +710,11 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                 );
                 cols[1].checkbox(
                     &mut app.panels.proxy_panel.misc_disable_portal,
-                    "Disable web interface at http://burpsuite",
+                    "Disable web interface at http://gulpsuite",
                 );
                 cols[1].checkbox(
                     &mut app.panels.proxy_panel.misc_suppress_errors,
-                    "Suppress Burp error messages in browser",
+                    "Suppress Gulp error messages in browser",
                 );
                 cols[1].checkbox(
                     &mut app.panels.proxy_panel.misc_dont_log_history,

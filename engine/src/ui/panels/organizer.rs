@@ -121,7 +121,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     ui,
                     &theme,
                     "Organizer inbox is empty",
-                    "To get started, send a message to Organizer from anywhere in Burp.",
+                    "To get started, send a message to Organizer from anywhere in Gulp.",
                     true,
                     None,
                 );

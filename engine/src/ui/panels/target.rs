@@ -86,6 +86,8 @@ pub struct TargetPanel {
     pub kb_severity_filter: usize,
     pub issue_sev_filter: [bool; 4],
     pub issue_conf_filter: [bool; 3],
+    /// Tracks collapsed host, folder, and query-parent node keys in `Target -> Site map`.
+    pub collapsed_nodes: std::collections::HashSet<String>,
 }
 
 impl Default for TargetPanel {
@@ -129,6 +131,7 @@ impl Default for TargetPanel {
             kb_severity_filter: 0,
             issue_sev_filter: [true, true, true, true],
             issue_conf_filter: [true, true, true],
+            collapsed_nodes: std::collections::HashSet::new(),
         }
     }
 }
@@ -2178,13 +2181,20 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         Some(Color32::from_rgb(0x18, 0x58, 0xA8))
                                     };
 
+                                    let host_collapse_key = format!("host:{host}");
+                                    let host_expanded = !app
+                                        .panels
+                                        .target_panel
+                                        .collapsed_nodes
+                                        .contains(&host_collapse_key);
+
                                     let host_resp = draw_sitemap_tree_row(
                                         ui,
                                         &theme,
                                         ("host", host),
                                         0,
                                         true,
-                                        true,
+                                        host_expanded,
                                         if is_https {
                                             SiteMapIcon::SecureHost
                                         } else {
@@ -2195,7 +2205,26 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         selected_host,
                                         false,
                                     );
-                                    if host_resp.clicked() || host_resp.secondary_clicked() {
+                                    if host_resp.clicked() {
+                                        let clicked_chevron = host_resp
+                                            .interact_pointer_pos()
+                                            .is_some_and(|pos| pos.x <= host_resp.rect.min.x + 34.0);
+                                        if clicked_chevron || selected_host {
+                                            if host_expanded {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .insert(host_collapse_key.clone());
+                                            } else {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .remove(&host_collapse_key);
+                                            }
+                                        }
+                                        app.panels.target_panel.host = Some(host.clone());
+                                        app.panels.target_panel.path = None;
+                                    } else if host_resp.secondary_clicked() {
                                         app.panels.target_panel.host = Some(host.clone());
                                         app.panels.target_panel.path = None;
                                     }
@@ -2203,6 +2232,32 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                     super::show_persistent_context_menu(&host_resp, |ui| {
                                         ui.set_min_width(220.0);
                                         ui.label(RichText::new(host).strong());
+                                        ui.separator();
+                                        if ui
+                                            .button(if host_expanded {
+                                                "Collapse branch"
+                                            } else {
+                                                "Expand branch"
+                                            })
+                                            .clicked()
+                                        {
+                                            if host_expanded {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .insert(host_collapse_key.clone());
+                                            } else {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .remove(&host_collapse_key);
+                                            }
+                                            ui.close();
+                                        }
+                                        if ui.button("Expand all").clicked() {
+                                            app.panels.target_panel.collapsed_nodes.clear();
+                                            ui.close();
+                                        }
                                         ui.separator();
                                         if ui.button("Add to scope").clicked() {
                                             if !app.panels.target_panel.scope.contains(host) {
@@ -2251,6 +2306,11 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                             ui.close();
                                         }
                                     });
+
+                                    if !host_expanded {
+                                        ui.add_space(2.0);
+                                        continue;
+                                    }
 
                                     // Group paths into top-level folders and direct root leaves (`site-map-populated.png`)
                                     let mut folders: std::collections::BTreeMap<
@@ -2333,6 +2393,12 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                     // 2. Folder nodes + nested children (`site-map-populated.png`)
                                     for (folder, children) in &folders {
                                         let folder_prefix = format!("/{folder}");
+                                        let folder_collapse_key = format!("folder:{host}{folder_prefix}");
+                                        let folder_expanded = !app
+                                            .panels
+                                            .target_panel
+                                            .collapsed_nodes
+                                            .contains(&folder_collapse_key);
                                         let folder_sel = app.panels.target_panel.host.as_deref()
                                             == Some(host.as_str())
                                             && app.panels.target_panel.path.as_deref()
@@ -2343,7 +2409,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                             ("folder", host, folder),
                                             1,
                                             true,
-                                            true,
+                                            folder_expanded,
                                             SiteMapIcon::FolderOpen,
                                             None,
                                             folder,
@@ -2351,8 +2417,48 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                             false,
                                         );
                                         if folder_resp.clicked() {
+                                            if folder_expanded {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .insert(folder_collapse_key.clone());
+                                            } else {
+                                                app.panels
+                                                    .target_panel
+                                                    .collapsed_nodes
+                                                    .remove(&folder_collapse_key);
+                                            }
                                             app.panels.target_panel.host = Some(host.clone());
-                                            app.panels.target_panel.path = Some(folder_prefix);
+                                            app.panels.target_panel.path = Some(folder_prefix.clone());
+                                        }
+                                        super::show_persistent_context_menu(&folder_resp, |ui| {
+                                            ui.set_min_width(180.0);
+                                            ui.label(RichText::new(&folder_prefix).strong());
+                                            ui.separator();
+                                            if ui
+                                                .button(if folder_expanded {
+                                                    "Collapse folder"
+                                                } else {
+                                                    "Expand folder"
+                                                })
+                                                .clicked()
+                                            {
+                                                if folder_expanded {
+                                                    app.panels
+                                                        .target_panel
+                                                        .collapsed_nodes
+                                                        .insert(folder_collapse_key.clone());
+                                                } else {
+                                                    app.panels
+                                                        .target_panel
+                                                        .collapsed_nodes
+                                                        .remove(&folder_collapse_key);
+                                                }
+                                                ui.close();
+                                            }
+                                        });
+                                        if !folder_expanded {
+                                            continue;
                                         }
                                         for (full_path, _cnt) in children {
                                             let selected = app.panels.target_panel.path.as_deref()
@@ -2365,6 +2471,13 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 .unwrap_or(full_path)
                                                 .trim_start_matches('/');
                                             let has_query = full_path.contains('?');
+                                            let query_collapse_key =
+                                                format!("query:{host}{full_path}");
+                                            let query_expanded = !app
+                                                .panels
+                                                .target_panel
+                                                .collapsed_nodes
+                                                .contains(&query_collapse_key);
                                             let icon = if has_query {
                                                 SiteMapIcon::DynPage
                                             } else {
@@ -2376,16 +2489,38 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 ("child", host, full_path),
                                                 2,
                                                 has_query,
-                                                true,
+                                                query_expanded,
                                                 icon,
                                                 Some(Color32::from_rgb(0x18, 0x58, 0xA8)),
                                                 rel_name.split('?').next().unwrap_or(rel_name),
                                                 selected && !has_query,
                                                 false,
                                             );
-                                            if child_resp.clicked()
-                                                || child_resp.secondary_clicked()
-                                            {
+                                            if child_resp.clicked() {
+                                                if has_query {
+                                                    let clicked_chevron = child_resp
+                                                        .interact_pointer_pos()
+                                                        .is_some_and(|pos| {
+                                                            pos.x <= child_resp.rect.min.x + 68.0
+                                                        });
+                                                    if clicked_chevron || selected {
+                                                        if query_expanded {
+                                                            app.panels
+                                                                .target_panel
+                                                                .collapsed_nodes
+                                                                .insert(query_collapse_key.clone());
+                                                        } else {
+                                                            app.panels
+                                                                .target_panel
+                                                                .collapsed_nodes
+                                                                .remove(&query_collapse_key);
+                                                        }
+                                                    }
+                                                }
+                                                app.panels.target_panel.host = Some(host.clone());
+                                                app.panels.target_panel.path =
+                                                    Some(full_path.clone());
+                                            } else if child_resp.secondary_clicked() {
                                                 app.panels.target_panel.host = Some(host.clone());
                                                 app.panels.target_panel.path =
                                                     Some(full_path.clone());
@@ -2411,34 +2546,39 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 &sample_resp,
                                             );
 
-                                            // If query string exists, also render the `? query` child node (`site-map-populated.png`)
-                                            if let Some((_, q_part)) = full_path.split_once('?') {
-                                                let q_resp = draw_sitemap_tree_row(
-                                                    ui,
-                                                    &theme,
-                                                    ("query-child", host, full_path),
-                                                    3,
-                                                    false,
-                                                    false,
-                                                    SiteMapIcon::QueryPage,
-                                                    None,
-                                                    q_part,
-                                                    selected,
-                                                    false,
-                                                );
-                                                if q_resp.clicked() || q_resp.secondary_clicked() {
-                                                    app.panels.target_panel.host =
-                                                        Some(host.clone());
-                                                    app.panels.target_panel.path =
-                                                        Some(full_path.clone());
+                                            // If query string exists and is expanded, render the `? query` child node (`site-map-populated.png`)
+                                            if query_expanded {
+                                                if let Some((_, q_part)) = full_path.split_once('?')
+                                                {
+                                                    let q_resp = draw_sitemap_tree_row(
+                                                        ui,
+                                                        &theme,
+                                                        ("query-child", host, full_path),
+                                                        3,
+                                                        false,
+                                                        false,
+                                                        SiteMapIcon::QueryPage,
+                                                        None,
+                                                        q_part,
+                                                        selected,
+                                                        false,
+                                                    );
+                                                    if q_resp.clicked()
+                                                        || q_resp.secondary_clicked()
+                                                    {
+                                                        app.panels.target_panel.host =
+                                                            Some(host.clone());
+                                                        app.panels.target_panel.path =
+                                                            Some(full_path.clone());
+                                                    }
+                                                    super::attach_message_context_menu(
+                                                        app,
+                                                        &q_resp,
+                                                        &full_url,
+                                                        &sample_req,
+                                                        &sample_resp,
+                                                    );
                                                 }
-                                                super::attach_message_context_menu(
-                                                    app,
-                                                    &q_resp,
-                                                    &full_url,
-                                                    &sample_req,
-                                                    &sample_resp,
-                                                );
                                             }
                                         }
                                     }

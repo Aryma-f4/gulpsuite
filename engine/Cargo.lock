@@ -1431,6 +1431,7 @@ dependencies = [
  "base64",
  "eframe",
  "egui_kittest",
+ "flate2",
  "libc",
  "objc",
  "rcgen",

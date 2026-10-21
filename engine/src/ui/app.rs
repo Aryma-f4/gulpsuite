@@ -3006,7 +3006,7 @@ impl App {
                 (crate::ui::icons::Glyph::Gear, "Settings"),
                 (crate::ui::icons::Glyph::Search, "Search"),
                 (crate::ui::icons::Glyph::Terminal, "Browser console"),
-                (crate::ui::icons::Glyph::Globe, "Burp browser"),
+                (crate::ui::icons::Glyph::Globe, "Gulp browser"),
             ];
             let size = 16.0;
             let mut x = rect.max.x - 12.0 - size;
@@ -3870,7 +3870,7 @@ impl App {
         let target = self.log.iter().rev().find_map(|tx| {
             url::Url::parse(&tx.target).ok().filter(|url| matches!(url.scheme(), "http" | "https"))
                 .map(|url| url.to_string())
-        }).unwrap_or_else(|| "http://burp/".into());
+        }).unwrap_or_else(|| "http://gulp/".into());
         if let Some(session) = &mut self.browser_session {
             if self.listening == Some(session.config.proxy_port) && session.is_running() {
                 match session.open_window(target) {

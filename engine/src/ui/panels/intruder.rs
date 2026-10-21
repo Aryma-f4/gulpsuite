@@ -885,7 +885,7 @@ fn draw_getting_started(app: &mut App, ui: &mut Ui) {
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new(
-                                "To get started, send a request to Intruder\nfrom anywhere in Burp.",
+                                "To get started, send a request to Intruder\nfrom anywhere in Gulp.",
                             )
                             .size(18.0)
                             .strong()

@@ -64,7 +64,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
             muted(ui, &theme, &format!("Probing… {}", app.panels.discover_progress));
         });
     } else {
-        muted(ui, &theme, "Burp crawls a starting URL; this build probes a fixed path list against hosts already in the proxy history.");
+        muted(ui, &theme, "Gulp crawls a starting URL; this build probes a fixed path list against hosts already in the proxy history.");
     }
 
     ui.add_space(6.0);

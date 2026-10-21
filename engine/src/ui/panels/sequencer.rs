@@ -71,7 +71,7 @@ fn automaton(app: &mut App, ui: &mut Ui) {
         muted(
             ui,
             &theme,
-            "Add at least two samples. Burp compares a set: a single token tells you nothing.",
+            "Add at least two samples. Gulp compares a set: a single token tells you nothing.",
         );
         return;
     }

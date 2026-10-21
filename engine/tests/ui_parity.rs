@@ -114,7 +114,7 @@ fn dashboard_actions_change_task_state() {
     // Burp Scanner reporting wizard (HTML & XML) + Create manual issue + BChecks
     assert_eq!(harness.state().panels.scanner.bchecks.len(), 4);
     let html_rep = gulpsuite::ui::panels::scanner::generate_scan_report(harness.state());
-    assert!(html_rep.contains("Burp Scanner Report"));
+    assert!(html_rep.contains("Gulp Scanner Report"));
     assert!(html_rep.contains("SQL injection"));
     harness.state_mut().panels.scanner.report_format = 1;
     let xml_rep = gulpsuite::ui::panels::scanner::generate_scan_report(harness.state());

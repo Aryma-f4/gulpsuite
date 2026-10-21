@@ -1523,7 +1523,7 @@ fn draw_repeater_getting_started(app: &mut App, ui: &mut Ui, theme: &crate::ui::
                     ui.vertical(|ui| {
                         ui.label(
                             RichText::new(
-                                "To get started, send a request to Repeater\nfrom anywhere in Burp.",
+                                "To get started, send a request to Repeater\nfrom anywhere in Gulp.",
                             )
                             .size(18.0)
                             .strong()

@@ -305,11 +305,11 @@ fn installed(app: &mut App, ui: &mut Ui) {
         );
     });
     ui.separator();
-    heading(ui, &theme, "Burp extensions");
+    heading(ui, &theme, "Gulp extensions");
     muted(
         ui,
         &theme,
-        "Extensions let you customize Burp's behavior using your own or third-party code.",
+        "Extensions let you customize Gulp's behavior using your own or third-party code.",
     );
     ui.add_space(4.0);
     eframe::egui::Grid::new("installed-extensions-grid")
@@ -372,7 +372,7 @@ fn installed(app: &mut App, ui: &mut Ui) {
     muted(
         ui,
         &theme,
-        "Burp loads third-party code through its extension API (Montoya, Python and Bambda). This \
+        "Gulp loads third-party code through its extension API (Montoya, Python and Bambda). This \
          build ships the Bambda transform language only; there is no loader for compiled extensions.",
     );
 }

@@ -305,7 +305,7 @@ pub fn handshake(head: &str) -> Handshake {
     let mut upgrade = false;
     let mut key = None;
     let mut accept = None;
-    for line in head.split("\r\n").skip(1) {
+    for line in head.lines().skip(1) {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };

@@ -955,7 +955,7 @@ impl Default for ScannerPanel {
             report_req_mode: 1,
             report_resp_mode: 1,
             report_file_path: "gulpsuite-scanner-report.html".into(),
-            report_title: "Burp Scanner Report".into(),
+            report_title: "Gulp Scanner Report".into(),
             report_organization: 0,
             report_toc_levels: 2,
             report_summary_table_scope: 0,
@@ -1451,7 +1451,7 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
             ui.add_space(2.0);
             ui.label(
                 RichText::new(
-                    "Define the URLs to scan. Burp will begin crawling from these URLs, and by default will include content within the same domain and folders.",
+                    "Define the URLs to scan. Gulp will begin crawling from these URLs, and by default will include content within the same domain and folders.",
                 )
                 .size(12.5)
                 .color(theme.color("ui.text.body")),
@@ -1745,7 +1745,7 @@ fn draw_launcher_step_configuration(app: &mut App, ui: &mut Ui) {
     ui.add_space(4.0);
     ui.label(
         RichText::new(
-            "Scan configurations and modes are groups of settings that define how a scan is performed. Scan modes offer preset options designed to let you trade off speed and coverage. Alternatively, you can select one or more custom configurations. Burp Scanner applies any selected configurations in order, enabling you to fine-tune scanning behaviour.",
+            "Scan configurations and modes are groups of settings that define how a scan is performed. Scan modes offer preset options designed to let you trade off speed and coverage. Alternatively, you can select one or more custom configurations. Gulp Scanner applies any selected configurations in order, enabling you to fine-tune scanning behaviour.",
         )
         .size(12.5)
         .color(theme.color("ui.text.body")),
@@ -2082,7 +2082,7 @@ fn draw_launcher_step_app_login(app: &mut App, ui: &mut Ui) {
     ui.add_space(4.0);
     ui.label(
         RichText::new(
-            "Provide login credentials or recorded login sequences for Burp Scanner to submit when it finds login forms during the crawl.",
+            "Provide login credentials or recorded login sequences for Gulp Scanner to submit when it finds login forms during the crawl.",
         )
         .size(12.5)
         .color(theme.color("ui.text.body")),
@@ -2545,7 +2545,7 @@ pub fn draw_scanner_modals(app: &mut App, ctx: &egui::Context) {
 
     if app.panels.scanner.show_report_wizard {
         let mut open = true;
-        egui::Window::new("Burp Scanner reporting wizard")
+        egui::Window::new("Gulp Scanner reporting wizard")
             .open(&mut open)
             .resizable(true)
             .default_pos([310.0, 110.0])

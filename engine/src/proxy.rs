@@ -800,7 +800,7 @@ impl Proxy {
         // from the response. A request that already carries a Cookie header is left alone, so an
         // explicit cookie always wins over the jar.
         // Match-and-replace runs first, so a rule can rewrite a header the cookie jar would add.
-        let head = self.apply_cookies(self.apply_rules(&head), &host, port);
+        let head = sanitize_upstream_request_headers(&self.apply_cookies(self.apply_rules(&head), &host, port));
         if upstream.write_all(head.as_bytes()).await.is_err() {
             self.emit(Event::Error(format!("write upstream: {target}")));
             return;
@@ -892,7 +892,7 @@ impl Proxy {
             if let Some(length) = content_length(&head_text).filter(|n| *n <= MAX_HELD_BODY && response_has_body(method, head_status)) {
                 let mut body = vec![0u8; length];
                 if up_reader.read_exact(&mut body).await.is_ok() {
-                    let raw = format!("{head_text}{}", String::from_utf8_lossy(&body));
+                    let raw = decode_http_response_for_display(&head_text, &body, true);
                     let (decision, wait) = oneshot::channel();
                     let id = self.inner.next_held.fetch_add(1, Ordering::SeqCst);
                     let queued = {
@@ -965,8 +965,7 @@ impl Proxy {
             };
             let _ = client.flush().await;
             let _ = client.shutdown().await;
-            let mut response = String::from_utf8_lossy(&head_bytes).into_owned();
-            response.push_str(&String::from_utf8_lossy(&captured));
+            let response = decode_http_response_for_display(&head_text, &captured, false);
             for cookie in crate::cookies::parse_set_cookie_headers(&response) {
                 self.inner.cookies.store(&host, &cookie);
             }
@@ -1002,8 +1001,7 @@ impl Proxy {
         let _ = client.flush().await;
         let _ = client.shutdown().await;
 
-        let mut response = String::from_utf8_lossy(&head_bytes).into_owned();
-        response.push_str(&String::from_utf8_lossy(&captured));
+        let response = decode_http_response_for_display(&response_head, &captured, false);
         for cookie in crate::cookies::parse_set_cookie_headers(&response) {
             self.inner.cookies.store(&host, &cookie);
         }
@@ -1034,7 +1032,10 @@ impl Proxy {
         let Some(host) = url.host_str() else {
             return false;
         };
-        let is_portal_host = host.eq_ignore_ascii_case("burp")
+        let is_portal_host = host.eq_ignore_ascii_case("gulp")
+            || host.eq_ignore_ascii_case("gulpsuite")
+            || host.eq_ignore_ascii_case("gulp.local")
+            || host.eq_ignore_ascii_case("burp")
             || host.eq_ignore_ascii_case("burpsuite")
             || host.eq_ignore_ascii_case("burp.local");
         if !is_portal_host {
@@ -1282,18 +1283,44 @@ const CARRY_CEILING: usize = crate::ws::MAX_FRAME_PAYLOAD + 14;
 /// the stream is desynchronised and the remainder is dropped rather than grown without limit.
 fn drain_frames(buffer: &mut Vec<u8>, on_frame: &mut dyn FnMut(&crate::ws::Frame)) {
     loop {
-        let Ok((frames, used)) = crate::ws::decode(buffer) else {
+        if buffer.len() < 2 {
+            return;
+        }
+        // If RSV1 (`0x40`, RFC 7692 `permessage-deflate`) is set on a data frame, clear RSV bits
+        // before RFC 6455 framing decode and inflate the payload afterwards.
+        let rsv1 = buffer[0] & 0x40 != 0;
+        if buffer[0] & 0x70 != 0 {
+            buffer[0] &= !0x70;
+        }
+        let Ok((mut frames, used)) = crate::ws::decode(buffer) else {
             // A malformed stream cannot resynchronise on a frame boundary.
             buffer.clear();
             return;
         };
         if frames.is_empty() || used == 0 {
+            if rsv1 {
+                buffer[0] |= 0x40;
+            }
             if buffer.len() > CARRY_CEILING {
                 buffer.clear();
             }
             return;
         }
-        for frame in &frames {
+        for (idx, frame) in frames.iter_mut().enumerate() {
+            if idx == 0 && rsv1 && !crate::ws::is_control(frame.opcode) {
+                let mut compressed = frame.payload.clone();
+                compressed.extend_from_slice(&[0x00, 0x00, 0xff, 0xff]);
+                let mut inflated = Vec::new();
+                if std::io::Read::read_to_end(
+                    &mut flate2::read::DeflateDecoder::new(&compressed[..]),
+                    &mut inflated,
+                )
+                .is_ok()
+                    && !inflated.is_empty()
+                {
+                    frame.payload = inflated;
+                }
+            }
             on_frame(frame);
         }
         buffer.drain(..used);
@@ -1672,6 +1699,7 @@ async fn one_shot(host: &str, port: u16, raw: &str, secure: bool, roots: &[rustl
         }
         break (status, head, bytes);
     };
+    let head_len = full.len();
     if method.eq_ignore_ascii_case("HEAD") || matches!(status, 101 | 204 | 304) {
         return Ok((status, head));
     }
@@ -1720,7 +1748,136 @@ async fn one_shot(host: &str, port: u16, raw: &str, secure: bool, roots: &[rustl
         reader.take(remaining as u64).read_to_end(&mut full).await?;
         if full.len() > MANUAL_RESPONSE_LIMIT { return Err(io::Error::other("response exceeds the 32 MiB manual capture limit")); }
     }
-    Ok((status, String::from_utf8_lossy(&full).into_owned()))
+    let body_raw = &full[head_len..];
+    Ok((status, decode_http_response_for_display(&head, body_raw, false)))
+}
+
+/// Normalises outgoing request headers so:
+/// 1. `Accept-Encoding` only advertises `gzip, deflate` (never `br`/`zstd`), ensuring compressed
+///    responses can always be decompressed for inspection in Proxy/Repeater/Intruder/Scanner.
+/// 2. WebSocket upgrade requests omit `Sec-WebSocket-Extensions` (`permessage-deflate`) so frames
+///    arrive as readable RFC 6455 UTF-8/binary messages.
+fn sanitize_upstream_request_headers(raw_head: &str) -> String {
+    let is_ws = crate::ws::is_upgrade(raw_head);
+    let mut out = String::with_capacity(raw_head.len());
+    for (idx, line) in raw_head.split_inclusive('\n').enumerate() {
+        if idx > 0 {
+            if let Some((name, val)) = line.split_once(':') {
+                let name_trim = name.trim();
+                if is_ws && name_trim.eq_ignore_ascii_case("sec-websocket-extensions") {
+                    continue;
+                }
+                if name_trim.eq_ignore_ascii_case("accept-encoding") {
+                    let lower = val.to_ascii_lowercase();
+                    if lower.contains("br") || lower.contains("zstd") {
+                        out.push_str("Accept-Encoding: gzip, deflate\r\n");
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// Extracts contiguous payload bytes from a `Transfer-Encoding: chunked` body buffer if chunked,
+/// then transparently decompresses `Content-Encoding: gzip` / `deflate` so responses in Proxy,
+/// Repeater, Intruder, Logger, and Target Site map never render as binary `0x1f 0x8b` garbage.
+fn decode_http_response_for_display(head: &str, raw_body: &[u8], strip_encoding_header: bool) -> String {
+    use std::io::Read;
+
+    let unchunked: std::borrow::Cow<'_, [u8]> =
+        if header_has_token(head, "transfer-encoding", "chunked") {
+            let mut decoded = Vec::with_capacity(raw_body.len());
+            let mut cursor = 0usize;
+            let mut ok = false;
+            while cursor < raw_body.len() {
+                let rest = &raw_body[cursor..];
+                let Some(nl) = rest.iter().position(|&b| b == b'\n') else {
+                    break;
+                };
+                let size_line = String::from_utf8_lossy(&rest[..=nl]);
+                let hex_part = size_line
+                    .trim_end_matches(['\r', '\n'])
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let Ok(chunk_size) = usize::from_str_radix(hex_part, 16) else {
+                    break;
+                };
+                cursor += nl + 1;
+                if chunk_size == 0 {
+                    ok = true;
+                    break;
+                }
+                if cursor + chunk_size > raw_body.len() {
+                    decoded.extend_from_slice(&raw_body[cursor..]);
+                    ok = true;
+                    break;
+                }
+                decoded.extend_from_slice(&raw_body[cursor..cursor + chunk_size]);
+                cursor += chunk_size;
+                if raw_body[cursor..].starts_with(b"\r\n") {
+                    cursor += 2;
+                } else if raw_body[cursor..].starts_with(b"\n") {
+                    cursor += 1;
+                }
+            }
+            if ok && !decoded.is_empty() {
+                std::borrow::Cow::Owned(decoded)
+            } else {
+                std::borrow::Cow::Borrowed(raw_body)
+            }
+        } else {
+            std::borrow::Cow::Borrowed(raw_body)
+        };
+
+    let payload: &[u8] = &unchunked;
+    let is_gzip = header_has_token(head, "content-encoding", "gzip")
+        || header_has_token(head, "content-encoding", "x-gzip")
+        || payload.starts_with(&[0x1f, 0x8b]);
+    let is_deflate = header_has_token(head, "content-encoding", "deflate");
+
+    let mut decompressed = Vec::new();
+    let did_decompress = if is_gzip && payload.len() >= 10 {
+        let mut decoder = flate2::read::GzDecoder::new(payload).take(16 * 1024 * 1024);
+        decoder.read_to_end(&mut decompressed).is_ok() && !decompressed.is_empty()
+    } else if is_deflate && !payload.is_empty() {
+        let mut zlib = flate2::read::ZlibDecoder::new(payload).take(16 * 1024 * 1024);
+        if zlib.read_to_end(&mut decompressed).is_ok() && !decompressed.is_empty() {
+            true
+        } else {
+            decompressed.clear();
+            let mut def = flate2::read::DeflateDecoder::new(payload).take(16 * 1024 * 1024);
+            def.read_to_end(&mut decompressed).is_ok() && !decompressed.is_empty()
+        }
+    } else {
+        false
+    };
+
+    let final_head = if did_decompress && strip_encoding_header {
+        let mut cleaned = String::with_capacity(head.len());
+        for line in head.split_inclusive('\n') {
+            if line
+                .split_once(':')
+                .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("content-encoding"))
+            {
+                continue;
+            }
+            cleaned.push_str(line);
+        }
+        cleaned
+    } else {
+        head.to_string()
+    };
+
+    if did_decompress {
+        format!("{final_head}{}", String::from_utf8_lossy(&decompressed))
+    } else {
+        format!("{final_head}{}", String::from_utf8_lossy(raw_body))
+    }
 }
 
 fn header_has_token(head: &str, name: &str, token: &str) -> bool {
