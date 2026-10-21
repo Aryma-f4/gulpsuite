@@ -664,10 +664,10 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
                     for (count, col) in [
-                        (info, Color32::from_rgb(0x6E, 0x76, 0x81)),
-                        (low, Color32::from_rgb(0x00, 0x68, 0xB5)),
-                        (medium, Color32::from_rgb(0xF5, 0x7B, 0x20)),
-                        (high, Color32::from_rgb(0xE0, 0x20, 0x4F)),
+                        (info, theme.color("palette.mono.5")),
+                        (low, theme.color("ui.issue.low")),
+                        (medium, theme.color("ui.issue.medium")),
+                        (high, theme.color("ui.issue.high")),
                     ] {
                         let (pill_r, _) =
                             ui.allocate_exact_size(Vec2::new(26.0, 17.0), Sense::hover());
@@ -907,6 +907,7 @@ pub struct ScannerPanel {
     pub manual_issue_confidence: usize,
     pub manual_issue_detail: String,
     pub manual_issue_remediation: String,
+    pub selected_finding: Option<usize>,
 }
 
 impl Default for ScannerPanel {
@@ -1016,6 +1017,7 @@ impl Default for ScannerPanel {
             manual_issue_confidence: 0,
             manual_issue_detail: "Unauthenticated or low-privileged user accessed a restricted endpoint.".into(),
             manual_issue_remediation: "Enforce server-side role and ownership authorization checks on every request.".into(),
+            selected_finding: None,
         }
     }
 }
@@ -1410,21 +1412,26 @@ fn draw_scan_type_option_card(
                 );
             });
             ui.add_space(3.0);
-            ui.label(
-                RichText::new(desc)
-                    .size(11.8)
-                    .color(theme.color("ui.text.body")),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(desc)
+                        .size(11.8)
+                        .color(theme.color("ui.text.body")),
+                )
+                .selectable(false),
             );
         });
 
-    let card_resp = ui.interact(inner.response.rect, id, Sense::click());
+    let card_rect = inner.response.rect;
+    let card_resp = ui.interact(card_rect, id, Sense::click());
     card_resp.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::RadioButton, true, title)
     });
-    if card_resp.hovered() {
+    let pointer_in_card = ui.rect_contains_pointer(card_rect);
+    if card_resp.hovered() || pointer_in_card {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    if card_resp.clicked() {
+    if card_resp.clicked() || (pointer_in_card && ui.input(|i| i.pointer.primary_clicked())) {
         app.panels.scanner.scan_type = idx;
         app.panels.scanner.active_checks = idx != 1;
     }
@@ -1465,19 +1472,21 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
 
     let avail_w = ui.available_width();
     if avail_w >= 460.0 {
-        for pair in type_cards.chunks(2) {
-            ui.columns(2, |cols| {
-                for (c_idx, &(idx, icon, title, desc)) in pair.iter().enumerate() {
-                    draw_scan_type_option_card(
-                        app,
-                        &mut cols[c_idx],
-                        &theme,
-                        idx,
-                        icon,
-                        title,
-                        desc,
-                    );
-                }
+        for (row_idx, pair) in type_cards.chunks(2).enumerate() {
+            ui.push_id(("scan-type-row", row_idx), |ui| {
+                ui.columns(2, |cols| {
+                    for (c_idx, &(idx, icon, title, desc)) in pair.iter().enumerate() {
+                        draw_scan_type_option_card(
+                            app,
+                            &mut cols[c_idx],
+                            &theme,
+                            idx,
+                            icon,
+                            title,
+                            desc,
+                        );
+                    }
+                });
             });
             ui.add_space(6.0);
         }
@@ -1844,19 +1853,21 @@ fn draw_launcher_step_configuration(app: &mut App, ui: &mut Ui) {
 
         let avail_w = ui.available_width();
         if avail_w >= 460.0 {
-            for pair in presets.chunks(2) {
-                ui.columns(2, |cols| {
-                    for (c_idx, &(idx, icon, title, desc)) in pair.iter().enumerate() {
-                        draw_preset_mode_card(
-                            app,
-                            &mut cols[c_idx],
-                            &theme,
-                            idx,
-                            icon,
-                            title,
-                            desc,
-                        );
-                    }
+            for (row_idx, pair) in presets.chunks(2).enumerate() {
+                ui.push_id(("preset-mode-row", row_idx), |ui| {
+                    ui.columns(2, |cols| {
+                        for (c_idx, &(idx, icon, title, desc)) in pair.iter().enumerate() {
+                            draw_preset_mode_card(
+                                app,
+                                &mut cols[c_idx],
+                                &theme,
+                                idx,
+                                icon,
+                                title,
+                                desc,
+                            );
+                        }
+                    });
                 });
                 ui.add_space(10.0);
             }
@@ -2204,23 +2215,28 @@ fn draw_preset_mode_card(
                         );
                     });
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(desc)
-                            .size(12.0)
-                            .color(theme.color("ui.text.body")),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(desc)
+                                .size(12.0)
+                                .color(theme.color("ui.text.body")),
+                        )
+                        .selectable(false),
                     );
                 });
             });
         });
 
-    let card_resp = ui.interact(inner.response.rect, id, Sense::click());
+    let card_rect = inner.response.rect;
+    let card_resp = ui.interact(card_rect, id, Sense::click());
     card_resp.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::RadioButton, true, title)
     });
-    if card_resp.hovered() {
+    let pointer_in_card = ui.rect_contains_pointer(card_rect);
+    if card_resp.hovered() || pointer_in_card {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    if card_resp.clicked() {
+    if card_resp.clicked() || (pointer_in_card && ui.input(|i| i.pointer.primary_clicked())) {
         app.panels.scanner.apply_preset(idx);
     }
 }
@@ -2595,66 +2611,171 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         return;
     }
 
-    eframe::egui::ScrollArea::vertical().show(ui, |ui| {
-        eframe::egui::Grid::new("scanner-findings")
-            .num_columns(4)
-            .striped(true)
-            .show(ui, |ui| {
-                for name in ["Severity", "Issue", "Parameter", "Evidence"] {
-                    ui.label(
-                        eframe::egui::RichText::new(name)
-                            .strong()
-                            .color(theme.color("ui.text.body")),
-                    );
+    eframe::egui::ScrollArea::vertical()
+        .id_salt("scanner-findings-scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let findings_list = app.panels.scanner.findings.clone();
+            for (idx, finding) in findings_list.iter().enumerate() {
+                if app.panels.scanner.only_high
+                    && matches!(
+                        finding.severity,
+                        crate::scanner::Severity::Low | crate::scanner::Severity::Info
+                    )
+                {
+                    continue;
                 }
-                ui.end_row();
-                for finding in app.panels.scanner.findings.clone() {
-                    if app.panels.scanner.only_high
-                        && matches!(
-                            finding.severity,
-                            crate::scanner::Severity::Low | crate::scanner::Severity::Info
-                        )
-                    {
-                        continue;
-                    }
-                    let sev_icon = match finding.severity {
-                        crate::scanner::Severity::High => LauncherIcon::IssueHigh,
-                        crate::scanner::Severity::Medium => LauncherIcon::IssueMedium,
-                        crate::scanner::Severity::Low => LauncherIcon::IssueLow,
-                        crate::scanner::Severity::Info => LauncherIcon::IssueInfo,
-                    };
-                    ui.horizontal(|ui| {
-                        paint_launcher_icon(
-                            ui,
-                            Vec2::new(14.0, 14.0),
-                            severity_colour(&theme, finding.severity),
-                            sev_icon,
-                        );
-                        ui.label(
-                            eframe::egui::RichText::new(finding.severity.as_str())
-                                .color(severity_colour(&theme, finding.severity)),
-                        );
+                let is_open = app.panels.scanner.selected_finding == Some(idx);
+                let sev_icon = match finding.severity {
+                    crate::scanner::Severity::High => LauncherIcon::IssueHigh,
+                    crate::scanner::Severity::Medium => LauncherIcon::IssueMedium,
+                    crate::scanner::Severity::Low => LauncherIcon::IssueLow,
+                    crate::scanner::Severity::Info => LauncherIcon::IssueInfo,
+                };
+                let sev_col = severity_colour(&theme, finding.severity);
+                let card_fill = if is_open {
+                    theme.color(if theme.dark {
+                        "palette.secondary.1"
+                    } else {
+                        "palette.secondary.7"
+                    })
+                } else {
+                    theme.color("ui.background.1")
+                };
+                let card_stroke = if is_open {
+                    Stroke::new(1.5, theme.color("palette.secondary.core"))
+                } else {
+                    Stroke::new(1.0, theme.color("ui.border.1"))
+                };
+
+                let mut action_clicked = false;
+                let inner = egui::Frame::new()
+                    .fill(card_fill)
+                    .stroke(card_stroke)
+                    .corner_radius(4.0)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .outer_margin(egui::Margin::symmetric(0, 3))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(if is_open { "▾" } else { "▸" })
+                                        .strong()
+                                        .color(theme.color("ui.icon.default")),
+                                )
+                                .selectable(false),
+                            );
+                            paint_launcher_icon(ui, Vec2::new(15.0, 15.0), sev_col, sev_icon);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(finding.severity.as_str())
+                                        .strong()
+                                        .color(sev_col),
+                                )
+                                .selectable(false),
+                            );
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&finding.name)
+                                        .strong()
+                                        .color(theme.color("ui.text.header")),
+                                )
+                                .selectable(false),
+                            );
+                            if let Some(param) = &finding.parameter {
+                                if !param.is_empty() {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(format!("[{param}]"))
+                                                .monospace()
+                                                .color(theme.color("icon.link")),
+                                        )
+                                        .selectable(false),
+                                    );
+                                }
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(format!(
+                                                "{} — {}",
+                                                finding.url,
+                                                truncate(&finding.evidence, 56)
+                                            ))
+                                            .size(11.5)
+                                            .color(theme.color("ui.icon.default")),
+                                        )
+                                        .truncate()
+                                        .selectable(false),
+                                    );
+                                },
+                            );
+                        });
+
+                        if is_open {
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.strong("URL:");
+                                ui.monospace(&finding.url);
+                                ui.separator();
+                                ui.strong("Confidence:");
+                                ui.label(&finding.confidence);
+                                if let Some(param) = &finding.parameter {
+                                    ui.separator();
+                                    ui.strong("Parameter:");
+                                    ui.monospace(param);
+                                }
+                                if ui.small_button("View in Target Issues").clicked() {
+                                    action_clicked = true;
+                                    if let Some(pos) = app
+                                        .workspace
+                                        .issues
+                                        .iter()
+                                        .position(|i| i.name == finding.name)
+                                    {
+                                        app.panels.target_panel.selected_issue = Some(pos);
+                                    }
+                                    app.tool = crate::ui::app::TARGET;
+                                    app.view = 1;
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.strong("Evidence / Detail:");
+                            ui.monospace(&finding.evidence);
+                            if let Some(def) = crate::issue_definitions::find_by_name(&finding.name)
+                            {
+                                ui.add_space(4.0);
+                                ui.strong("Issue background:");
+                                ui.label(&def.description);
+                                ui.add_space(2.0);
+                                ui.strong("Remediation:");
+                                ui.label(&def.remediation);
+                            }
+                        }
                     });
-                    ui.label(
-                        eframe::egui::RichText::new(&finding.name)
-                            .color(theme.color("ui.text.body")),
-                    );
-                    ui.label(
-                        eframe::egui::RichText::new(finding.parameter.clone().unwrap_or_default())
-                            .color(theme.color("icon.link")),
-                    );
-                    ui.label(
-                        eframe::egui::RichText::new(format!(
-                            "{} — {}",
-                            finding.url,
-                            truncate(&finding.evidence, 60)
-                        ))
-                        .color(theme.color("ui.icon.default")),
-                    );
-                    ui.end_row();
+
+                let rect = inner.response.rect;
+                let hit = ui.interact(
+                    rect,
+                    ui.id().with(("scanner-finding-card", idx)),
+                    Sense::click(),
+                );
+                let pointer_in = ui.rect_contains_pointer(rect);
+                if hit.hovered() || pointer_in {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
-            });
-    });
+                if !action_clicked
+                    && (hit.clicked() || (pointer_in && ui.input(|i| i.pointer.primary_clicked())))
+                {
+                    app.panels.scanner.selected_finding = if is_open { None } else { Some(idx) };
+                }
+            }
+        });
 }
 
 fn truncate(text: &str, limit: usize) -> String {
@@ -3264,6 +3385,7 @@ pub(crate) fn start(app: &mut App) {
     app.panels.scanner.progress = "Crawling…".into();
     app.status = format!("Scanning {seed}");
     let task_id = app.workspace_adapter.begin_scan(&mut app.workspace, &seed);
+    let _ = app.workspace.tasks.select(task_id);
     if let Some(task) = app.workspace.tasks.get_mut(task_id) {
         task.configuration = format!(
             "{} - {}",

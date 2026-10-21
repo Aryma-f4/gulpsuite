@@ -316,6 +316,9 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             color: Color32::from_black_alpha(if theme.dark { 48 } else { 28 }),
         },
     };
+    let mut control_clicked = false;
+    let mut menu_rect = egui::Rect::NOTHING;
+    let mut toggle_rect = egui::Rect::NOTHING;
     let response = frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             if app.dashboard.rename_task == Some(task.id) {
@@ -327,12 +330,14 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                     .lost_focus()
                     && ui.input(|input| input.key_pressed(egui::Key::Enter));
                 if submitted || ui.button("Save").clicked() {
+                    control_clicked = true;
                     commands.push(DashboardCommand::Rename(
                         task.id,
                         app.dashboard.rename_text.clone(),
                     ));
                 }
                 if ui.button("Cancel").clicked() {
+                    control_clicked = true;
                     app.dashboard.rename_task = None;
                 }
             } else if crate::ui::app::bold_click_label(
@@ -346,10 +351,19 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                 commands.push(DashboardCommand::Select(task.id));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                task_menu(app, ui, task, commands);
+                let (m_rect, m_clicked) = task_menu(app, ui, task, commands);
+                menu_rect = m_rect;
+                if m_clicked {
+                    control_clicked = true;
+                }
             });
         });
-        ui.label(egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")));
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")),
+            )
+            .selectable(false),
+        );
         let show_scan_bar = task.kind == TaskKind::Scan
             && (task.state == TaskState::Running
                 || app.panels.scanner.running
@@ -397,7 +411,9 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                     status_lbl.to_string()
                 };
                 ui.add(
-                    egui::Label::new(egui::RichText::new(short_status).size(11.5)).truncate(),
+                    egui::Label::new(egui::RichText::new(short_status).size(11.5))
+                        .truncate()
+                        .selectable(false),
                 )
                 .on_hover_text(status_lbl);
             });
@@ -406,12 +422,16 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             ui.add_space(17.0);
         }
         ui.horizontal(|ui| {
-            ui.label(task_activity_label(task));
+            ui.add(egui::Label::new(task_activity_label(task)).selectable(false));
             let mut active = task.state == TaskState::Running;
+            let can_toggle = task_can_toggle(task) || task.kind == TaskKind::Scan;
             let toggle = ui
-                .add_enabled_ui(task_can_toggle(task), |ui| switch(ui, &mut active, accent))
+                .add_enabled_ui(can_toggle, |ui| switch(ui, &mut active, accent))
                 .inner;
+            toggle_rect = toggle.rect;
             if toggle.clicked() {
+                control_clicked = true;
+                commands.push(DashboardCommand::Select(task.id));
                 if active {
                     commands.push(DashboardCommand::Resume(task.id));
                 } else {
@@ -423,12 +443,23 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
                 issue_pill(ui, counts.low, theme.color("ui.issue.low"));
                 issue_pill(ui, counts.medium, theme.color("ui.issue.medium"));
                 issue_pill(ui, counts.high, theme.color("ui.issue.high"));
-                ui.label("Issues:");
+                ui.add(egui::Label::new("Issues:").selectable(false));
             });
         });
         ui.add_space(32.0);
     });
-    if response.response.clicked() {
+    let card_rect = response.response.rect;
+    let pointer_in_card = ui.rect_contains_pointer(card_rect);
+    if pointer_in_card {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let pointer_on_controls = pointer_in_card
+        && ui
+            .input(|i| i.pointer.interact_pos())
+            .is_some_and(|pos| menu_rect.contains(pos) || toggle_rect.contains(pos));
+    let pointer_clicked_card =
+        pointer_in_card && !pointer_on_controls && ui.input(|i| i.pointer.primary_clicked());
+    if !control_clicked && (response.response.clicked() || pointer_clicked_card) {
         commands.push(DashboardCommand::Select(task.id));
     }
     if selected {
@@ -444,15 +475,24 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
     }
 }
 
-fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<DashboardCommand>) {
+fn task_menu(
+    app: &mut App,
+    ui: &mut Ui,
+    task: &Task,
+    commands: &mut Vec<DashboardCommand>,
+) -> (egui::Rect, bool) {
     let controls = controls_for(task.state);
     let dot_col = app.theme.color("ui.icon.default");
+    let mut interacted = false;
     let menu = ui.menu_button("   ", |ui| {
+        interacted = true;
         if controls.pause && ui.button("Pause").clicked() {
             commands.push(DashboardCommand::Pause(task.id));
             ui.close();
         }
-        if controls.resume && ui.button("Resume").clicked() {
+        if (controls.resume || (task.kind == TaskKind::Scan && task.state != TaskState::Running))
+            && ui.button("Resume").clicked()
+        {
             commands.push(DashboardCommand::Resume(task.id));
             ui.close();
         }
@@ -470,6 +510,9 @@ fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             ui.close();
         }
     });
+    if menu.response.clicked() {
+        interacted = true;
+    }
     let c = menu.response.rect.center();
     for dy in [-4.5_f32, 0.0, 4.5] {
         ui.painter()
@@ -482,6 +525,7 @@ fn task_menu(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             format!("Task actions: {}", task.name),
         )
     });
+    (menu.response.rect, interacted)
 }
 
 fn pane_icons(ui: &mut Ui, theme: &crate::ui::theme::Theme, commands: &mut Vec<DashboardCommand>) {
@@ -530,14 +574,14 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
             );
             let rate = ui.add(
                 egui::Button::new(
-                    egui::RichText::new("Rate this scan")
+                    egui::RichText::new("Rate this at GitHub")
                         .color(theme.color("icon.link"))
                         .underline(),
                 )
                 .frame(false),
             );
             rate.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Rate this scan")
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Rate this at GitHub")
             });
             if star_resp.clicked()
                 || rate
@@ -671,8 +715,9 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                     ui.end_row();
                     ui.label(egui::RichText::new(task_activity_label(task)).strong());
                     let mut active = task.state == TaskState::Running;
+                    let can_toggle = task_can_toggle(task) || task.kind == TaskKind::Scan;
                     let toggle = ui
-                        .add_enabled_ui(task_can_toggle(task), |ui| {
+                        .add_enabled_ui(can_toggle, |ui| {
                             switch(ui, &mut active, theme.color("palette.secondary.core"))
                         })
                         .inner;
@@ -1244,28 +1289,66 @@ fn apply_command(app: &mut App, command: DashboardCommand) {
             }
             Err(error) => app.status = error.to_string(),
         },
-        DashboardCommand::Pause(id) => match app.workspace.tasks.pause(id) {
-            Ok(()) => {
-                if app.panels.intruder.task_id == Some(id) {
-                    if let Some(control) = &app.panels.intruder.control {
-                        control.pause();
+        DashboardCommand::Pause(id) => {
+            let is_scan = app
+                .workspace
+                .tasks
+                .get(id)
+                .is_some_and(|t| t.kind == TaskKind::Scan);
+            match app.workspace.tasks.pause(id) {
+                Ok(()) => {
+                    if app.panels.intruder.task_id == Some(id) {
+                        if let Some(control) = &app.panels.intruder.control {
+                            control.pause();
+                        }
                     }
-                }
-                app.status = "Task paused".into();
-            }
-            Err(error) => app.status = error.to_string(),
-        },
-        DashboardCommand::Resume(id) => match app.workspace.tasks.resume(id) {
-            Ok(()) => {
-                if app.panels.intruder.task_id == Some(id) {
-                    if let Some(control) = &app.panels.intruder.control {
-                        control.resume();
+                    if is_scan {
+                        app.panels.scanner.running = false;
+                        app.scanner_updates = None;
                     }
+                    app.status = "Task paused".into();
                 }
-                app.status = "Task resumed".into();
+                Err(error) => app.status = error.to_string(),
             }
-            Err(error) => app.status = error.to_string(),
-        },
+        }
+        DashboardCommand::Resume(id) => {
+            let scan_scope = app
+                .workspace
+                .tasks
+                .get(id)
+                .filter(|t| t.kind == TaskKind::Scan)
+                .map(|t| t.scope.clone());
+            match app.workspace.tasks.resume(id) {
+                Ok(()) => {
+                    if app.panels.intruder.task_id == Some(id) {
+                        if let Some(control) = &app.panels.intruder.control {
+                            control.resume();
+                        }
+                    }
+                    if let Some(scope) = scan_scope {
+                        if !scope.trim().is_empty() && scope.starts_with("http") {
+                            app.panels.scanner.seed = scope.clone();
+                            app.panels.scanner.urls_to_scan = scope;
+                        }
+                        if !app.panels.scanner.running {
+                            super::scanner::start(app);
+                        }
+                    }
+                    app.status = "Task resumed".into();
+                }
+                Err(_) if scan_scope.is_some() => {
+                    // Restart a completed/cancelled scan task when its toggle switch is clicked
+                    if let Some(scope) = scan_scope {
+                        if !scope.trim().is_empty() && scope.starts_with("http") {
+                            app.panels.scanner.seed = scope.clone();
+                            app.panels.scanner.urls_to_scan = scope;
+                        }
+                    }
+                    super::scanner::start(app);
+                }
+                Err(error) => app.status = error.to_string(),
+            }
+        }
         DashboardCommand::Cancel(id) => match app.workspace.tasks.cancel(id) {
             Ok(()) => {
                 if app.panels.intruder.task_id == Some(id) {

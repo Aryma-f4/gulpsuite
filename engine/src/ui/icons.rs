@@ -311,31 +311,56 @@ impl Kit {
                 self.line((6.5, 11.5), (12.5, 4.5));
             }
             Glyph::High => {
-                self.triangle([(8.0, 2.5), (14.0, 13.5), (2.0, 13.5)]);
-                // Knock the bang out of the filled triangle so it reads.
-                self.out.push(Shape::Circle(eframe::epaint::CircleShape::stroke(
-                    self.at(8.0, 8.0),
-                    0.9 * self.unit,
-                    Stroke::new(self.unit.max(1.2), Color32::TRANSPARENT),
+                // `scan-issue-high-certain.svg`: filled circle (#D6213F via self.color) with white `!`
+                self.dot(8.0, 8.0, 6.6);
+                self.out.push(Shape::LineSegment {
+                    points: [self.at(8.0, 4.4), self.at(8.0, 8.8)],
+                    stroke: Stroke::new((1.6 * self.unit).max(1.3), Color32::WHITE),
+                });
+                self.out.push(Shape::Circle(eframe::epaint::CircleShape::filled(
+                    self.at(8.0, 11.2),
+                    0.95 * self.unit,
+                    Color32::WHITE,
                 )));
             }
             Glyph::Medium => {
-                let points = vec![
-                    self.at(8.0, 2.5),
-                    self.at(13.5, 8.0),
-                    self.at(8.0, 13.5),
-                    self.at(2.5, 8.0),
-                ];
-                self.out
-                    .push(Shape::convex_polygon(points, self.color, Stroke::NONE));
+                // `scan-issue-medium-certain.svg`: filled circle (#FF6633 via self.color) with white `!`
+                self.dot(8.0, 8.0, 6.4);
+                self.out.push(Shape::LineSegment {
+                    points: [self.at(8.0, 4.8), self.at(8.0, 9.1)],
+                    stroke: Stroke::new((1.6 * self.unit).max(1.3), Color32::WHITE),
+                });
+                self.out.push(Shape::Circle(eframe::epaint::CircleShape::filled(
+                    self.at(8.0, 11.4),
+                    0.9 * self.unit,
+                    Color32::WHITE,
+                )));
             }
             Glyph::Low => {
-                self.triangle([(8.0, 13.5), (2.0, 2.5), (14.0, 2.5)]);
+                // `scan-issue-low-certain.svg`: filled circle (#26649D via self.color) with white `!`
+                self.dot(8.0, 8.0, 6.2);
+                self.out.push(Shape::LineSegment {
+                    points: [self.at(8.0, 5.1), self.at(8.0, 9.3)],
+                    stroke: Stroke::new((1.6 * self.unit).max(1.3), Color32::WHITE),
+                });
+                self.out.push(Shape::Circle(eframe::epaint::CircleShape::filled(
+                    self.at(8.0, 11.6),
+                    0.85 * self.unit,
+                    Color32::WHITE,
+                )));
             }
             Glyph::Info => {
-                self.ring(8.0, 8.0, 6.0);
-                self.line((8.0, 7.0), (8.0, 12.0));
-                self.dot(8.0, 4.3, 0.7);
+                // `scan-issue-info-certain.svg`: filled circle (#6A6A6C via self.color) with white `i`
+                self.dot(8.0, 8.0, 6.4);
+                self.out.push(Shape::Circle(eframe::epaint::CircleShape::filled(
+                    self.at(8.0, 5.0),
+                    0.9 * self.unit,
+                    Color32::WHITE,
+                )));
+                self.out.push(Shape::LineSegment {
+                    points: [self.at(8.0, 7.2), self.at(8.0, 11.6)],
+                    stroke: Stroke::new((1.6 * self.unit).max(1.3), Color32::WHITE),
+                });
             }
             Glyph::Request => {
                 self.line((3.0, 8.0), (13.0, 8.0));
@@ -346,11 +371,11 @@ impl Kit {
                 self.triangle([(3.0, 8.0), (7.0, 5.0), (7.0, 11.0)]);
             }
             Glyph::Globe => {
-                // A globe: the horizon and the meridian inside the circle. A diagonal would read
-                // as a crossed-out sign.
-                self.ring(8.0, 8.0, 6.0);
-                self.line((2.2, 8.0), (13.8, 8.0));
-                self.line((8.0, 2.2), (8.0, 13.8));
+                // `globe.svg`: outer circle, equator, and curved left/right meridians.
+                self.ring(8.0, 8.0, 6.4);
+                self.line((1.8, 8.0), (14.2, 8.0));
+                self.arc(11.4, 8.0, 7.2, 148.0, 212.0);
+                self.arc(4.6, 8.0, 7.2, -32.0, 32.0);
             }
             Glyph::Terminal => {
                 self.line((3.0, 5.0), (6.5, 8.0));

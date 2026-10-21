@@ -319,7 +319,7 @@ fn gulpsuite_dashboard_empty_snapshot_light() {
 fn dashboard_reference_controls_remain_connected_to_real_task_data() {
     let mut harness = harness(false, 1440.0);
     for label in [
-        "Rate this scan",
+        "Rate this at GitHub",
         "View all",
         "View configuration",
         "Total audit items:",
