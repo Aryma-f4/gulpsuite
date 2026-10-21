@@ -76,11 +76,11 @@ pub fn resolve(base: &str, reference: &str) -> Option<String> {
     Some(format!("{origin}{}", normalise_path(&format!("{directory}{reference}"))))
 }
 
-/// Pulls every same-document link out of an HTML body.
+/// Pulls every same-document link and form action URL out of an HTML body.
 pub fn links(body: &str, base: &str) -> Vec<String> {
     let mut found = Vec::new();
     let lower = body.to_ascii_lowercase();
-    for attribute in ["href=\"", "href='", "src=\"", "src='"] {
+    for attribute in ["href=\"", "href='", "src=\"", "src='", "action=\"", "action='"] {
         let mut cursor = 0usize;
         while let Some(start) = lower[cursor..].find(attribute) {
             let from = cursor + start + attribute.len();
@@ -294,6 +294,22 @@ pub async fn crawl(
             continue;
         }
         if response.status < 200 || response.status >= 400 {
+            continue;
+        }
+        if url.ends_with("/robots.txt") {
+            for link in parse_robots_txt(&response.body, &url) {
+                if !seen.contains(&super::http::path_of(&link)) && scope.allows(&link) {
+                    queue.push((link, depth + 1));
+                }
+            }
+            continue;
+        }
+        if url.ends_with("/sitemap.xml") {
+            for link in parse_sitemap_xml(&response.body, &url) {
+                if !seen.contains(&super::http::path_of(&link)) && scope.allows(&link) {
+                    queue.push((link, depth + 1));
+                }
+            }
             continue;
         }
         let content_type = response.header("content-type").unwrap_or("");

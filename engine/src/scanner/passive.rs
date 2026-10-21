@@ -232,25 +232,46 @@ fn is_session_cookie(name: &str) -> bool {
 }
 
 /// Server and framework version banners, enriched with CVE & CWE references when the version
-/// matches a known vulnerable release.
+fn safe_prefix(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Server, proxy, runtime, and CMS version banners, enriched with CVE & CWE references when
+/// the version matches a known vulnerable release.
 fn version_disclosure(url: &str, response: &Response) -> Vec<Finding> {
     let mut found = Vec::new();
-    for header in ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"] {
+    for header in [
+        "Server",
+        "X-Powered-By",
+        "X-AspNet-Version",
+        "X-Generator",
+        "Via",
+        "X-Jenkins",
+        "X-Drupal-Cache",
+    ] {
         if let Some(value) = response.header(header) {
-            let looks_like_version = value
-                .split(|c: char| !c.is_ascii_digit() && c != '.')
-                .any(|part| {
-                    let digits = part.chars().filter(|c| c.is_ascii_digit()).count();
-                    let dots = part.chars().filter(|c| *c == '.').count();
-                    digits >= 2 && dots >= 1
-                });
+            let cve_note = lookup_server_cves(value);
+            let looks_like_version = cve_note.is_some()
+                || value
+                    .split(|c: char| !c.is_ascii_digit() && c != '.')
+                    .any(|part| {
+                        let digits = part.chars().filter(|c| c.is_ascii_digit()).count();
+                        let dots = part.chars().filter(|c| *c == '.').count();
+                        digits >= 2 && dots >= 1
+                    });
             if looks_like_version {
-                let cve_note = lookup_server_cves(value);
                 let (sev, explain) = if let Some(cves) = cve_note {
                     (
                         Severity::Medium,
                         format!(
-                            "Exact software version matches known vulnerabilities ({cves})."
+                            "Software version matches known CVE vulnerabilities ({cves}) — https://nvd.nist.gov/"
                         ),
                     )
                 } else {
@@ -270,32 +291,106 @@ fn version_disclosure(url: &str, response: &Response) -> Vec<Finding> {
             }
         }
     }
+
+    // Also inspect `<meta name="generator" content="...">` in HTML bodies for CMS CVEs (WordPress, Drupal, Joomla)
+    let body_prefix = safe_prefix(&response.body, 8192);
+    let lower_prefix = body_prefix.to_ascii_lowercase();
+    if let Some(gen_idx) = lower_prefix.find("name=\"generator\"") {
+        let win_start = gen_idx.saturating_sub(80);
+        let win_end = (gen_idx + 140).min(lower_prefix.len());
+        let window = &body_prefix[win_start..win_end];
+        if let Some(c_idx) = window.to_ascii_lowercase().find("content=\"") {
+            let after = &window[c_idx + 9..];
+            if let Some(end_q) = after.find('"') {
+                let gen_val = after[..end_q].trim();
+                if let Some(cves) = lookup_server_cves(gen_val) {
+                    found.push(Finding::new(
+                        "Version disclosure via Meta Generator",
+                        Severity::Medium,
+                        url,
+                        None,
+                        &format!("<meta name=\"generator\" content=\"{gen_val}\">"),
+                        &format!(
+                            "Generator version matches known CVE vulnerabilities ({cves}) — https://nvd.nist.gov/"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
     found
 }
 
-/// Matches a server/runtime version banner against known high-impact CVEs.
+/// Matches a server/runtime/CMS version banner against known high-impact CVEs.
 pub fn lookup_server_cves(banner: &str) -> Option<&'static str> {
     let b = banner.to_ascii_lowercase();
     if b.contains("apache/2.4.49") {
-        Some("CVE-2021-41773 (Path traversal & RCE, CWE-22)")
+        Some("CVE-2021-41773 (Apache 2.4.49 Path traversal & RCE, CVSS 9.8, CWE-22)")
     } else if b.contains("apache/2.4.50") {
-        Some("CVE-2021-42013 (Path traversal & RCE bypass, CWE-22)")
-    } else if b.contains("apache/2.4.")
-        && b.split("apache/2.4.")
+        Some("CVE-2021-42013 (Apache 2.4.50 Path traversal & RCE bypass, CVSS 9.8, CWE-22)")
+    } else if let Some(rest) = b.split("apache/2.4.").nth(1) {
+        let patch = rest
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse::<u32>().ok())?;
+        if patch < 52 {
+            Some("CVE-2021-44790 / CVE-2021-44224 (Apache 2.4 < 2.4.52 Lua heap overflow & SSRF, CWE-787)")
+        } else if patch < 56 {
+            Some("CVE-2023-25690 (Apache 2.4 < 2.4.56 mod_proxy HTTP Request Smuggling, CVSS 9.8, CWE-444)")
+        } else if patch < 60 {
+            Some("CVE-2024-38474 / CVE-2024-38476 (Apache 2.4 < 2.4.60 mod_rewrite substitution bypass & SSRF, CWE-116)")
+        } else {
+            None
+        }
+    } else if b.contains("openssl/1.0.1") {
+        Some("CVE-2014-0160 (Heartbleed TLS memory disclosure, CWE-125)")
+    } else if b.contains("openssl/3.0.")
+        && b.split("openssl/3.0.")
             .nth(1)
             .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
             .and_then(|n| n.parse::<u32>().ok())
-            .is_some_and(|patch| patch < 52)
+            .is_some_and(|p| p <= 6)
     {
-        Some("CVE-2021-44790 / CVE-2021-44224 (Apache 2.4 < 2.4.52)")
-    } else if b.contains("openssl/1.0.1") {
-        Some("CVE-2014-0160 (Heartbleed TLS memory disclosure, CWE-125)")
+        Some("CVE-2022-3602 / CVE-2022-3786 (OpenSSL 3.0.0-3.0.6 X.509 punycode buffer overflow, CWE-120)")
     } else if b.contains("php/8.1.0-dev") {
-        Some("Backdoored PHP 8.1.0-dev User-Agentt RCE")
-    } else if b.contains("php/5.") || b.contains("php/7.0") || b.contains("php/7.1") || b.contains("php/7.2") {
-        Some("CVE-2019-11043 (PHP-FPM buffer underflow RCE, CWE-787)")
-    } else if b.contains("nginx/1.18.") || b.contains("nginx/1.16.") || b.contains("nginx/1.14.") {
-        Some("CVE-2021-23017 (nginx resolver off-by-one heap write, CWE-193)")
+        Some("Backdoored PHP 8.1.0-dev User-Agentt RCE (CVSS 9.8, CWE-94)")
+    } else if b.contains("php/5.")
+        || b.contains("php/7.0")
+        || b.contains("php/7.1")
+        || b.contains("php/7.2")
+        || b.contains("php/7.3")
+    {
+        Some("CVE-2019-11043 / CVE-2024-4577 (End-of-life PHP RCE & CGI argument injection, CVSS 9.8, CWE-78)")
+    } else if b.contains("php/7.4.")
+        || b.contains("php/8.0.")
+        || b.contains("php/8.1.")
+        || b.contains("php/8.2.")
+    {
+        Some("CVE-2024-4577 / CVE-2022-31625 (PHP CGI argument injection & driver memory corruption, CWE-78)")
+    } else if b.contains("nginx/1.18.")
+        || b.contains("nginx/1.16.")
+        || b.contains("nginx/1.14.")
+        || b.contains("nginx/1.19.")
+        || b.contains("nginx/1.20.0")
+    {
+        Some("CVE-2021-23017 (nginx DNS resolver 1-byte memory overwrite, CWE-193)")
+    } else if b.contains("nginx/1.21.") || b.contains("nginx/1.22.") {
+        Some("CVE-2022-41741 / CVE-2022-41742 (nginx mp4 module memory corruption, CWE-787)")
+    } else if b.contains("tomcat/8.")
+        || b.contains("tomcat/9.0.")
+        || b.contains("coyote/1.1")
+    {
+        Some("CVE-2024-50379 / CVE-2023-46589 (Apache Tomcat TOCTOU RCE & trailer request smuggling, CVSS 9.8, CWE-367)")
+    } else if b.contains("jetty(9.") || b.contains("jetty/9.") || b.contains("jetty(10.") {
+        Some("CVE-2021-28164 / CVE-2021-34429 (Eclipse Jetty WEB-INF URI normalization disclosure, CWE-200)")
+    } else if b.contains("next.js") {
+        Some("CVE-2025-29927 / CVE-2024-34351 (Next.js x-middleware-subrequest auth bypass & Server Action SSRF, CWE-285)")
+    } else if b.contains("wordpress 4.") || b.contains("wordpress 5.") || b.contains("wordpress 6.0") || b.contains("wordpress 6.1") || b.contains("wordpress 6.2") || b.contains("wordpress 6.3") || b.contains("wordpress 6.4") {
+        Some("CVE-2024-31210 / CVE-2023-2745 (WordPress core path traversal, XSS & plugin RCE exposure, CWE-22)")
+    } else if b.contains("drupal 7") || b.contains("drupal 8") {
+        Some("CVE-2018-7600 / CVE-2019-6340 (Drupalgeddon2 remote code execution, CVSS 9.8, CWE-94)")
+    } else if b.contains("microsoft-iis/7.") || b.contains("microsoft-iis/8.") {
+        Some("CVE-2017-7269 / CVE-2015-1635 (IIS WebDAV ScStoragePathFromUrl & HTTP.sys RCE, CWE-119)")
     } else {
         None
     }
@@ -313,118 +408,29 @@ pub fn parse_semver(ver: &str) -> Option<(u32, u32, u32)> {
 
 /// Burp Suite Pro's Retire.js Vulnerable JavaScript Dependency CVE Engine
 /// (`resources/RetireJS/retirejs_repository.json`, `005009a0_VulnerableJsDependency`).
-/// Extracts `<script src="...">` filenames and inline `/*! Library vX.Y.Z` banners, compares
-/// `(major, minor, patch)` against `below` / `atOrAbove` ranges, and reports exact CVE, GHSA, and CWE IDs.
+/// Evaluates all 477 embedded Retire.js + modern npm vulnerability ranges with zero heap allocation
+/// for the rule table, consolidating all matching CVE/GHSA/CWE identifiers per `(library, version)`.
 pub fn vulnerable_js_dependencies(url: &str, body: &str) -> Vec<Finding> {
-    struct JsVulnRule {
-        library: &'static str,
-        patterns: &'static [&'static str],
-        below: (u32, u32, u32),
-        at_or_above: Option<(u32, u32, u32)>,
-        severity: Severity,
-        cves: &'static str,
-        cwe: &'static str,
-        summary: &'static str,
-    }
-
-    const RULES: &[JsVulnRule] = &[
-        JsVulnRule {
-            library: "jquery",
-            patterns: &["jquery-", "jquery/", "jquery.min.js?v=", "/*! jquery v"],
-            below: (1, 9, 0),
-            at_or_above: None,
-            severity: Severity::Medium,
-            cves: "CVE-2020-7656, CVE-2012-6708, CVE-2011-4969 (GHSA-q4m3-2j7h-f7xw)",
-            cwe: "CWE-79",
-            summary: "Selector interpreted as HTML & load() XSS in jQuery < 1.9.0.",
-        },
-        JsVulnRule {
-            library: "jquery",
-            patterns: &["jquery-", "jquery/", "jquery.min.js?v=", "/*! jquery v"],
-            below: (3, 5, 0),
-            at_or_above: Some((1, 9, 0)),
-            severity: Severity::Medium,
-            cves: "CVE-2020-11022, CVE-2020-11023, CVE-2019-11358 (GHSA-gxr4-xjj5-5px2)",
-            cwe: "CWE-79, CWE-1321",
-            summary: "htmlPrefilter XSS & Object.prototype pollution in jQuery < 3.5.0.",
-        },
-        JsVulnRule {
-            library: "lodash",
-            patterns: &["lodash-", "lodash/", "lodash.min.js?v=", "lodash v"],
-            below: (4, 17, 21),
-            at_or_above: None,
-            severity: Severity::High,
-            cves: "CVE-2021-23337, CVE-2020-8203, CVE-2019-10744 (GHSA-35jh-r3h4-6jhm)",
-            cwe: "CWE-78, CWE-1321",
-            summary: "Command injection via template() and prototype pollution in lodash < 4.17.21.",
-        },
-        JsVulnRule {
-            library: "bootstrap",
-            patterns: &["bootstrap-", "bootstrap/", "/*! bootstrap v"],
-            below: (4, 3, 1),
-            at_or_above: None,
-            severity: Severity::Medium,
-            cves: "CVE-2019-8331, CVE-2018-14040, CVE-2018-14042 (GHSA-9v3m-8fp8-mj99)",
-            cwe: "CWE-79",
-            summary: "XSS in data-template, data-content, and tooltip/popover attributes in Bootstrap < 4.3.1.",
-        },
-        JsVulnRule {
-            library: "angular",
-            patterns: &["angular-", "angular/", "angularjs/", "/*! angularjs v"],
-            below: (1, 8, 0),
-            at_or_above: None,
-            severity: Severity::Medium,
-            cves: "CVE-2022-25869, CVE-2020-7676 (GHSA-5cp4-xmrw-59wf)",
-            cwe: "CWE-79",
-            summary: "XSS and sandbox escape in AngularJS < 1.8.0.",
-        },
-        JsVulnRule {
-            library: "moment",
-            patterns: &["moment-", "moment/", "moment.min.js?v="],
-            below: (2, 29, 4),
-            at_or_above: None,
-            severity: Severity::High,
-            cves: "CVE-2022-31129, CVE-2022-24785 (GHSA-wc69-rhjr-hc9g)",
-            cwe: "CWE-22, CWE-1333",
-            summary: "Path traversal in moment.locale and inefficient regex complexity in Moment.js < 2.29.4.",
-        },
-        JsVulnRule {
-            library: "handlebars",
-            patterns: &["handlebars-", "handlebars/", "handlebars.min.js?v="],
-            below: (4, 7, 7),
-            at_or_above: None,
-            severity: Severity::High,
-            cves: "CVE-2021-23369, CVE-2021-23383, CVE-2019-19919 (GHSA-f2jv-r9rf-7988)",
-            cwe: "CWE-94, CWE-1321",
-            summary: "Remote code execution and prototype pollution when compiling templates in Handlebars < 4.7.7.",
-        },
-        JsVulnRule {
-            library: "dompurify",
-            patterns: &["dompurify-", "dompurify/", "purify.min.js?v="],
-            below: (2, 4, 0),
-            at_or_above: None,
-            severity: Severity::Medium,
-            cves: "CVE-2022-25887, CVE-2021-23358",
-            cwe: "CWE-79",
-            summary: "Mutation XSS (mXSS) bypass in DOMPurify < 2.4.0.",
-        },
-        JsVulnRule {
-            library: "axios",
-            patterns: &["axios-", "axios/", "axios.min.js?v="],
-            below: (0, 21, 2),
-            at_or_above: None,
-            severity: Severity::Medium,
-            cves: "CVE-2021-3749, CVE-2020-28168 (GHSA-cph5-m8f7-6c5x)",
-            cwe: "CWE-918, CWE-1333",
-            summary: "SSRF redirect bypass and ReDoS in axios < 0.21.2.",
-        },
-    ];
+    use super::retirejs_data::RETIREJS_RULES;
 
     let mut found = Vec::new();
-    let lower = body.to_ascii_lowercase();
+    // Bound body scan to first 128 KiB to keep memory and CPU minimal on multi-MB bundles
+    let scan_slice = safe_prefix(body, 131_072);
+    let lower = scan_slice.to_ascii_lowercase();
     let url_lower = url.to_ascii_lowercase();
 
-    for rule in RULES {
+    // Group matched rules by `(library, version)`
+    let mut matched_by_lib: Vec<(
+        &'static str,
+        String,
+        Severity,
+        Vec<&'static str>,
+        Vec<&'static str>,
+        &'static str,
+        (u32, u32, u32),
+    )> = Vec::new();
+
+    for rule in RETIREJS_RULES {
         for pat in rule.patterns {
             let extracted_ver = lower
                 .find(pat)
@@ -435,8 +441,9 @@ pub fn vulnerable_js_dependencies(url: &str, body: &str) -> Vec<Finding> {
                         .chars()
                         .take_while(|c| c.is_ascii_digit() || *c == '.')
                         .collect();
-                    if ver_str.contains('.') {
-                        Some(ver_str)
+                    let trimmed = ver_str.trim_matches('.');
+                    if trimmed.contains('.') && trimmed.len() >= 3 {
+                        Some(trimmed.to_string())
                     } else {
                         None
                     }
@@ -446,34 +453,120 @@ pub fn vulnerable_js_dependencies(url: &str, body: &str) -> Vec<Finding> {
                 if let Some(ver) = parse_semver(&ver_str) {
                     let above_ok = rule.at_or_above.map_or(true, |min_v| ver >= min_v);
                     if above_ok && ver < rule.below {
-                        let evidence = format!(
-                            "{} {} (vulnerable < {}.{}.{}): {}",
-                            rule.library,
-                            ver_str,
-                            rule.below.0,
-                            rule.below.1,
-                            rule.below.2,
-                            rule.cves
-                        );
-                        let dup = found
-                            .iter()
-                            .any(|f: &Finding| f.evidence == evidence);
-                        if !dup {
-                            found.push(Finding::new(
-                                "Vulnerable JavaScript dependency",
+                        if let Some(entry) = matched_by_lib
+                            .iter_mut()
+                            .find(|e| e.0 == rule.library && e.1 == ver_str)
+                        {
+                            if rule.severity > entry.2 {
+                                entry.2 = rule.severity;
+                                entry.5 = rule.summary;
+                            }
+                            if rule.below > entry.6 {
+                                entry.6 = rule.below;
+                            }
+                            if !entry.3.contains(&rule.cves) {
+                                entry.3.push(rule.cves);
+                            }
+                            if !entry.4.contains(&rule.cwe) {
+                                entry.4.push(rule.cwe);
+                            }
+                        } else {
+                            matched_by_lib.push((
+                                rule.library,
+                                ver_str,
                                 rule.severity,
-                                url,
-                                Some(format!("{} {}", rule.library, ver_str)),
-                                &evidence,
-                                &format!("{} ({}) — https://nvd.nist.gov/", rule.summary, rule.cwe),
+                                vec![rule.cves],
+                                vec![rule.cwe],
+                                rule.summary,
+                                rule.below,
                             ));
                         }
+                        break;
                     }
                 }
             }
         }
     }
+
+    for (lib, ver_str, sev, cves_list, cwe_list, summary, max_below) in matched_by_lib {
+        let joined_cves = cves_list.join(", ");
+        let joined_cwes = cwe_list.join(", ");
+        let evidence = format!(
+            "{lib} {ver_str} (vulnerable < {}.{}.{}): {joined_cves}",
+            max_below.0, max_below.1, max_below.2
+        );
+        found.push(Finding::new(
+            "Vulnerable JavaScript dependency",
+            sev,
+            url,
+            Some(format!("{lib} {ver_str}")),
+            &evidence,
+            &format!("{summary} ({joined_cwes}) — https://nvd.nist.gov/"),
+        ));
+    }
     found
+}
+
+/// Extracts `(ecosystem, package_name, version)` tuples from a URL and response body for
+/// live worldwide CVE querying (`https://api.osv.dev/v1/query`).
+pub fn extract_detected_packages(url: &str, body: &str) -> Vec<(&'static str, String, String)> {
+    use super::retirejs_data::RETIREJS_RULES;
+    let mut out: Vec<(&'static str, String, String)> = Vec::new();
+    let scan_slice = safe_prefix(body, 65_536);
+    let lower = scan_slice.to_ascii_lowercase();
+    let url_lower = url.to_ascii_lowercase();
+
+    for rule in RETIREJS_RULES {
+        if out.iter().any(|(_, pkg, _)| pkg == rule.library) {
+            continue;
+        }
+        for pat in rule.patterns {
+            if let Some(rest) = lower
+                .find(pat)
+                .map(|idx| &lower[idx + pat.len()..])
+                .or_else(|| url_lower.find(pat).map(|idx| &url_lower[idx + pat.len()..]))
+            {
+                let ver_str: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect();
+                let trimmed = ver_str.trim_matches('.');
+                if trimmed.contains('.') && trimmed.len() >= 3 && parse_semver(trimmed).is_some() {
+                    out.push(("npm", rule.library.to_string(), trimmed.to_string()));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Also extract CDN URLs like `cdn.jsdelivr.net/npm/<pkg>@<ver>` or `unpkg.com/<pkg>@<ver>`
+    for marker in ["cdn.jsdelivr.net/npm/", "unpkg.com/"] {
+        let mut rest = lower.as_str();
+        while let Some(pos) = rest.find(marker) {
+            let after = &rest[pos + marker.len()..];
+            let token: String = after
+                .chars()
+                .take_while(|c| {
+                    c.is_ascii_alphanumeric() || matches!(*c, '@' | '.' | '-' | '_' | '/')
+                })
+                .collect();
+            if let Some((pkg, ver_part)) = token.rsplit_once('@') {
+                let ver: String = ver_part
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect();
+                let ver = ver.trim_matches('.');
+                if !pkg.is_empty() && ver.contains('.') && ver.len() >= 3 {
+                    let pkg_clean = pkg.trim_matches('/').to_string();
+                    if !out.iter().any(|(_, p, v)| p == &pkg_clean && v == ver) {
+                        out.push(("npm", pkg_clean, ver.to_string()));
+                    }
+                }
+            }
+            rest = &after[token.len().max(1)..];
+        }
+    }
+    out
 }
 
 /// Static JavaScript DOM taint analysis (`auditing.html#javascript-analysis-phase`):

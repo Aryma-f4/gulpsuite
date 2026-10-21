@@ -28,21 +28,34 @@ impl Span {
     }
 }
 
-/// Splits a whole HTTP message into coloured runs.
+/// Splits a whole HTTP message into coloured runs while preserving the exact input bytes (`\r\n` or `\n`).
 pub fn spans(message: &str, theme: &Theme) -> Vec<Span> {
-    let normalised = message.replace("\r\n", "\n");
-    let (head, body) = match normalised.find("\n\n") {
-        Some(at) => (&normalised[..at], Some(&normalised[at + 2..])),
+    let split = message
+        .find("\r\n\r\n")
+        .map(|at| (at, 4usize))
+        .or_else(|| message.find("\n\n").map(|at| (at, 2usize)));
+    let (head, sep, body) = match split {
+        Some((at, sep_len)) => (
+            &message[..at],
+            &message[at..at + sep_len],
+            Some(&message[at + sep_len..]),
+        ),
         // No blank line: either a head with no body, or a bare body the user is viewing on its own.
-        None if starts_http(normalised.lines().next().unwrap_or("")) => (normalised.as_str(), None),
-        None => ("", Some(normalised.as_str())),
+        None if starts_http(message.lines().next().unwrap_or("")) => (message, "", None),
+        None => ("", "", Some(message)),
     };
-    let mut out = head_spans(head, theme);
+    let mut out = if !head.is_empty() || body.is_none() {
+        head_spans(head, theme)
+    } else {
+        Vec::new()
+    };
+    if !sep.is_empty() {
+        out.push(Span::new(
+            sep,
+            theme.color("ui.editor.message.httpFirstLine"),
+        ));
+    }
     if let Some(body) = body {
-        if !head.is_empty() {
-            // The blank line between head and body is part of the message.
-            out.push(Span::new("\n\n", theme.color("ui.editor.message.httpFirstLine")));
-        }
         out.extend(body_spans(body, content_type_of(head), theme));
     }
     out
@@ -102,35 +115,24 @@ fn head_spans(head: &str, theme: &Theme) -> Vec<Span> {
     out
 }
 
-/// Splits a cookie header into names and values.
+/// Splits a cookie header into names and values without losing or duplicating any characters.
 fn cookie_spans(value: &str, name_colour: Color32, value_colour: Color32) -> Vec<Span> {
     let mut out = Vec::new();
-    let mut leading = String::new();
-    let mut pair = String::new();
-    for ch in value.chars() {
-        match ch {
-            '=' if !pair.contains('=') => {
-                leading.push_str(&pair);
-                out.push(Span::new(std::mem::take(&mut leading), name_colour));
-                out.push(Span::new("=", value_colour));
-                pair.push(ch);
-            }
-            ';' => {
-                let trimmed = std::mem::take(&mut pair);
-                let (name_part, value_part) = trimmed.split_once('=').unwrap_or((trimmed.as_str(), ""));
-                out.push(Span::new(name_part.to_string(), name_colour));
-                if value_part.is_empty() {
-                    out.push(Span::new("=", value_colour));
-                } else {
-                    out.push(Span::new(format!("={value_part}"), value_colour));
-                }
-                out.push(Span::new(";", name_colour));
-            }
-            _ => pair.push(ch),
+    for (idx, part) in value.split(';').enumerate() {
+        if idx > 0 {
+            out.push(Span::new(";", name_colour));
         }
-    }
-    if !pair.is_empty() {
-        out.push(Span::new(pair, value_colour));
+        if let Some((k, v)) = part.split_once('=') {
+            if !k.is_empty() {
+                out.push(Span::new(k.to_string(), name_colour));
+            }
+            out.push(Span::new("=", value_colour));
+            if !v.is_empty() {
+                out.push(Span::new(v.to_string(), value_colour));
+            }
+        } else if !part.is_empty() {
+            out.push(Span::new(part.to_string(), name_colour));
+        }
     }
     out
 }
@@ -623,14 +625,24 @@ pub fn layout(message: &str, theme: &Theme) -> LayoutJob {
         return cached;
     }
 
-    let job = layout_job(spans(message, theme));
-    CACHE.with(|cache| {
-        let mut guard = cache.borrow_mut();
-        if guard.len() >= 16 {
-            guard.pop_front();
-        }
-        guard.push_back((key, job.clone()));
-    });
+    let mut job = layout_job(spans(message, theme));
+    if job.text != message {
+        job = LayoutJob::simple(
+            message.to_string(),
+            FontId::new(12.0, FontFamily::Monospace),
+            theme.color("ui.text.body"),
+            f32::INFINITY,
+        );
+    }
+    if message.len() <= 32_768 {
+        CACHE.with(|cache| {
+            let mut guard = cache.borrow_mut();
+            if guard.len() >= 8 {
+                guard.pop_front();
+            }
+            guard.push_back((key, job.clone()));
+        });
+    }
     job
 }
 
@@ -849,15 +861,16 @@ mod tests {
         let theme = Theme::load(true);
         for message in [
             "GET / HTTP/1.1\r\nHost: a.test\r\n\r\n",
+            "GET /filter?category=§Gifts§ HTTP/1.1\r\nHost: ginandjuice.shop\r\nCookie: session=§0123456789abcdef§; theme=dark; flag\r\n\r\n",
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"a\":[1,2,{\"b\":null}]}",
             "<html><!--c--><a href='#'>x</a></html>",
             "q=1&r=2",
             "//c\nfunction f(){return \"x\";}",
         ] {
             let joined = text(&spans(message, &theme));
-            let stripped: String = joined.replace("\n", "\r\n").replace('\r', "");
-            let expected: String = message.replace("\r\n", "\n").replace('\r', "");
-            assert_eq!(stripped, expected, "highlighting lost or added text");
+            assert_eq!(joined, message, "highlighting lost or added text");
+            let job = layout(message, &theme);
+            assert_eq!(job.text, message, "layout job text diverged from source message");
         }
     }
 
@@ -986,11 +999,16 @@ pub fn show_editable_in(
                         .frame(false)
                         .layouter(&mut layouter)
                         .show(ui);
+                    let max_chars = text.chars().count();
                     if right_mouse_event {
                         if let Some(saved) = prev_range {
-                            out.state.cursor.set_char_range(Some(saved));
+                            let clamped = eframe::egui::text::CCursorRange::two(
+                                eframe::egui::text::CCursor::new(saved.primary.index.min(max_chars)),
+                                eframe::egui::text::CCursor::new(saved.secondary.index.min(max_chars)),
+                            );
+                            out.state.cursor.set_char_range(Some(clamped));
                             out.state.store(ui.ctx(), edit_id);
-                            out.cursor_range = Some(saved);
+                            out.cursor_range = Some(clamped);
                         }
                     }
                     if let Some(cr) = out.cursor_range {

@@ -1857,21 +1857,26 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
             ui.separator();
             if ui
                 .add_enabled(
-                    result.target.is_some(),
+                    !result.request.is_empty(),
                     egui::Button::new("Send result to Repeater"),
                 )
                 .clicked()
             {
-                if let Some(target) = &result.target {
-                    let host = format!(
-                        "{}://{}",
-                        if target.secure { "https" } else { "http" },
-                        target.authority()
-                    );
-                    app.panels.repeater.open(&host, &result.request);
-                    app.tool = crate::ui::app::REPEATER;
-                    app.view = 0;
-                }
+                let host = result
+                    .target
+                    .as_ref()
+                    .map(|target| {
+                        format!(
+                            "{}://{}",
+                            if target.secure { "https" } else { "http" },
+                            target.authority()
+                        )
+                    })
+                    .unwrap_or_else(|| app.panels.intruder.host.clone());
+                let clean_req = result.request.replace('§', "");
+                app.panels.repeater.open(&host, &clean_req);
+                app.tool = crate::ui::app::REPEATER;
+                app.view = 0;
             }
             if result.response_truncated {
                 ui.label(format!(

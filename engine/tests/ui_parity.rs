@@ -734,7 +734,7 @@ fn native_setup_wizard_steps_through_welcome_and_directory_screens() {
     harness.run();
     assert_eq!(harness.state().step, SetupStep::Welcome);
     assert!(harness
-        .query_by_label("Welcome to the Gulpsuite 0.0.2 Setup Wizard")
+        .query_by_label("Welcome to the Gulpsuite 0.0.3 Setup Wizard")
         .is_some());
     harness.get_by_label("Next >").click();
     harness.run();
@@ -743,6 +743,17 @@ fn native_setup_wizard_steps_through_welcome_and_directory_screens() {
         .query_by_label("Select Destination Directory")
         .is_some());
     assert!(harness.query_by_label("Install").is_some());
+
+    // Verify compact responsive mode at narrow window dimensions (480x340)
+    let mut compact_harness = Harness::builder()
+        .with_size(Vec2::new(480.0, 340.0))
+        .build_eframe(|_cc| SetupWizard::default());
+    compact_harness.run();
+    assert!(compact_harness.query_by_label("Next >").is_some());
+    compact_harness.get_by_label("Next >").click();
+    compact_harness.run();
+    assert!(compact_harness.query_by_label("Install").is_some());
+    assert!(compact_harness.query_by_label("< Back").is_some());
 }
 
 fn right_click(harness: &mut Harness<'_, App>, pos: eframe::egui::Pos2) {

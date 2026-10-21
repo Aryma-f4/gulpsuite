@@ -328,6 +328,21 @@ pub fn perform_install(
     }
 }
 
+fn run_windows_hidden(program: &str, args: &[&str]) {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = cmd.status();
+}
+
 fn register_windows_installation(
     destination: &Path,
     target_bin: &Path,
@@ -349,43 +364,59 @@ fn register_windows_installation(
         ("UninstallString", &uninst_str),
         ("URLInfoAbout", REPO_URL),
     ] {
-        let _ = std::process::Command::new("reg")
-            .args(["add", reg_key, "/v", name, "/t", "REG_SZ", "/d", val, "/f"])
-            .output();
+        run_windows_hidden(
+            "reg",
+            &["add", reg_key, "/v", name, "/t", "REG_SZ", "/d", val, "/f"],
+        );
     }
-    for (name, val) in [("NoModify", "1"), ("NoRepair", "1"), ("EstimatedSize", "28000")] {
-        let _ = std::process::Command::new("reg")
-            .args(["add", reg_key, "/v", name, "/t", "REG_DWORD", "/d", val, "/f"])
-            .output();
+    for (name, val) in [
+        ("NoModify", "1"),
+        ("NoRepair", "1"),
+        ("EstimatedSize", "28000"),
+    ] {
+        run_windows_hidden(
+            "reg",
+            &[
+                "add",
+                reg_key,
+                "/v",
+                name,
+                "/t",
+                "REG_DWORD",
+                "/d",
+                val,
+                "/f",
+            ],
+        );
     }
 
     if create_shortcut {
-        let ps_script = format!(
-            "$ws = New-Object -ComObject WScript.Shell; \
-             $smDir = Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs\\Gulpsuite'; \
-             New-Item -ItemType Directory -Force -Path $smDir | Out-Null; \
-             $s1 = $ws.CreateShortcut((Join-Path $smDir 'Gulpsuite.lnk')); \
-             $s1.TargetPath = '{exe_path}'; \
-             $s1.WorkingDirectory = '{inst_dir}'; \
-             $s1.Description = 'Gulpsuite by {PUBLISHER}'; \
-             $s1.Save(); \
-             $desk = [Environment]::GetFolderPath('Desktop'); \
-             $s2 = $ws.CreateShortcut((Join-Path $desk 'Gulpsuite.lnk')); \
-             $s2.TargetPath = '{exe_path}'; \
-             $s2.WorkingDirectory = '{inst_dir}'; \
-             $s2.Description = 'Gulpsuite by {PUBLISHER}'; \
-             $s2.Save();"
+        let vbs_path = std::env::temp_dir().join("gulpsuite_shortcuts.vbs");
+        let exe_escaped = exe_path.replace('"', "\"\"");
+        let dir_escaped = inst_dir.replace('"', "\"\"");
+        let vbs = format!(
+            "On Error Resume Next\r\n\
+             Set ws = CreateObject(\"WScript.Shell\")\r\n\
+             Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n\
+             smDir = ws.ExpandEnvironmentStrings(\"%APPDATA%\") & \"\\Microsoft\\Windows\\Start Menu\\Programs\\Gulpsuite\"\r\n\
+             If Not fso.FolderExists(smDir) Then fso.CreateFolder(smDir)\r\n\
+             Set s1 = ws.CreateShortcut(smDir & \"\\Gulpsuite.lnk\")\r\n\
+             s1.TargetPath = \"{exe_escaped}\"\r\n\
+             s1.WorkingDirectory = \"{dir_escaped}\"\r\n\
+             s1.Description = \"Gulpsuite by {PUBLISHER}\"\r\n\
+             s1.Save\r\n\
+             desk = ws.SpecialFolders(\"Desktop\")\r\n\
+             Set s2 = ws.CreateShortcut(desk & \"\\Gulpsuite.lnk\")\r\n\
+             s2.TargetPath = \"{exe_escaped}\"\r\n\
+             s2.WorkingDirectory = \"{dir_escaped}\"\r\n\
+             s2.Description = \"Gulpsuite by {PUBLISHER}\"\r\n\
+             s2.Save\r\n"
         );
-        let _ = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &ps_script,
-            ])
-            .output();
+        if std::fs::write(&vbs_path, vbs).is_ok() {
+            let vbs_str = vbs_path.to_string_lossy();
+            run_windows_hidden("wscript", &["//B", "//NoLogo", &vbs_str]);
+            let _ = std::fs::remove_file(&vbs_path);
+        }
     }
 }
 
@@ -422,13 +453,14 @@ pub fn perform_uninstall(destination: &Path, platform: &str) -> Result<(), Strin
         let _ = std::fs::remove_dir(destination.join("resources"));
         let _ = std::fs::remove_dir(destination);
         if platform == "windows-x64" {
-            let _ = std::process::Command::new("reg")
-                .args([
+            run_windows_hidden(
+                "reg",
+                &[
                     "delete",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Gulpsuite",
                     "/f",
-                ])
-                .output();
+                ],
+            );
         }
     }
     Ok(())
@@ -492,299 +524,353 @@ impl SetupWizard {
     }
 
     pub fn draw(&mut self, ui: &mut Ui) {
-        self.poll();
-        let theme = self.theme.clone();
-        let avail_h = ui.available_height().max(320.0);
-        let footer_h = 52.0;
-        let content_h = (avail_h - footer_h).max(240.0);
+        let ctx = ui.ctx().clone();
+        self.draw_panels(&ctx);
+    }
 
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width(), content_h),
-                egui::Layout::left_to_right(egui::Align::Min),
-                |ui| {
-                    // Left install4j step sidebar
+    pub fn draw_panels(&mut self, ctx: &Context) {
+        self.poll();
+        if self.step == SetupStep::Installing {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        let theme = self.theme.clone();
+        let win_w = ctx.content_rect().width().max(360.0);
+        let compact_mode = win_w < 580.0;
+
+        // 1. Pinned Bottom Navigation Footer (`< Back`, `Next >`, `Install`, `Finish`, `Cancel`)
+        egui::TopBottomPanel::bottom("setup-wizard-footer")
+            .exact_height(52.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(0xF6, 0xF8, 0xFA))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xD5, 0xD9, 0xE0)))
+                    .inner_margin(egui::Margin::symmetric(16, 10)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if !compact_mode {
+                        ui.label(
+                            RichText::new(format!(
+                                "Gulpsuite v{} · Publisher: {PUBLISHER}",
+                                self.version
+                            ))
+                            .size(11.5)
+                            .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        match self.step {
+                            SetupStep::Welcome => {
+                                if ui.button("Cancel").clicked() {
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                                if crate::ui::app::primary_button(ui, &theme, "Next >").clicked() {
+                                    self.step = SetupStep::Directory;
+                                }
+                            }
+                            SetupStep::Directory => {
+                                if ui.button("Cancel").clicked() {
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                                if crate::ui::app::primary_button(ui, &theme, "Install").clicked() {
+                                    let ctx = ui.ctx().clone();
+                                    self.start_install(ctx);
+                                }
+                                if ui.button("< Back").clicked() {
+                                    self.step = SetupStep::Welcome;
+                                }
+                            }
+                            SetupStep::Installing => {}
+                            SetupStep::Finished => {
+                                if self.error.is_some() {
+                                    if ui.button("Close").clicked() {
+                                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                    }
+                                    if ui.button("< Back").clicked() {
+                                        self.step = SetupStep::Directory;
+                                    }
+                                } else if crate::ui::app::primary_button(ui, &theme, "Finish")
+                                    .clicked()
+                                {
+                                    if self.launch_on_finish {
+                                        if let Some(path) = &self.installed_path {
+                                            let bin = if path
+                                                .join("Contents/MacOS/Gulpsuite")
+                                                .is_file()
+                                            {
+                                                path.join("Contents/MacOS/Gulpsuite")
+                                            } else if path.join("gulpsuite.exe").is_file() {
+                                                path.join("gulpsuite.exe")
+                                            } else {
+                                                path.join("gulpsuite")
+                                            };
+                                            let _ = std::process::Command::new(bin).spawn();
+                                        }
+                                    }
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+
+        // 2. Responsive Step Navigation:
+        //    - Compact top step bar when window width < 580px
+        //    - Proportional left sidebar when window width >= 580px
+        if compact_mode {
+            egui::TopBottomPanel::top("setup-wizard-compact-top")
+                .frame(
                     egui::Frame::new()
                         .fill(Color32::from_rgb(0xEB, 0xEE, 0xF2))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xD5, 0xD9, 0xE0)))
-                        .inner_margin(egui::Margin::symmetric(16, 20))
-                        .show(ui, |ui| {
-                            ui.set_width(185.0);
-                            ui.set_min_height(content_h - 40.0);
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new("Gulpsuite Setup")
-                                        .size(16.0)
-                                        .strong()
-                                        .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                );
-                                ui.label(
-                                    RichText::new(format!("Publisher: {PUBLISHER}"))
-                                        .size(11.5)
-                                        .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
-                                );
-                                ui.add_space(18.0);
-                                for step in SetupStep::ALL {
-                                    let active = self.step == step;
-                                    let color = if active {
-                                        Color32::from_rgb(0xE0, 0x53, 0x20)
-                                    } else {
-                                        Color32::from_rgb(0x2B, 0x2B, 0x2B)
-                                    };
-                                    ui.label(
-                                        RichText::new(step.label())
-                                            .size(12.5)
-                                            .strong()
-                                            .color(color),
-                                    );
-                                    ui.add_space(10.0);
-                                }
-                            });
-                        });
-
-                    // Right content area
+                        .inner_margin(egui::Margin::symmetric(12, 8)),
+                )
+                .show(ctx, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        for step in SetupStep::ALL {
+                            let active = self.step == step;
+                            let color = if active {
+                                Color32::from_rgb(0xE0, 0x53, 0x20)
+                            } else {
+                                Color32::from_rgb(0x57, 0x60, 0x6A)
+                            };
+                            ui.label(
+                                RichText::new(step.label())
+                                    .size(11.5)
+                                    .strong()
+                                    .color(color),
+                            );
+                        }
+                    });
+                });
+        } else {
+            let side_w = (win_w * 0.27).clamp(168.0, 215.0);
+            egui::SidePanel::left("setup-wizard-sidebar")
+                .exact_width(side_w)
+                .resizable(false)
+                .frame(
                     egui::Frame::new()
-                        .fill(Color32::WHITE)
-                        .inner_margin(egui::Margin::symmetric(22, 20))
-                        .show(ui, |ui| {
-                            ui.set_min_size(Vec2::new(
-                                (ui.available_width() - 12.0).max(260.0),
-                                content_h - 40.0,
-                            ));
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 8.0;
-                                match self.step {
-                                    SetupStep::Welcome => {
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "Welcome to the Gulpsuite {} Setup Wizard",
-                                                self.version
-                                            ))
-                                            .size(19.0)
-                                            .strong()
-                                            .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                        );
-                                        ui.add_space(6.0);
-                                        ui.label(
-                                            RichText::new(
-                                                "This wizard will install Gulpsuite and configure browser interception support on your computer.",
-                                            )
-                                            .size(12.5)
-                                            .color(Color32::from_rgb(0x1F, 0x23, 0x28)),
-                                        );
-                                        ui.add_space(6.0);
-                                        egui::Frame::new()
-                                            .fill(Color32::from_rgb(0xF6, 0xF8, 0xFA))
-                                            .stroke(Stroke::new(
-                                                1.0_f32,
-                                                Color32::from_rgb(0xD8, 0xDE, 0xE4),
-                                            ))
-                                            .corner_radius(4.0)
-                                            .inner_margin(egui::Margin::symmetric(12, 10))
-                                            .show(ui, |ui| {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "Verified Publisher: {PUBLISHER}"
-                                                    ))
-                                                    .strong()
-                                                    .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                                );
-                                                ui.label(format!(
-                                                    "Target Platform: {}",
-                                                    self.platform
-                                                ));
-                                                ui.hyperlink_to(REPO_URL, REPO_URL);
-                                            });
-                                        ui.add_space(4.0);
-                                        ui.label(
-                                            RichText::new(
-                                                "No global OS proxy settings or personal browser profiles are modified.",
-                                            )
-                                            .size(12.0)
-                                            .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
-                                        );
-                                    }
-                                    SetupStep::Directory => {
-                                        ui.label(
-                                            RichText::new("Select Destination Directory")
-                                                .size(19.0)
-                                                .strong()
-                                                .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                        );
-                                        ui.add_space(4.0);
-                                        ui.label("Where should Gulpsuite be installed?");
-                                        ui.horizontal(|ui| {
-                                            ui.label("Destination folder:");
-                                            ui.add(
-                                                egui::TextEdit::singleline(&mut self.destination)
-                                                    .desired_width(
-                                                        (ui.available_width() - 12.0).max(200.0),
-                                                    ),
-                                            );
-                                        });
-                                        ui.add_space(6.0);
-                                        ui.checkbox(
-                                            &mut self.include_chromium,
-                                            "Configure integrated Chromium / Chrome / Edge browser support",
-                                        );
-                                        ui.checkbox(
-                                            &mut self.create_shortcut,
-                                            "Create Start Menu & Desktop application shortcuts",
-                                        );
-                                    }
-                                    SetupStep::Installing => {
-                                        ui.label(
-                                            RichText::new("Installing Gulpsuite")
-                                                .size(19.0)
-                                                .strong()
-                                                .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                        );
-                                        ui.add_space(6.0);
-                                        ui.add(
-                                            egui::ProgressBar::new(self.progress)
-                                                .show_percentage()
-                                                .desired_width(
-                                                    (ui.available_width() - 16.0).max(240.0),
-                                                ),
-                                        );
-                                        ui.add_space(8.0);
-                                        for line in &self.logs {
-                                            ui.label(RichText::new(line).monospace().size(11.5));
-                                        }
-                                    }
-                                    SetupStep::Finished => {
-                                        if let Some(err) = &self.error {
-                                            ui.label(
-                                                RichText::new("Setup Failed")
-                                                    .size(19.0)
-                                                    .strong()
-                                                    .color(theme.color("ui.icon.error")),
-                                            );
-                                            ui.add_space(6.0);
-                                            ui.label(
-                                                RichText::new(err)
-                                                    .color(theme.color("ui.icon.error")),
-                                            );
-                                        } else {
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "Completing the Gulpsuite {} Setup Wizard",
-                                                    self.version
-                                                ))
-                                                .size(19.0)
-                                                .strong()
-                                                .color(Color32::from_rgb(0x11, 0x11, 0x11)),
-                                            );
-                                            ui.add_space(6.0);
-                                            ui.label(
-                                                "Setup has finished installing Gulpsuite on your computer.",
-                                            );
-                                            if let Some(path) = &self.installed_path {
-                                                ui.label(
-                                                    RichText::new(format!(
-                                                        "Installed at: {}",
-                                                        path.display()
-                                                    ))
-                                                    .monospace()
-                                                    .size(11.5),
-                                                );
-                                            }
-                                            ui.add_space(8.0);
-                                            ui.checkbox(
-                                                &mut self.launch_on_finish,
-                                                "Launch Gulpsuite now",
-                                            );
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                },
-            );
-
-            // Pinned bottom navigation bar (`< Back`, `Next >`, `Install`, `Finish`)
-            egui::Frame::new()
-                .fill(Color32::from_rgb(0xF6, 0xF8, 0xFA))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xD5, 0xD9, 0xE0)))
-                .inner_margin(egui::Margin::symmetric(18, 10))
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
+                        .fill(Color32::from_rgb(0xEB, 0xEE, 0xF2))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xD5, 0xD9, 0xE0)))
+                        .inner_margin(egui::Margin::symmetric(16, 20)),
+                )
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
                         ui.label(
-                            RichText::new(format!("Gulpsuite v{} · {PUBLISHER}", self.version))
+                            RichText::new("Gulpsuite Setup")
+                                .size(16.0)
+                                .strong()
+                                .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                        );
+                        ui.label(
+                            RichText::new(format!("Publisher: {PUBLISHER}"))
                                 .size(11.5)
                                 .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
                         );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            match self.step {
-                                SetupStep::Welcome => {
-                                    if crate::ui::app::primary_button(ui, &theme, "Next >")
-                                        .clicked()
-                                    {
-                                        self.step = SetupStep::Directory;
-                                    }
-                                }
-                                SetupStep::Directory => {
-                                    if crate::ui::app::primary_button(ui, &theme, "Install")
-                                        .clicked()
-                                    {
-                                        let ctx = ui.ctx().clone();
-                                        self.start_install(ctx);
-                                    }
-                                    if ui.button("< Back").clicked() {
-                                        self.step = SetupStep::Welcome;
-                                    }
-                                }
-                                SetupStep::Installing => {}
-                                SetupStep::Finished => {
-                                    if self.error.is_some() {
-                                        if ui.button("< Back").clicked() {
-                                            self.step = SetupStep::Directory;
-                                        }
-                                    } else if crate::ui::app::primary_button(ui, &theme, "Finish")
-                                        .clicked()
-                                    {
-                                        if self.launch_on_finish {
-                                            if let Some(path) = &self.installed_path {
-                                                let bin =
-                                                    if path.join("Contents/MacOS/Gulpsuite").is_file()
-                                                    {
-                                                        path.join("Contents/MacOS/Gulpsuite")
-                                                    } else if path.join("gulpsuite.exe").is_file() {
-                                                        path.join("gulpsuite.exe")
-                                                    } else {
-                                                        path.join("gulpsuite")
-                                                    };
-                                                let _ = std::process::Command::new(bin).spawn();
-                                            }
-                                        }
-                                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                    }
-                                }
-                            }
-                        });
+                        ui.add_space(18.0);
+                        for step in SetupStep::ALL {
+                            let active = self.step == step;
+                            let color = if active {
+                                Color32::from_rgb(0xE0, 0x53, 0x20)
+                            } else {
+                                Color32::from_rgb(0x2B, 0x2B, 0x2B)
+                            };
+                            ui.label(
+                                RichText::new(step.label())
+                                    .size(12.5)
+                                    .strong()
+                                    .color(color),
+                            );
+                            ui.add_space(10.0);
+                        }
                     });
                 });
-        });
+        }
+
+        // 3. Central Scrollable Wizard Content Area
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::WHITE)
+                    .inner_margin(egui::Margin::symmetric(if compact_mode { 14 } else { 24 }, 18)),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("setup-wizard-content-scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        match self.step {
+                            SetupStep::Welcome => {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Welcome to the Gulpsuite {} Setup Wizard",
+                                        self.version
+                                    ))
+                                    .size(18.5)
+                                    .strong()
+                                    .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(
+                                        "This wizard will install Gulpsuite and configure browser interception support on your computer.",
+                                    )
+                                    .size(12.5)
+                                    .color(Color32::from_rgb(0x1F, 0x23, 0x28)),
+                                );
+                                ui.add_space(4.0);
+                                egui::Frame::new()
+                                    .fill(Color32::from_rgb(0xF6, 0xF8, 0xFA))
+                                    .stroke(Stroke::new(
+                                        1.0_f32,
+                                        Color32::from_rgb(0xD8, 0xDE, 0xE4),
+                                    ))
+                                    .corner_radius(4.0)
+                                    .inner_margin(egui::Margin::symmetric(12, 10))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width((ui.available_width() - 8.0).max(160.0));
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "Verified Publisher: {PUBLISHER}"
+                                            ))
+                                            .strong()
+                                            .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                        );
+                                        ui.label(format!("Target Platform: {}", self.platform));
+                                        ui.hyperlink_to(REPO_URL, REPO_URL);
+                                    });
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(
+                                        "No global OS proxy settings or personal browser profiles are modified.",
+                                    )
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(0x57, 0x60, 0x6A)),
+                                );
+                            }
+                            SetupStep::Directory => {
+                                ui.label(
+                                    RichText::new("Select Destination Directory")
+                                        .size(18.5)
+                                        .strong()
+                                        .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                );
+                                ui.add_space(2.0);
+                                ui.label("Where should Gulpsuite be installed?");
+                                ui.label(RichText::new("Destination folder:").size(12.0).strong());
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.destination)
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.small_button("Default location (Recommended)").clicked() {
+                                        self.destination = default_install_dir(&self.platform)
+                                            .to_string_lossy()
+                                            .into_owned();
+                                    }
+                                    if let Some(home) = std::env::var_os("USERPROFILE")
+                                        .or_else(|| std::env::var_os("HOME"))
+                                        .map(PathBuf::from)
+                                    {
+                                        if ui.small_button("User folder").clicked() {
+                                            self.destination = home
+                                                .join("Gulpsuite")
+                                                .to_string_lossy()
+                                                .into_owned();
+                                        }
+                                    }
+                                });
+                                ui.add_space(4.0);
+                                ui.checkbox(
+                                    &mut self.include_chromium,
+                                    "Configure integrated Chromium / Chrome / Edge browser support",
+                                );
+                                ui.checkbox(
+                                    &mut self.create_shortcut,
+                                    "Create Start Menu & Desktop application shortcuts",
+                                );
+                            }
+                            SetupStep::Installing => {
+                                ui.label(
+                                    RichText::new("Installing Gulpsuite")
+                                        .size(18.5)
+                                        .strong()
+                                        .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                );
+                                ui.add_space(6.0);
+                                ui.add(
+                                    egui::ProgressBar::new(self.progress)
+                                        .show_percentage()
+                                        .desired_width(f32::INFINITY),
+                                );
+                                ui.add_space(8.0);
+                                for line in &self.logs {
+                                    ui.label(RichText::new(line).monospace().size(11.5));
+                                }
+                            }
+                            SetupStep::Finished => {
+                                if let Some(err) = &self.error {
+                                    ui.label(
+                                        RichText::new("Setup Failed")
+                                            .size(18.5)
+                                            .strong()
+                                            .color(theme.color("ui.icon.error")),
+                                    );
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        RichText::new(err).color(theme.color("ui.icon.error")),
+                                    );
+                                } else {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Completing the Gulpsuite {} Setup Wizard",
+                                            self.version
+                                        ))
+                                        .size(18.5)
+                                        .strong()
+                                        .color(Color32::from_rgb(0x11, 0x11, 0x11)),
+                                    );
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        "Setup has finished installing Gulpsuite on your computer.",
+                                    );
+                                    if let Some(path) = &self.installed_path {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "Installed at: {}",
+                                                path.display()
+                                            ))
+                                            .monospace()
+                                            .size(11.5),
+                                        );
+                                    }
+                                    ui.add_space(8.0);
+                                    ui.checkbox(&mut self.launch_on_finish, "Launch Gulpsuite now");
+                                }
+                            }
+                        }
+                    });
+            });
     }
 }
 
 impl eframe::App for SetupWizard {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let mut style = (*ctx.style()).clone();
-        style.visuals.panel_fill = Color32::WHITE;
-        style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-        style.visuals.widgets.noninteractive.fg_stroke.color =
-            Color32::from_rgb(0x1F, 0x23, 0x28);
-        ctx.set_style(style);
+        if ctx.style().visuals.dark_mode {
+            let mut style = (*ctx.style()).clone();
+            style.visuals = egui::Visuals::light();
+            style.visuals.panel_fill = Color32::WHITE;
+            style.spacing.item_spacing = Vec2::new(8.0, 6.0);
+            style.visuals.widgets.noninteractive.fg_stroke.color =
+                Color32::from_rgb(0x1F, 0x23, 0x28);
+            ctx.set_style(style);
+        }
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::WHITE))
-            .show(ctx, |ui| {
-                self.draw(ui);
-            });
+        self.draw_panels(ctx);
     }
 }
 

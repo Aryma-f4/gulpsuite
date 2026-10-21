@@ -57,8 +57,9 @@ fn main() -> eframe::Result<()> {
     if !is_setup_exe && !uninstall && !yes && !force_setup && prefix.is_none() {
         let options = eframe::NativeOptions {
             viewport: eframe::egui::ViewportBuilder::default()
-                .with_inner_size([1360.0, 820.0])
-                .with_min_inner_size([860.0, 540.0])
+                .with_inner_size([1280.0, 800.0])
+                .with_min_inner_size([760.0, 480.0])
+                .with_resizable(true)
                 .with_title("Gulpsuite"),
             ..Default::default()
         };
@@ -112,7 +113,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([720.0, 460.0])
-            .with_min_inner_size([660.0, 420.0])
+            .with_min_inner_size([400.0, 300.0])
             .with_resizable(true)
             .with_title("Gulpsuite Setup — Publisher: Aryma-f4"),
         ..Default::default()

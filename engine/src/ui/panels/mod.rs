@@ -763,7 +763,21 @@ pub fn attach_message_context_menu(
             ui.close();
         }
         if has_req && ui.button("Send to Repeater").clicked() {
-            app.panels.repeater.open(&url, &req);
+            let clean_req = req.replace('§', "");
+            let target_host = if url.trim().is_empty() {
+                let (head, _) = crate::analysis::split_message(&clean_req);
+                head.lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.trim()
+                            .eq_ignore_ascii_case("host")
+                            .then(|| format!("http://{}", v.trim()))
+                    })
+                    .unwrap_or_else(|| "http://localhost".to_string())
+            } else {
+                url.clone()
+            };
+            app.panels.repeater.open(&target_host, &clean_req);
             app.tool = app::REPEATER;
             app.view = 0;
             app.status = "Sent to Repeater".into();
@@ -3134,19 +3148,24 @@ pub fn burp_numbered_message_editor_wrapped(
                             .layouter(&mut layouter)
                             .show(ui);
 
+                        let max_chars = text.chars().count();
                         if let Some(pending) = take_pending_editor_cursor(id_salt) {
                             let ccr = egui::text::CCursorRange::two(
-                                egui::text::CCursor::new(pending.start),
-                                egui::text::CCursor::new(pending.end),
+                                egui::text::CCursor::new(pending.start.min(max_chars)),
+                                egui::text::CCursor::new(pending.end.min(max_chars)),
                             );
                             output.state.cursor.set_char_range(Some(ccr));
                             output.state.store(ui.ctx(), edit_id);
                             output.cursor_range = Some(ccr);
                         } else if right_mouse_event {
                             if let Some(saved) = prev_range {
-                                output.state.cursor.set_char_range(Some(saved));
+                                let clamped = egui::text::CCursorRange::two(
+                                    egui::text::CCursor::new(saved.primary.index.min(max_chars)),
+                                    egui::text::CCursor::new(saved.secondary.index.min(max_chars)),
+                                );
+                                output.state.cursor.set_char_range(Some(clamped));
                                 output.state.store(ui.ctx(), edit_id);
-                                output.cursor_range = Some(saved);
+                                output.cursor_range = Some(clamped);
                             }
                         }
                         if let Some(cr) = output.cursor_range {

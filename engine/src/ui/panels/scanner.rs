@@ -3276,9 +3276,43 @@ pub(crate) fn start(app: &mut App) {
                 )));
                 let checks = Arc::new(crate::scanner::active::all_checks());
                 let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
-                let mut probe_tasks = Vec::new();
+                let mut queried_osv_pkgs: std::collections::HashSet<(String, String)> =
+                    std::collections::HashSet::new();
+                let mut total_probes_sent = 0usize;
 
-                for (url, status) in pages.iter().take(40) {
+                // Phase 1: Origin-level high-impact CVE & exposure probes (`CVE-2025-29927`, `CVE-2021-41773`, `CVE-2021-28164`, `CVE-2022-22965`)
+                for start_url in &target_urls {
+                    let origin_cves =
+                        crate::scanner::active::audit_origin_cve_probes(start_url, &pages, &proxy)
+                            .await;
+                    let mut live_cves = Vec::new();
+                    for cf in origin_cves {
+                        let dup = findings
+                            .iter()
+                            .any(|e| e.name == cf.name && e.url == cf.url);
+                        if !dup {
+                            findings.push(cf.clone());
+                            live_cves.push(cf);
+                        }
+                    }
+                    if !live_cves.is_empty() {
+                        let _ = tx.send(ScanUpdate::Live {
+                            status: format!(
+                                "Auditing CVE probes: {} issue(s) found",
+                                findings.len()
+                            ),
+                            completed: 1,
+                            total: pages.len().max(2),
+                            page: None,
+                            findings: live_cves,
+                        });
+                    }
+                }
+
+                // Phase 2: Per-page live OSV.dev worldwide CVE query + bounded active injection probes
+                let audit_pages: Vec<(String, u16)> = pages.iter().take(40).cloned().collect();
+                let audit_page_total = audit_pages.len().max(1);
+                for (page_idx, (url, status)) in audit_pages.iter().enumerate() {
                     if *status < 200 || *status >= 400 {
                         continue;
                     }
@@ -3311,8 +3345,41 @@ pub(crate) fn start(app: &mut App) {
                             }
                         }
                     }
+
+                    // Live Worldwide CVE lookup (`https://api.osv.dev/v1/query`) for any detected package/version
+                    for (eco, pkg, ver) in
+                        crate::scanner::passive::extract_detected_packages(url, &parsed_base.body)
+                    {
+                        if queried_osv_pkgs.insert((pkg.clone(), ver.clone())) {
+                            if let Some(mut osv_finding) =
+                                crate::scanner::active::query_live_osv_cves(url, eco, &pkg, &ver)
+                                    .await
+                            {
+                                if let Some((scheme, rest)) = osv_finding.url.split_once("://") {
+                                    let h = rest.split('/').next().unwrap_or(rest);
+                                    osv_finding.url = format!("{scheme}://{h}/");
+                                }
+                                let dup = findings.iter().any(|e| {
+                                    e.name == osv_finding.name
+                                        && e.parameter == osv_finding.parameter
+                                });
+                                if !dup {
+                                    findings.push(osv_finding.clone());
+                                    let _ = tx.send(ScanUpdate::Live {
+                                        status: format!("Live CVE audit: {pkg} {ver}"),
+                                        completed: page_idx + 1,
+                                        total: audit_page_total,
+                                        page: None,
+                                        findings: vec![osv_finding],
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     let baseline_arc = Arc::new(parsed_base.clone());
                     let body = parsed_base.body;
+                    let mut page_probe_tasks = Vec::new();
 
                     for point in crate::scanner::crawler::injection_points(url, &body)
                         .into_iter()
@@ -3323,14 +3390,16 @@ pub(crate) fn start(app: &mut App) {
                                 let Some((h, p, tls, request)) = point.request(payload) else {
                                     continue;
                                 };
+                                let Ok(permit) = sem.clone().acquire_owned().await else {
+                                    continue;
+                                };
                                 let proxy = proxy.clone();
                                 let checks = checks.clone();
-                                let sem = sem.clone();
                                 let url = url.clone();
                                 let param_name = point.name.clone();
                                 let baseline_resp = baseline_arc.clone();
-                                probe_tasks.push(tokio::spawn(async move {
-                                    let _permit = sem.acquire().await.ok()?;
+                                page_probe_tasks.push(tokio::spawn(async move {
+                                    let _permit = permit;
                                     if delay_ms > 0 {
                                         tokio::time::sleep(std::time::Duration::from_millis(
                                             delay_ms.min(2_000),
@@ -3354,32 +3423,36 @@ pub(crate) fn start(app: &mut App) {
                             }
                         }
                     }
-                }
-                let probes = probe_tasks.len();
-                for (idx, handle) in probe_tasks.into_iter().enumerate() {
+
+                    total_probes_sent += page_probe_tasks.len();
                     let mut live_new = Vec::new();
-                    if let Ok(Some(finding)) = handle.await {
-                        let duplicate = findings.iter().any(|existing| {
-                            existing.name == finding.name
-                                && existing.url == finding.url
-                                && existing.parameter == finding.parameter
-                        });
-                        if !duplicate {
-                            findings.push(finding.clone());
-                            live_new.push(finding);
+                    for handle in page_probe_tasks {
+                        if let Ok(Some(finding)) = handle.await {
+                            let duplicate = findings.iter().any(|existing| {
+                                existing.name == finding.name
+                                    && existing.url == finding.url
+                                    && existing.parameter == finding.parameter
+                            });
+                            if !duplicate {
+                                findings.push(finding.clone());
+                                live_new.push(finding);
+                            }
                         }
                     }
-                    if idx % 4 == 0 || !live_new.is_empty() || idx + 1 == probes {
-                        let _ = tx.send(ScanUpdate::Live {
-                            status: format!("Auditing ({}/{probes} probes)", idx + 1),
-                            completed: idx + 1,
-                            total: probes.max(1),
-                            page: None,
-                            findings: live_new,
-                        });
-                    }
+                    let _ = tx.send(ScanUpdate::Live {
+                        status: format!(
+                            "Auditing page {}/{audit_page_total} ({total_probes_sent} probes)",
+                            page_idx + 1
+                        ),
+                        completed: page_idx + 1,
+                        total: audit_page_total,
+                        page: None,
+                        findings: live_new,
+                    });
                 }
-                let _ = tx.send(ScanUpdate::Progress(format!("{probes} probe(s) sent")));
+                let _ = tx.send(ScanUpdate::Progress(format!(
+                    "{total_probes_sent} probe(s) sent"
+                )));
             }
 
             pages.dedup();

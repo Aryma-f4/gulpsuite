@@ -99,8 +99,14 @@ pub fn find_by_name(name: &str) -> Option<&'static IssueDefinition> {
         || needle.contains("technology disclosure")
         || needle.contains("stack trace")
         || needle.contains("html comment")
+        || needle.contains("source code disclosure")
+        || needle.contains("actuator")
     {
         "source code disclosure"
+    } else if needle.contains("vulnerable javascript") || needle.contains("retire") {
+        "vulnerable javascript dependency"
+    } else if needle.contains("access control") || needle.contains("cve-2025-29927") {
+        "access control"
     } else if needle.contains("sensitive value") || needle.contains("aws access key") {
         "private key disclosed"
     } else if needle.contains("filesystem path") {

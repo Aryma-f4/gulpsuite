@@ -12,6 +12,7 @@ pub mod active;
 pub mod crawler;
 pub mod http;
 pub mod passive;
+pub mod retirejs_data;
 
 use std::collections::BTreeMap;
 

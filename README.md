@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ Gulpsuite (`v0.0.2`)
+# ⚡ Gulpsuite (`v0.0.3`)
 
 **Ultra-Fast, Lightweight Native Rust Web Security Testing, DAST Vulnerability Scanner & HTTP/HTTPS/WebSocket Interception Proxy Suite**
 
@@ -12,7 +12,7 @@
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-5b4fff?style=flat-square)](https://github.com/Aryma-f4/gulpsuite/releases/latest)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
-[**Download v0.0.2 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.2) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
+[**Download v0.0.3 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.3) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
 
 </div>
 
@@ -28,7 +28,7 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ## Why Gulpsuite? (Performance & Memory Benchmarks)
 
-| Metric | **Gulpsuite (`v0.0.2` Native Rust)** | Traditional JVM-Based Security Suites | Advantage |
+| Metric | **Gulpsuite (`v0.0.3` Native Rust)** | Traditional JVM-Based Security Suites | Advantage |
 |---|---|---|---|
 | **Idle Memory (RSS)** | **~50 MB** | ~850 MB – 2.2 GB+ | **~20× – 40× lower RAM** |
 | **Active Scan / Fuzzing Memory** | **~55 – 120 MB** (bounded ring buffers) | 2 GB – 6 GB+ | **Zero GC pauses or OOM freezes** |
@@ -38,16 +38,16 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## Cross-Platform Installers (`v0.0.2`)
+## Cross-Platform Installers (`v0.0.3`)
 
-Download pre-built native installers directly from [**GitHub Releases (`v0.0.2`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.2):
+Download pre-built native installers directly from [**GitHub Releases (`v0.0.3`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.3):
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.2-macos-arm64.dmg` / `Gulpsuite-0.0.2-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.2-macos-x64.dmg` / `Gulpsuite-0.0.2-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.0.2-windows-x64-setup.exe` | Windows Graphical Setup Wizard (`.exe`) |
-| **Linux** | `x86_64` | `Gulpsuite-0.0.2-linux-x64-setup.run` / `gulpsuite_0.0.2_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.3-macos-arm64.dmg` / `Gulpsuite-0.0.3-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.3-macos-x64.dmg` / `Gulpsuite-0.0.3-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.0.3-windows-x64-setup.exe` | Windows Graphical Setup Wizard (`.exe`) |
+| **Linux** | `x86_64` | `Gulpsuite-0.0.3-linux-x64-setup.run` / `gulpsuite_0.0.3_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ---
 
