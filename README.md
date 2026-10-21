@@ -7,7 +7,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/Aryma-f4/gulpsuite?style=flat-square&color=e05320&label=release)](https://github.com/Aryma-f4/gulpsuite/releases/latest)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Aryma-f4/gulpsuite/release.yml?style=flat-square&label=installers)](https://github.com/Aryma-f4/gulpsuite/actions)
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Memory Footprint](https://img.shields.io/badge/RAM-~35%20MB%20idle-1f883d?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
+[![Memory Footprint](https://img.shields.io/badge/RAM-~50%20MB%20idle-1f883d?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
 [![Cold Start](https://img.shields.io/badge/startup-%3C%200.2s-0068b5?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-5b4fff?style=flat-square)](https://github.com/Aryma-f4/gulpsuite/releases/latest)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
@@ -22,7 +22,7 @@
 
 **Gulpsuite** is a native, cross-platform web application security testing workbench, MITM HTTP/1.1, HTTP/2, TLS & WebSocket interception proxy, automated DAST vulnerability scanner, fuzzer, and request manipulation suite written 100% in Rust (`eframe` / `egui` + `tokio` + `rustls` + `rcgen`).
 
-Designed for bug bounty hunters, penetration testers, red teams, and AppSec engineers who want a **full-featured desktop security suite that launches in `< 0.2 seconds` and uses `~35 MB` of RAM** without JVM garbage-collection pauses or multi-gigabyte memory bloat.
+Designed for bug bounty hunters, penetration testers, red teams, and AppSec engineers who want a **full-featured desktop security suite that launches in `< 0.2 seconds` and uses `~50 MB` of RAM** without JVM garbage-collection pauses or multi-gigabyte memory bloat.
 
 ---
 
@@ -30,7 +30,7 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 | Metric | **Gulpsuite (`v0.0.2` Native Rust)** | Traditional JVM-Based Security Suites | Advantage |
 |---|---|---|---|
-| **Idle Memory (RSS)** | **~33 – 38 MB** | ~850 MB – 2.2 GB+ | **~25× – 60× lower RAM** |
+| **Idle Memory (RSS)** | **~50 MB** | ~850 MB – 2.2 GB+ | **~20× – 40× lower RAM** |
 | **Active Scan / Fuzzing Memory** | **~55 – 120 MB** (bounded ring buffers) | 2 GB – 6 GB+ | **Zero GC pauses or OOM freezes** |
 | **Idle CPU Usage** | **0.0% – 0.4%** (reactive immediate-mode UI) | 3% – 12% | **Cooler laptop & longer battery life** |
 | **Standalone Binary Size** | **~20 MB** | ~650 MB – 820 MB | **40× smaller footprint** |

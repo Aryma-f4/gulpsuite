@@ -1318,7 +1318,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             app.panels.intruder.show_getting_started = true;
         }
 
-        let combo_w = (ui.available_width() - 150.0).clamp(180.0, 480.0);
+        let combo_w = (ui.available_width() - 148.0).max(150.0);
         egui::ComboBox::from_id_salt("intruder-attack-type")
             .selected_text(app.panels.intruder.attack_type.title())
             .width(combo_w)
@@ -1362,16 +1362,34 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
 
         let can_start = !app.panels.intruder.running;
         ui.add_enabled_ui(can_start, |ui| {
+            ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
             let btn = egui::Button::new(
-                RichText::new("Start attack")
+                RichText::new("    Start attack")
                     .color(Color32::WHITE)
                     .strong()
                     .size(12.5),
             )
-            .fill(Color32::from_rgb(0xFF, 0x66, 0x33))
+            .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
             .corner_radius(4.0)
-            .min_size(Vec2::new(112.0, 26.0));
-            if ui.add(btn).clicked() {
+            .min_size(Vec2::new(116.0, 26.0));
+            let resp = ui.add(btn);
+            resp.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, can_start, "Start attack")
+            });
+            // Draw white circle-play icon (`▷` inside circle) matching `getting-started-with-intruder-4-attack-type.png`
+            let ic_center = pos2(resp.rect.left() + 15.0, resp.rect.center().y);
+            ui.painter()
+                .circle_stroke(ic_center, 6.2, Stroke::new(1.3_f32, Color32::WHITE));
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![
+                    pos2(ic_center.x - 1.8, ic_center.y - 3.0),
+                    pos2(ic_center.x + 3.0, ic_center.y),
+                    pos2(ic_center.x - 1.8, ic_center.y + 3.0),
+                ],
+                Color32::WHITE,
+                Stroke::NONE,
+            ));
+            if resp.clicked() {
                 start(app);
             }
         });
@@ -1418,7 +1436,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
     // Row 2 inside Left Pane: `Target [ https://... ]  [✓] Update Host header to match target` (`intruder-enumerating-positions-940.png`)
     ui.horizontal_wrapped(|ui| {
         ui.label("Target");
-        let target_w = (ui.available_width() - 260.0).clamp(180.0, 380.0);
+        let target_w = (ui.available_width() - 258.0).max(120.0);
         ui.add_enabled(
             !app.panels.intruder.running,
             egui::TextEdit::singleline(&mut app.panels.intruder.host).desired_width(target_w),
@@ -1439,13 +1457,18 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
 
     // Row 3: Outlined `[ Add § ]  [ Clear § ]  [ Auto § ]` buttons (`getting-started-with-intruder-3-request-with-payloads.png`)
     ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().button_padding = Vec2::new(10.0, 3.0);
         let panel = &mut app.panels.intruder;
-        let btn_bg = theme.color("ui.background.0");
+        let btn_bg = if theme.dark {
+            Color32::from_rgb(0x2B, 0x2E, 0x36)
+        } else {
+            Color32::WHITE
+        };
         let add_btn = egui::Button::new(RichText::new("Add §").size(12.0).strong())
             .fill(btn_bg)
             .stroke(Stroke::new(1.0_f32, border_col))
-            .corner_radius(3.0)
-            .min_size(Vec2::new(66.0, 25.0));
+            .corner_radius(4.0)
+            .min_size(Vec2::new(72.0, 26.0));
         if ui.add(add_btn).clicked() {
             if let Some(range) = panel.selection.take().filter(|r| r.start < r.end) {
                 let start = panel
@@ -1471,8 +1494,8 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
         let clear_btn = egui::Button::new(RichText::new("Clear §").size(12.0).strong())
             .fill(btn_bg)
             .stroke(Stroke::new(1.0_f32, border_col))
-            .corner_radius(3.0)
-            .min_size(Vec2::new(66.0, 25.0));
+            .corner_radius(4.0)
+            .min_size(Vec2::new(72.0, 26.0));
         if ui.add(clear_btn).clicked() {
             if let Some(range) = panel.selection.take().filter(|r| r.start < r.end) {
                 let start = panel
@@ -1500,8 +1523,8 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
         let auto_btn = egui::Button::new(RichText::new("Auto §").size(12.0).strong())
             .fill(btn_bg)
             .stroke(Stroke::new(1.0_f32, border_col))
-            .corner_radius(3.0)
-            .min_size(Vec2::new(66.0, 25.0));
+            .corner_radius(4.0)
+            .min_size(Vec2::new(72.0, 26.0));
         if ui.add(auto_btn).clicked() {
             panel.template = intruder::auto_mark_positions(&panel.template);
         }
@@ -1522,9 +1545,12 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
     let has_results_or_running =
         app.panels.intruder.running || !app.panels.intruder.results.is_empty();
     let tmpl_h = if has_results_or_running {
-        app.panels.intruder.template_height
+        app.panels
+            .intruder
+            .template_height
+            .min((ui.available_height() * 0.36).max(120.0))
     } else {
-        (ui.available_height() - 18.0).max(340.0)
+        (ui.available_height() - 8.0).max(200.0)
     };
     let host_clone = app.panels.intruder.host.clone();
     let mode = app.panels.intruder.template_view_mode;
@@ -1946,11 +1972,26 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
 /// `payload-types.html`, and `processing.html`).
 fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
+    let border_col = theme.color("ui.border.1");
+    let btn_bg = if theme.dark {
+        Color32::from_rgb(0x2B, 0x2E, 0x36)
+    } else {
+        Color32::WHITE
+    };
+    ui.spacing_mut().button_padding = Vec2::new(10.0, 3.0);
     let (payload_count, request_count) = app.panels.intruder.estimated_payload_and_request_count();
 
-    ui.horizontal_wrapped(|ui| {
-        heading(ui, &theme, "Payload sets & configuration");
+    ui.horizontal(|ui| {
+        let (hdr_rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 24.0), egui::Sense::hover());
+        ui.painter().text(
+            pos2(hdr_rect.left(), hdr_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Payloads",
+            egui::FontId::proportional(15.0),
+            theme.color("ui.text.heading"),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             if ui.small_button("×").on_hover_text("Collapse side panel").clicked() {
                 app.panels.intruder.side_panel_collapsed = true;
             }
@@ -1967,33 +2008,93 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                 app.show_settings = true;
                 app.settings_category = 3;
             }
-            if ui
-                .selectable_label(!app.panels.intruder.side_panel_left, ">|")
-                .on_hover_text("Dock side panel on the Right")
-                .clicked()
-            {
-                app.panels.intruder.side_panel_left = false;
-            }
-            if ui
-                .selectable_label(app.panels.intruder.side_panel_left, "|<")
-                .on_hover_text("Dock side panel on the Left")
-                .clicked()
-            {
-                app.panels.intruder.side_panel_left = true;
-            }
+            // Split-dock toggle pill (`[ |▤ | ▤| ]` in `getting-started-with-intruder-5-usernames-in-list.png`)
+            let active_blue = Color32::from_rgb(0x1B, 0x56, 0x99);
+            let pill_bg = if theme.dark {
+                Color32::from_rgb(0x32, 0x36, 0x3E)
+            } else {
+                Color32::from_rgb(0xE0, 0xE0, 0xE0)
+            };
+            egui::Frame::new()
+                .fill(pill_bg)
+                .corner_radius(3.0)
+                .inner_margin(egui::Margin::same(1))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (dock_left, lbl, tip) in [
+                        (false, "▤|", "Dock side panel on the Right"),
+                        (true, "|▤", "Dock side panel on the Left"),
+                    ] {
+                        let is_act = app.panels.intruder.side_panel_left == dock_left;
+                        let fill = if is_act { active_blue } else { Color32::TRANSPARENT };
+                        let fg = if is_act {
+                            Color32::WHITE
+                        } else {
+                            theme.color("ui.text.body")
+                        };
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new(lbl).size(11.0).color(fg).strong())
+                                    .fill(fill)
+                                    .stroke(Stroke::NONE)
+                                    .corner_radius(2.0)
+                                    .min_size(Vec2::new(24.0, 20.0)),
+                            )
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            app.panels.intruder.side_panel_left = dock_left;
+                        }
+                    }
+                });
         });
     });
     ui.separator();
+
+    let field_w = (ui.available_width() - 125.0).max(140.0);
+    let first_kind = app
+        .panels
+        .intruder
+        .payload_sets
+        .first()
+        .map(|s| s.kind.clone())
+        .unwrap_or_else(|| "Simple list".into());
 
     egui::Grid::new("intruder-payload-counts-grid")
         .num_columns(2)
         .spacing([14.0, 6.0])
         .show(ui, |ui| {
             ui.label("Payload position:");
-            ui.label(
-                RichText::new("All payload positions")
-                    .color(theme.color("ui.icon.default")),
-            );
+            egui::ComboBox::from_id_salt("intruder-payload-pos-select")
+                .selected_text("All payload positions")
+                .width(field_w)
+                .show_ui(ui, |ui| {
+                    let _ = ui.selectable_label(true, "All payload positions");
+                });
+            ui.end_row();
+            ui.label("Payload type:");
+            if let Some(first_set) = app.panels.intruder.payload_sets.first_mut() {
+                let previous = first_set.kind.clone();
+                egui::ComboBox::from_id_salt("payload-kind-top")
+                    .selected_text(&first_set.kind)
+                    .width(field_w)
+                    .show_ui(ui, |ui| {
+                        for kind in PAYLOAD_TYPES {
+                            ui.selectable_value(&mut first_set.kind, kind.to_owned(), kind);
+                        }
+                    });
+                if previous != first_set.kind {
+                    if first_set.kind == "Dates & times" {
+                        first_set.range_start = "2026-01-01".into();
+                        first_set.range_end = "2026-01-10".into();
+                    } else if first_set.kind == "Numbers" {
+                        first_set.range_start = "1".into();
+                        first_set.range_end = "10".into();
+                    }
+                }
+            } else {
+                ui.label(first_kind);
+            }
             ui.end_row();
             ui.label("Payload count:");
             ui.label(RichText::new(payload_count.to_string()).strong());
@@ -2006,31 +2107,35 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
 
     let panel = &mut app.panels.intruder;
     let mut remove = None;
+    let sets_len = panel.payload_sets.len();
     for (index, set) in panel.payload_sets.iter_mut().enumerate() {
         ui.push_id(index, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(format!("Payload set {}", index + 1));
-                ui.label("Payload type:");
-                let previous = set.kind.clone();
-                egui::ComboBox::from_id_salt("payload-kind")
-                    .selected_text(&set.kind)
-                    .width(175.0)
-                    .show_ui(ui, |ui| {
-                        for kind in PAYLOAD_TYPES {
-                            ui.selectable_value(&mut set.kind, kind.to_owned(), kind);
+                ui.label(RichText::new(format!("Payload set {}", index + 1)).strong());
+                if index > 0 || sets_len > 1 {
+                    ui.separator();
+                    ui.label("Payload type:");
+                    let previous = set.kind.clone();
+                    egui::ComboBox::from_id_salt("payload-kind")
+                        .selected_text(&set.kind)
+                        .width(165.0)
+                        .show_ui(ui, |ui| {
+                            for kind in PAYLOAD_TYPES {
+                                ui.selectable_value(&mut set.kind, kind.to_owned(), kind);
+                            }
+                        });
+                    if previous != set.kind {
+                        if set.kind == "Dates & times" {
+                            set.range_start = "2026-01-01".into();
+                            set.range_end = "2026-01-10".into();
+                        } else if set.kind == "Numbers" {
+                            set.range_start = "1".into();
+                            set.range_end = "10".into();
                         }
-                    });
-                if previous != set.kind {
-                    if set.kind == "Dates & times" {
-                        set.range_start = "2026-01-01".into();
-                        set.range_end = "2026-01-10".into();
-                    } else if set.kind == "Numbers" {
-                        set.range_start = "1".into();
-                        set.range_end = "10".into();
                     }
-                }
-                if ui.button("Remove set").clicked() {
-                    remove = Some(index);
+                    if ui.button("Remove set").clicked() {
+                        remove = Some(index);
+                    }
                 }
             });
 
@@ -2169,19 +2274,33 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                     ui.text_edit_singleline(&mut set.char_sub_rules);
                                 });
                             }
-                            // Left button column (`Paste`, `Load...`, `Remove`, `Clear`, `Deduplicate`) beside the payload list
+                            // Left button column (`Paste`, `Load...`, `Remove`, `Clear`, `Deduplicate`) beside the payload list (`getting-started-with-intruder-5-usernames-in-list.png`)
+                            let btn_w = 104.0;
+                            let bsize = Vec2::new(btn_w, 26.0);
                             ui.horizontal_top(|ui| {
                                 ui.vertical(|ui| {
-                                    ui.set_min_width(96.0);
-                                    let bsize = Vec2::new(96.0, 24.0);
+                                    ui.set_min_width(btn_w);
+                                    ui.spacing_mut().item_spacing.y = 5.0;
                                     if ui
-                                        .add(egui::Button::new("Paste").min_size(bsize))
+                                        .add_sized(
+                                            bsize,
+                                            egui::Button::new(RichText::new("Paste").strong())
+                                                .fill(btn_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(4.0),
+                                        )
                                         .clicked()
                                     {
                                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
                                     }
                                     if ui
-                                        .add(egui::Button::new("Load...").min_size(bsize))
+                                        .add_sized(
+                                            bsize,
+                                            egui::Button::new(RichText::new("Load...").strong())
+                                                .fill(btn_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(4.0),
+                                        )
                                         .clicked()
                                     {
                                         if !set.values.is_empty() && !set.values.ends_with('\n') {
@@ -2190,7 +2309,13 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                         set.values.push('\n');
                                     }
                                     if ui
-                                        .add(egui::Button::new("Remove").min_size(bsize))
+                                        .add_sized(
+                                            bsize,
+                                            egui::Button::new(RichText::new("Remove").strong())
+                                                .fill(btn_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(4.0),
+                                        )
                                         .clicked()
                                     {
                                         let mut lines: Vec<&str> = set.values.lines().collect();
@@ -2200,13 +2325,25 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                         }
                                     }
                                     if ui
-                                        .add(egui::Button::new("Clear").min_size(bsize))
+                                        .add_sized(
+                                            bsize,
+                                            egui::Button::new(RichText::new("Clear").strong())
+                                                .fill(btn_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(4.0),
+                                        )
                                         .clicked()
                                     {
                                         set.values.clear();
                                     }
                                     if ui
-                                        .add(egui::Button::new("Deduplicate").min_size(bsize))
+                                        .add_sized(
+                                            bsize,
+                                            egui::Button::new(RichText::new("Deduplicate").strong())
+                                                .fill(btn_bg)
+                                                .stroke(Stroke::new(1.0_f32, border_col))
+                                                .corner_radius(4.0),
+                                        )
                                         .clicked()
                                     {
                                         let mut seen = Vec::new();
@@ -2222,12 +2359,23 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                     egui::TextEdit::multiline(&mut set.values)
                                         .font(egui::TextStyle::Monospace)
                                         .desired_width(f32::INFINITY)
-                                        .desired_rows(5),
+                                        .desired_rows(8),
                                 );
                             });
+                            ui.add_space(4.0);
                             // `[ Add ] [ Enter a new item ]`
                             ui.horizontal(|ui| {
-                                if ui.button("Add").clicked() && !set.new_item_draft.is_empty() {
+                                if ui
+                                    .add_sized(
+                                        bsize,
+                                        egui::Button::new(RichText::new("Add").strong())
+                                            .fill(btn_bg)
+                                            .stroke(Stroke::new(1.0_f32, border_col))
+                                            .corner_radius(4.0),
+                                    )
+                                    .clicked()
+                                    && !set.new_item_draft.is_empty()
+                                {
                                     if !set.values.is_empty() && !set.values.ends_with('\n') {
                                         set.values.push('\n');
                                     }
@@ -2240,11 +2388,13 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                         .desired_width(f32::INFINITY),
                                 );
                             });
-                            // `Add from list ...` dropdown
+                            ui.add_space(4.0);
+                            // Full-width `Add from list ...` dropdown (`getting-started-with-intruder-5-usernames-in-list.png`)
+                            let list_w = (ui.available_width() - 6.0).max(160.0);
                             ui.horizontal_wrapped(|ui| {
                                 egui::ComboBox::from_id_salt(("intruder-predefined-list", index))
-                                    .selected_text("Add from list ...")
-                                    .width(240.0)
+                                    .selected_text("Add from list...")
+                                    .width(list_w)
                                     .show_ui(ui, |ui| {
                                         for (label, items) in [
                                             (
@@ -2946,13 +3096,17 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         .fill(theme.color("ui.background.0"))
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
+            let show_results =
+                app.panels.intruder.running || !app.panels.intruder.results.is_empty();
             if app.panels.intruder.side_panel_collapsed {
                 egui::ScrollArea::vertical()
                     .id_salt("intruder-left-only-scroll")
                     .show(ui, |ui| {
                         draw_positions_editor(app, ui);
-                        ui.separator();
-                        draw_results_area(app, ui);
+                        if show_results {
+                            ui.separator();
+                            draw_results_area(app, ui);
+                        }
                     });
             } else {
                 let avail_h = ui.available_height().max(320.0);
@@ -2971,8 +3125,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                 .id_salt("intruder-left-pane-scroll")
                                 .show(ui, |ui| {
                                     draw_positions_editor(app, ui);
-                                    ui.separator();
-                                    draw_results_area(app, ui);
+                                    if show_results {
+                                        ui.separator();
+                                        draw_results_area(app, ui);
+                                    }
                                 });
                         } else {
                             egui::ScrollArea::vertical()
