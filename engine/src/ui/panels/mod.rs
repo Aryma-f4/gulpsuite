@@ -1,6 +1,6 @@
 //! The tool panels. Each tool owns its own state; the shell only routes.
 
-mod collaborator;
+pub mod collaborator;
 mod comparer;
 pub(crate) mod dashboard;
 pub(crate) mod decoder;
@@ -53,6 +53,7 @@ pub struct Panels {
     pub ws_selected: Option<(u64, u64)>,
     pub ws_handshake: Option<(u64, bool)>,
     /// Collaborator state.
+    pub collaborator_panel: collaborator::CollaboratorPanel,
     pub collaborator_local: bool,
     pub collaborator_port: Option<u16>,
     /// The port the collaborator's resolver listens on, when it runs.
@@ -95,6 +96,7 @@ impl Default for Panels {
             ws_filter: String::new(),
             ws_selected: None,
             ws_handshake: None,
+            collaborator_panel: collaborator::CollaboratorPanel::default(),
             collaborator_local: true,
             collaborator_port: None,
             collaborator_dns_port: None,
@@ -469,6 +471,91 @@ pub fn replace_selection_in_text(
     None
 }
 
+/// Starts Collaborator listeners if needed, generates a Collaborator payload, replaces the
+/// active blocked selection in-place inside Repeater/Intruder/Proxy/Decoder (matching
+/// `collaborator/getting-started.html#step-4-inject-a-collaborator-payload-into-the-request`),
+/// and copies the payload to the clipboard.
+pub fn insert_collaborator_payload_in_place(
+    app: &mut App,
+    ctx: &eframe::egui::Context,
+    fallback_req: &str,
+    fallback_resp: &str,
+) {
+    collaborator::ensure_listeners_started(app);
+    let payload = collaborator::generate_payloads(app, 1, app.panels.collaborator_local)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| {
+            format!(
+                "{}.{}",
+                app.panels.collaborator_token,
+                crate::collaborator::DOMAIN
+            )
+        });
+    ctx.copy_text(payload.clone());
+
+    if let Some((source_id, range, selected_txt)) = latest_selection_full() {
+        let mut replaced = None;
+        if source_id.starts_with("repeater-req") || app.tool == app::REPEATER {
+            let raw = &mut app.panels.repeater.active_mut().raw;
+            if let Some(new_r) = replace_selection_in_text(raw, &range, &selected_txt, &payload) {
+                replaced = Some(("repeater-req-edit", new_r));
+            }
+        } else if source_id.starts_with("intruder-") || app.tool == app::INTRUDER {
+            let tmpl = &mut app.panels.intruder.template;
+            if let Some(new_r) = replace_selection_in_text(tmpl, &range, &selected_txt, &payload) {
+                replaced = Some(("intruder-positions-edit", new_r));
+            }
+        } else if source_id.starts_with("proxy-intercept")
+            || (app.tool == app::PROXY && app.view == 0)
+        {
+            if let Some(sel_idx) = app.panels.proxy_panel.held_selected {
+                if app
+                    .panels
+                    .proxy_panel
+                    .held_edit
+                    .as_ref()
+                    .is_none_or(|(idx, _)| *idx != sel_idx)
+                {
+                    let seed = if !fallback_req.is_empty() {
+                        fallback_req.to_string()
+                    } else {
+                        fallback_resp.to_string()
+                    };
+                    if !seed.is_empty() {
+                        app.panels.proxy_panel.held_edit = Some((sel_idx, seed));
+                    }
+                }
+            }
+            if let Some((_, ref mut buf)) = app.panels.proxy_panel.held_edit {
+                if let Some(new_r) = replace_selection_in_text(buf, &range, &selected_txt, &payload)
+                {
+                    replaced = Some(("proxy-intercept-editor", new_r));
+                }
+            }
+        }
+        if let Some((editor_id, new_range)) = replaced {
+            LAST_MESSAGE_SELECTION.with(|cell| {
+                *cell.borrow_mut() =
+                    Some((editor_id.to_string(), new_range.clone(), payload.clone()));
+            });
+            set_pending_editor_cursor(editor_id, new_range);
+            app.status = format!("Inserted Collaborator payload in-place: {payload}");
+            return;
+        }
+    }
+
+    if app.tool == app::REPEATER {
+        app.panels.repeater.active_mut().raw.push_str(&payload);
+        app.status = format!("Inserted Collaborator payload: {payload}");
+    } else if app.tool == app::INTRUDER {
+        app.panels.intruder.template.push_str(&payload);
+        app.status = format!("Inserted Collaborator payload: {payload}");
+    } else {
+        app.status = format!("Copied Collaborator payload {payload}");
+    }
+}
+
 /// Runs `op_name` (`Base64 encode`, `Base64 decode`, `URL encode`, `URL decode`, `HTML encode`,
 /// `HTML decode`, `Hex encode`, `Hex decode`) on the active blocked selection, replaces it IN-PLACE
 /// when the selection belongs to an editable buffer (`Repeater`, `Intruder`, `Proxy -> Intercept`, `Decoder`),
@@ -830,13 +917,7 @@ pub fn attach_message_context_menu(
             }
         });
         if ui.button("Insert Collaborator payload").clicked() {
-            let payload = format!(
-                "{}.{}",
-                app.panels.collaborator_token,
-                crate::collaborator::DOMAIN
-            );
-            ui.ctx().copy_text(payload.clone());
-            app.status = format!("Copied Collaborator payload {payload}");
+            insert_collaborator_payload_in_place(app, ui.ctx(), &req, &resp);
             ui.close();
         }
         if !url.is_empty() && ui.button("Copy URL").clicked() {

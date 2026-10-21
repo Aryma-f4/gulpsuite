@@ -110,12 +110,14 @@ Interactive HTTP request manipulation and replay across multiple grouped tabs, f
 - **Decoder**: Multi-layer `Smart decode`, URL, HTML, Base64, ASCII hex, Gzip, and SHA-256/SHA-512/MD5 transformations with live Text & Hex dump views and in-place selection conversion.
 - **Comparer**: Word-level and Byte-level visual diff engine for comparing any two requests or responses.
 - **Sequencer**: FIPS-style token randomness and entropy analyzer (character-level & bit-level uniformity across live captures or manual token lists).
-- **Collaborator**: Out-of-band (OOB) HTTP/DNS/SMTP interaction client with payload generator and polling.
+- **Collaborator**: Multi-tab out-of-band (OOB) DNS, HTTP, and SMTP interaction client & local listener server with payload generator, automatic 60s polling, protocol filters, health check probes, Base64 CSV export, and `Description` / `DNS query` / `Request to Collaborator` / `Response from Collaborator` inspection.
 - **Logger**: Full-fidelity stream of HTTP, WebSocket, DNS, and SMTP traffic across all tools.
 - **Organizer**: Long-term request/response storage with collections, notes, and search.
 - **Extensions (Bambda)**: Live HTTP traffic filter and transformation scripting engine.
 - **Discover**: Threaded directory and content discovery scanner.
 - **In-App Auto-Updater**: Automatic startup & on-demand (`Help -> Check for updates…`, `Settings -> Suite -> Software Updates`, `Extensions -> Updates`) GitHub Releases checker with SHA-256 verification and 1-click native installer launch across macOS, Windows, and Linux.
+
+![Collaborator — Out-of-Band Interactions](docs/screenshots/10-collaborator-interactions.png)
 
 ![Decoder — Smart Decode](docs/screenshots/09-decoder-smart-decode.png)
 

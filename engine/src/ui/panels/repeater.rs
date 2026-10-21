@@ -1308,13 +1308,7 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
         ui.close();
     }
     if ui.button("Insert Collaborator payload").clicked() {
-        let payload = format!(
-            "{}.{}",
-            app.panels.collaborator_token,
-            crate::collaborator::DOMAIN
-        );
-        app.panels.repeater.active_mut().raw.push_str(&payload);
-        app.status = format!("Inserted Collaborator payload {payload}");
+        super::insert_collaborator_payload_in_place(app, ui.ctx(), &tab.raw, &tab.response);
         ui.close();
     }
     ui.separator();

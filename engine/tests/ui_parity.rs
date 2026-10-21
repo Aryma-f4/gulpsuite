@@ -1072,6 +1072,63 @@ fn generate_documentation_screenshots() {
         .expect("render decoder")
         .save(out_dir.join("09-decoder-smart-decode.png"))
         .expect("save 09-decoder-smart-decode.png");
+
+    // 10. Collaborator (matching `burp-collaborator-tut-4-polling-for-interactions.png`)
+    h_light.get_by_label("Collaborator").click();
+    h_light.state_mut().panels.collaborator_hits = vec![
+        gulpsuite::collaborator::Hit {
+            kind: "DNS".into(),
+            method: "A".into(),
+            path: "xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com".into(),
+            peer: "3.251.105.10".into(),
+            host: "xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com".into(),
+            resolved: Some("127.0.0.1".into()),
+            timestamp_utc: "2026-Oct-21 12:41:30.756 UTC".into(),
+            payload_id: "xlmmyqvknz5x645l19w1cxs4xv3srif7".into(),
+            raw_request: ";; QUESTION SECTION:\r\n;xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com.\tIN\tA".into(),
+            raw_response: ";; ANSWER SECTION:\r\nxlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com.\t60\tIN\tA\t127.0.0.1".into(),
+            read: false,
+            comment: String::new(),
+            highlight: None,
+        },
+        gulpsuite::collaborator::Hit {
+            kind: "DNS".into(),
+            method: "A".into(),
+            path: "xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com".into(),
+            peer: "3.251.128.115".into(),
+            host: "xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com".into(),
+            resolved: Some("127.0.0.1".into()),
+            timestamp_utc: "2026-Oct-21 12:41:30.755 UTC".into(),
+            payload_id: "xlmmyqvknz5x645l19w1cxs4xv3srif7".into(),
+            raw_request: ";; QUESTION SECTION:\r\n;xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com.\tIN\tA".into(),
+            raw_response: ";; ANSWER SECTION:\r\nxlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com.\t60\tIN\tA\t127.0.0.1".into(),
+            read: true,
+            comment: String::new(),
+            highlight: None,
+        },
+        gulpsuite::collaborator::Hit {
+            kind: "HTTP".into(),
+            method: "GET".into(),
+            path: "/".into(),
+            peer: "34.253.173.2".into(),
+            host: "xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com".into(),
+            resolved: None,
+            timestamp_utc: "2026-Oct-21 12:41:31.124 UTC".into(),
+            payload_id: "xlmmyqvknz5x645l19w1cxs4xv3srif7".into(),
+            raw_request: "GET / HTTP/1.1\r\nHost: xlmmyqvknz5x645l19w1cxs4xv3srif7.oastify.com\r\nUser-Agent: Mozilla/5.0\r\n\r\n".into(),
+            raw_response: "HTTP/1.1 200 OK\r\nServer: Collaborator\r\n\r\n<html><body>collaborator cr4393h3ipr3hi30f3jif3op</body></html>".into(),
+            read: false,
+            comment: String::new(),
+            highlight: None,
+        },
+    ];
+    h_light.state_mut().panels.collaborator_panel.selected_hit = Some(1);
+    h_light.run();
+    h_light
+        .render()
+        .expect("render collaborator")
+        .save(out_dir.join("10-collaborator-interactions.png"))
+        .expect("save 10-collaborator-interactions.png");
 }
 
 #[test]

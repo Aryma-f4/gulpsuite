@@ -59,8 +59,8 @@ pub const TOOL_VIEWS: [&[&str]; 13] = [
     &["Intruder"],
     // Repeater
     &["Repeater"],
-    // Collaborator
-    &["Server", "Project"],
+    // Collaborator: single top-level view; result tabs (`1 × | 2 × | +`) live inside Collaborator.
+    &["Collaborator"],
     // Sequencer
     &["Live capture", "Manual load", "Sequencer settings"],
     // Decoder
