@@ -1501,6 +1501,9 @@ impl eframe::App for App {
             }
         }
         self.pump();
+        if self.panels.scanner.running || self.panels.discover_running {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        }
         self.hotkeys(ctx);
         self.shell.resolve_restored_viewport();
         apply_visuals(ctx, &self.theme);

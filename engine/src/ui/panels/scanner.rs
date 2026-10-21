@@ -471,8 +471,6 @@ pub fn paint_burp_spinner(ui: &mut Ui, size: Vec2, color: Color32) {
             Stroke::new(1.8, spoke_col),
         );
     }
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(45));
 }
 
 /// Paints Burp Suite Pro's purple `#5B4FFF` scan progress bar (`Pro-QSG-4-crawl-and-audit.png`).
@@ -482,14 +480,179 @@ pub fn paint_burp_progress_bar(
     ratio: f32,
     theme: &crate::ui::theme::Theme,
 ) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
+    paint_burp_progress_bar_animated(ui, width, ratio, false, theme);
+}
+
+/// Paints Burp Suite Pro's `#5B4FFF` pill-shaped progress bar (`ProgressBar.arc = 999` in `BurpLaf.properties`
+/// and `Pro-QSG-4-crawl-and-audit.png`), with an animated sweeping shimmer band when `active` is true.
+pub fn paint_burp_progress_bar_animated(
+    ui: &mut Ui,
+    width: f32,
+    ratio: f32,
+    active: bool,
+    theme: &crate::ui::theme::Theme,
+) {
+    let height = 7.0;
+    let radius = 3.5;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let painter = ui.painter_at(rect);
-    let track_col = theme.color("ui.background.3");
-    let fill_col = Color32::from_rgb(0x5B, 0x4F, 0xFF); // `@purple` (`ui.status.inProgress`)
-    painter.rect_filled(rect, 3.0, track_col);
+    let track_col = if theme.dark {
+        Color32::from_rgb(0x36, 0x3A, 0x42)
+    } else {
+        Color32::from_rgb(0xE0, 0xE2, 0xE6)
+    };
+    let fill_col = Color32::from_rgb(0x5B, 0x4F, 0xFF); // `@purple` (`Pro-QSG-4-crawl-and-audit.png`)
+    painter.rect_filled(rect, radius, track_col);
     let clamped = ratio.clamp(0.06, 1.0);
-    let fill_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width() * clamped, rect.height()));
-    painter.rect_filled(fill_rect, 3.0, fill_col);
+    let fill_w = (rect.width() * clamped).max(height);
+    let fill_rect = Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height()));
+    painter.rect_filled(fill_rect, radius, fill_col);
+
+    if active {
+        let t = (ui.input(|i| i.time) * 0.9).fract() as f32;
+        let shimmer_w = (fill_w * 0.35).clamp(14.0, 56.0);
+        let shimmer_x = rect.min.x + (fill_w - shimmer_w).max(0.0) * t;
+        let shimmer_rect = Rect::from_min_size(
+            pos2(shimmer_x, rect.min.y + 1.0),
+            Vec2::new(shimmer_w.min(fill_w), (height - 2.0).max(2.0)),
+        )
+        .intersect(fill_rect);
+        if shimmer_rect.width() > 1.0 {
+            painter.rect_filled(
+                shimmer_rect,
+                radius,
+                Color32::from_rgba_unmultiplied(0x9E, 0x96, 0xFF, 165),
+            );
+        }
+    }
+}
+
+/// Renders Burp Suite Pro's Scanner loading bar banner (`Pro-QSG-4-crawl-and-audit.png` & `Pro-QSG-6-view-issues.png`)
+/// with the `scanning.svg` radar-pulse icon, `#5B4FFF` pill progress bar, live phase/probe counter,
+/// and High/Medium/Low/Info issue count pills.
+pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
+    let theme = app.theme.clone();
+    let is_running = app.panels.scanner.running;
+    let total_steps = app.panels.scanner.total_steps.max(1);
+    let done_steps = app.panels.scanner.completed_steps;
+    let ratio = if is_running {
+        (done_steps as f32 / total_steps as f32).clamp(0.12, 0.96)
+    } else if !app.panels.scanner.pages.is_empty() || !app.panels.scanner.findings.is_empty() {
+        1.0
+    } else if !app.workspace.issues.is_empty() {
+        0.68
+    } else {
+        return;
+    };
+
+    let mut high = 0usize;
+    let mut medium = 0usize;
+    let mut low = 0usize;
+    let mut info = 0usize;
+    for iss in app.workspace.issues.iter() {
+        match iss.severity {
+            crate::workspace::IssueSeverity::High => high += 1,
+            crate::workspace::IssueSeverity::Medium => medium += 1,
+            crate::workspace::IssueSeverity::Low => low += 1,
+            crate::workspace::IssueSeverity::Info => info += 1,
+        }
+    }
+
+    let bg = if theme.dark {
+        Color32::from_rgb(0x22, 0x25, 0x2B)
+    } else {
+        Color32::from_rgb(0xF6, 0xF8, 0xFA)
+    };
+    let border_col = theme.color("ui.border.1");
+    let heading_fg = if theme.dark {
+        Color32::WHITE
+    } else {
+        Color32::from_rgb(0x11, 0x11, 0x11)
+    };
+    let body_fg = if theme.dark {
+        Color32::from_rgb(0xE0, 0xE4, 0xEC)
+    } else {
+        Color32::from_rgb(0x1F, 0x23, 0x28)
+    };
+
+    egui::Frame::new()
+        .fill(bg)
+        .stroke(Stroke::new(1.0_f32, border_col))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if is_running {
+                    paint_burp_spinner(ui, Vec2::new(14.0, 14.0), Color32::from_rgb(0x5B, 0x4F, 0xFF));
+                }
+                paint_launcher_icon(
+                    ui,
+                    Vec2::new(15.0, 15.0),
+                    if is_running {
+                        Color32::from_rgb(0x5B, 0x4F, 0xFF)
+                    } else {
+                        body_fg
+                    },
+                    LauncherIcon::ScanDetails,
+                );
+                let status_txt = if is_running {
+                    if app.panels.scanner.progress.is_empty() {
+                        "Auditing…".to_string()
+                    } else {
+                        app.panels.scanner.progress.clone()
+                    }
+                } else if !app.panels.scanner.progress.is_empty()
+                    && app.panels.scanner.progress != "Idle"
+                {
+                    app.panels.scanner.progress.clone()
+                } else {
+                    format!(
+                        "Crawl and Audit — {}",
+                        app.panels.scanner.preset_name()
+                    )
+                };
+                ui.label(RichText::new(status_txt).size(12.0).strong().color(heading_fg));
+                ui.add_space(4.0);
+                paint_burp_progress_bar_animated(ui, 210.0, ratio, is_running, &theme);
+                let pct = (ratio * 100.0).round() as u32;
+                ui.label(
+                    RichText::new(format!("{pct}%"))
+                        .size(11.5)
+                        .monospace()
+                        .strong()
+                        .color(body_fg),
+                );
+                if is_running && ui.small_button("Cancel").clicked() {
+                    app.panels.scanner.running = false;
+                    app.scanner_updates = None;
+                    app.panels.scanner.progress = "Scan cancelled".into();
+                    app.status = "Scan cancelled".into();
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    for (count, col) in [
+                        (info, Color32::from_rgb(0x6E, 0x76, 0x81)),
+                        (low, Color32::from_rgb(0x00, 0x68, 0xB5)),
+                        (medium, Color32::from_rgb(0xF5, 0x7B, 0x20)),
+                        (high, Color32::from_rgb(0xE0, 0x20, 0x4F)),
+                    ] {
+                        let (pill_r, _) =
+                            ui.allocate_exact_size(Vec2::new(26.0, 17.0), Sense::hover());
+                        ui.painter().rect_filled(pill_r, 8.5, col);
+                        ui.painter().text(
+                            pill_r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            count.to_string(),
+                            FontId::proportional(11.0),
+                            Color32::WHITE,
+                        );
+                    }
+                    ui.label(RichText::new("Issues:").size(11.5).color(body_fg));
+                });
+            });
+        });
 }
 
 fn icon_button(

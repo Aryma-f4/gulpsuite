@@ -350,36 +350,46 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             });
         });
         ui.label(egui::RichText::new(&task.configuration).color(theme.color("ui.text.disabled")));
-        if task.kind == TaskKind::Scan && task.state == TaskState::Running {
+        let show_scan_bar = task.kind == TaskKind::Scan
+            && (task.state == TaskState::Running
+                || app.panels.scanner.running
+                || (task.state == TaskState::Paused && task.progress.completed > 0));
+        if show_scan_bar {
             ui.add_space(6.0);
-            let ratio = task
-                .progress
-                .total
-                .filter(|t| *t > 0)
-                .map(|tot| (task.progress.completed as f32 / tot as f32).clamp(0.08, 1.0))
-                .unwrap_or(0.22);
-            super::scanner::paint_burp_progress_bar(ui, 170.0, ratio, &theme);
+            let is_running = task.state == TaskState::Running || app.panels.scanner.running;
+            let ratio = if let Some(tot) = task.progress.total.filter(|t| *t > 0) {
+                (task.progress.completed as f32 / tot as f32).clamp(0.12, 1.0)
+            } else if app.panels.scanner.running {
+                (app.panels.scanner.completed_steps as f32
+                    / app.panels.scanner.total_steps.max(1) as f32)
+                    .clamp(0.15, 0.96)
+            } else {
+                0.22
+            };
+            super::scanner::paint_burp_progress_bar_animated(ui, 185.0, ratio, is_running, &theme);
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                super::scanner::paint_burp_spinner(
-                    ui,
-                    Vec2::new(14.0, 14.0),
-                    Color32::from_rgb(0x5B, 0x4F, 0xFF),
-                );
+                if is_running {
+                    super::scanner::paint_burp_spinner(
+                        ui,
+                        Vec2::new(14.0, 14.0),
+                        Color32::from_rgb(0x5B, 0x4F, 0xFF),
+                    );
+                }
                 super::scanner::paint_launcher_icon(
                     ui,
                     Vec2::new(14.0, 14.0),
                     theme.color("ui.icon.default"),
                     super::scanner::LauncherIcon::ScanDetails,
                 );
-                ui.label(
-                    egui::RichText::new(if task.progress.status.is_empty() {
-                        "Auditing"
-                    } else {
-                        &task.progress.status
-                    })
-                    .size(11.5),
-                );
+                let status_lbl = if !task.progress.status.is_empty() {
+                    task.progress.status.as_str()
+                } else if is_running {
+                    "Auditing"
+                } else {
+                    "Paused task due to: Reached time limit for task"
+                };
+                ui.label(egui::RichText::new(status_lbl).size(11.5));
             });
             ui.add_space(4.0);
         } else {
@@ -654,6 +664,47 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                 heading(ui, &theme, "Task progress");
             });
             ui.separator();
+            let is_running = task.kind == TaskKind::Scan
+                && (task.state == TaskState::Running || app.panels.scanner.running);
+            if is_running {
+                let ratio = if let Some(tot) = task.progress.total.filter(|t| *t > 0) {
+                    (task.progress.completed as f32 / tot as f32).clamp(0.12, 1.0)
+                } else {
+                    (app.panels.scanner.completed_steps as f32
+                        / app.panels.scanner.total_steps.max(1) as f32)
+                        .clamp(0.15, 0.96)
+                };
+                ui.horizontal(|ui| {
+                    super::scanner::paint_burp_spinner(
+                        ui,
+                        Vec2::new(14.0, 14.0),
+                        Color32::from_rgb(0x5B, 0x4F, 0xFF),
+                    );
+                    super::scanner::paint_launcher_icon(
+                        ui,
+                        Vec2::new(14.0, 14.0),
+                        theme.color("ui.icon.default"),
+                        super::scanner::LauncherIcon::ScanDetails,
+                    );
+                    let status_lbl = if !task.progress.status.is_empty() {
+                        task.progress.status.as_str()
+                    } else {
+                        "Auditing"
+                    };
+                    ui.label(egui::RichText::new(status_lbl).strong());
+                    ui.add_space(6.0);
+                    super::scanner::paint_burp_progress_bar_animated(
+                        ui,
+                        180.0,
+                        ratio,
+                        true,
+                        &theme,
+                    );
+                    let pct = (ratio * 100.0).round() as u32;
+                    ui.label(egui::RichText::new(format!("{pct}%")).monospace().strong());
+                });
+                ui.add_space(6.0);
+            }
             egui::Grid::new(("task-progress", task.id.0))
                 .num_columns(4)
                 .spacing([18.0, 8.0])

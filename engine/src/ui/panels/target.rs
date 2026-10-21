@@ -550,7 +550,9 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                         .desired_width(110.0),
                 );
             });
-            ui.add_space(6.0);
+            ui.add_space(4.0);
+            super::scanner::draw_scanner_loading_banner(app, ui);
+            ui.add_space(4.0);
 
             // Complete 183-entry Issue Definitions Knowledge Base (`target/issue-definitions.html`)
             egui::CollapsingHeader::new(
