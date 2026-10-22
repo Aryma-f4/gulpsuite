@@ -253,11 +253,15 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                     } else {
                                         req_line.clone()
                                     };
-                                    let r1 = ui.label(format!("{}", i + 1));
-                                    let r2 = ui.label(short_host).on_hover_text(&host_url);
+                                    let is_sel =
+                                        app.panels.sequencer.text == resp && !resp.is_empty();
+                                    let r1 = ui.selectable_label(is_sel, format!("{}", i + 1));
+                                    let r2 = ui
+                                        .selectable_label(is_sel, short_host)
+                                        .on_hover_text(&host_url);
                                     let r3 = ui
                                         .selectable_label(
-                                            app.panels.sequencer.text == resp && !resp.is_empty(),
+                                            is_sel,
                                             eframe::egui::RichText::new(short_req).monospace(),
                                         )
                                         .on_hover_text(&req_line);
@@ -275,9 +279,13 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     });
 
     ui.add_space(6.0);
-    if ui.button("Start live capture").clicked() || ui.button("Analyze").clicked() {
-        analyze(app);
-    }
+    ui.horizontal(|ui| {
+        let b1 = ui.button("Start live capture");
+        let b2 = ui.button("Analyze");
+        if b1.clicked() || b2.clicked() {
+            analyze(app);
+        }
+    });
     ui.add_space(6.0);
     ui.separator();
     ui.add_space(4.0);

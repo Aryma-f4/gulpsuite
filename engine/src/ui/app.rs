@@ -1261,13 +1261,38 @@ impl App {
     }
 
     /// Sends one request off-thread; the result lands in `responses` for `take_response`.
-    pub fn send_request(&mut self, host: String, port: u16, raw: String, secure: bool) -> u64 {
+    pub fn send_request(&mut self, host: String, port: u16, mut raw: String, secure: bool) -> u64 {
         let id = self.next_request;
         self.next_request += 1;
+
+        // 1. Apply custom Hostname DNS Overrides (`Settings -> Network`)
+        let dial_host = self
+            .dns_overrides
+            .iter()
+            .find(|(h, _)| h.eq_ignore_ascii_case(host.trim()))
+            .map(|(_, ip)| ip.clone())
+            .unwrap_or_else(|| host.clone());
+
+        // 2. Apply active Session Handling Rules (`Settings -> Sessions`)
+        for (enabled, _rule_name, _action, hdr) in &self.session_rules {
+            if *enabled && hdr.contains(':') {
+                let (head, body) = crate::analysis::split_message(&raw);
+                let hdr_name = hdr.split(':').next().unwrap_or("").trim();
+                if !hdr_name.is_empty()
+                    && !head
+                        .lines()
+                        .skip(1)
+                        .any(|l| l.split(':').next().unwrap_or("").trim().eq_ignore_ascii_case(hdr_name))
+                {
+                    raw = format!("{head}\r\n{}\r\n\r\n{body}", hdr.trim());
+                }
+            }
+        }
+
         let proxy = self.proxy.clone();
         let tx = self._requests_tx.clone();
         let task = self.runtime.spawn(async move {
-            let result = proxy.one_shot_secure(&host, port, &raw, secure, 15_000).await;
+            let result = proxy.one_shot_secure(&dial_host, port, &raw, secure, 15_000).await;
             let _ = tx.send((id, result));
         });
         self.request_tasks.insert(id, task);
@@ -3316,8 +3341,8 @@ impl App {
                                 .fill(self.theme.color("ui.background.0"))
                                 .inner_margin(0.0),
                         )
-                        .default_pos([260.0, 90.0])
-                        .default_size([880.0, 560.0])
+                        .default_pos([260.0, 70.0])
+                        .default_size([880.0, 600.0])
                         .show(child_ctx, |ui| {
                             super::panels::scanner::draw_scan_launcher(self, ui)
                         });

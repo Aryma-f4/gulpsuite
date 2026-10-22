@@ -63,8 +63,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
-                        if ui.button("+ New").on_hover_text("Save Repeater request to Inbox").clicked()
-                            || ui.button("Save Repeater request").clicked()
+                        if ui
+                            .small_button("+ New")
+                            .on_hover_text("Save Repeater request to Inbox")
+                            .clicked()
                         {
                             let (host, name) = (
                                 app.panels.repeater.active().host.clone(),
@@ -90,6 +92,29 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     },
                 );
             });
+            ui.add_space(4.0);
+            if ui.button("Save Repeater request").clicked() {
+                let (host, name) = (
+                    app.panels.repeater.active().host.clone(),
+                    app.panels.repeater.active().raw.clone(),
+                );
+                if name.trim().is_empty() {
+                    app.status = "Nothing to save: the Repeater request is empty".into();
+                } else {
+                    let next = app.organizer.len() + 1;
+                    retain(
+                        app,
+                        OrganizerItem {
+                            host,
+                            name: format!("item-{next}"),
+                            request: name,
+                            response: app.panels.repeater.active().response.clone(),
+                            notes: String::new(),
+                        },
+                    );
+                    app.status = "Saved to Organizer".into();
+                }
+            }
             ui.add_space(4.0);
             ui.add(
                 eframe::egui::TextEdit::singleline(&mut app.panels.organizer.search)

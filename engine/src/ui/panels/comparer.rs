@@ -247,13 +247,9 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         ui.vertical(|ui| {
             ui.set_width(btn_w);
             ui.label("Compare ...");
-            if ui
-                .add_sized([btn_w, 24.0], eframe::egui::Button::new("Words"))
-                .clicked()
-                || ui
-                    .add_sized([btn_w, 24.0], eframe::egui::Button::new("Compare"))
-                    .clicked()
-            {
+            let words_btn = ui.add_sized([btn_w, 24.0], eframe::egui::Button::new("Words"));
+            let cmp_btn = ui.add_sized([btn_w, 24.0], eframe::egui::Button::new("Compare"));
+            if words_btn.clicked() || cmp_btn.clicked() {
                 run_words_compare(app);
             }
             if ui

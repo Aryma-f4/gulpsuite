@@ -2408,10 +2408,12 @@ fn draw_inspector_kv_table(
         muted(ui, theme, "None");
         return;
     }
+    let prev_btn_pad = ui.spacing().button_padding;
+    ui.spacing_mut().button_padding = eframe::egui::Vec2::new(5.0, 1.5);
     eframe::egui::Grid::new(id_salt)
         .num_columns(if allow_delete { 4 } else { 3 })
         .striped(true)
-        .spacing([6.0, 3.0])
+        .spacing([5.0, 3.0])
         .show(ui, |ui| {
             ui.label(
                 eframe::egui::RichText::new("Name")
@@ -2434,14 +2436,14 @@ fn draw_inspector_kv_table(
             for (idx, (k, v)) in rows.iter().enumerate() {
                 let decoded = auto_decode_value(v);
                 let display_val = if decoded != *v {
-                    format!("{} → {}", truncate_insp(v, 10), truncate_insp(&decoded, 14))
+                    format!("{} → {}", truncate_insp(v, 8), truncate_insp(&decoded, 10))
                 } else {
-                    truncate_insp(v, 22)
+                    truncate_insp(v, 16)
                 };
                 if ui
                     .add(
                         eframe::egui::Button::new(
-                            eframe::egui::RichText::new(truncate_insp(k, 16))
+                            eframe::egui::RichText::new(truncate_insp(k, 13))
                                 .monospace()
                                 .size(11.0),
                         )
@@ -2479,6 +2481,7 @@ fn draw_inspector_kv_table(
                 ui.end_row();
             }
         });
+    ui.spacing_mut().button_padding = prev_btn_pad;
 }
 
 fn truncate_insp(s: &str, max_chars: usize) -> String {

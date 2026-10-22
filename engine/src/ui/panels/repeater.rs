@@ -1275,6 +1275,7 @@ fn draw_response_pane(
 ) {
     // Orange `Response` header + status & timing (`quick-start-pro-repeater.png`)
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
         ui.label(
             RichText::new("Response")
                 .size(15.0)

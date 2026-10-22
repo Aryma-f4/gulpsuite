@@ -268,10 +268,12 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 .inner_margin(6.0)
                 .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
                 .show(ui, |ui| {
+                    ui.set_min_width((left_col_w - 14.0).max(120.0));
                     ui.set_min_height(output_h - 12.0);
                     eframe::egui::ScrollArea::vertical()
                         .id_salt("decoder-output-scroll")
                         .max_height(output_h - 12.0)
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let shown = if app.panels.decoder.output_hex_view {
                                 hex_dump(&app.panels.decoder.output)

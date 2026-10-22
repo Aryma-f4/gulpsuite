@@ -1224,13 +1224,14 @@ pub fn draw_scan_launcher(app: &mut App, ui: &mut Ui) {
                     ui.available_rect_before_wrap().min,
                     Vec2::new(content_w, body_h),
                 );
+                ui.set_clip_rect(bg_rect.intersect(ui.clip_rect()));
                 ui.painter()
                     .rect_filled(bg_rect, 0.0, theme.color("ui.background.0"));
                 egui::Frame::NONE
-                    .inner_margin(egui::Margin::symmetric(24, 20))
+                    .inner_margin(egui::Margin::symmetric(20, 12))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                        let scroll_h = (body_h - 40.0).max(240.0);
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+                        let scroll_h = (body_h - 24.0).max(240.0);
                         egui::ScrollArea::vertical()
                             .id_salt("scan-launcher-step-scroll")
                             .max_height(scroll_h)
@@ -1500,7 +1501,7 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    ui.add_space(16.0);
+    ui.add_space(8.0);
 
     match app.panels.scanner.scan_type {
         0 | 1 => {
@@ -1524,7 +1525,7 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
                             egui::TextEdit::multiline(&mut app.panels.scanner.urls_to_scan)
                                 .font(egui::TextStyle::Monospace)
                                 .frame(false)
-                                .desired_rows(5)
+                                .desired_rows(3)
                                 .desired_width(f32::INFINITY),
                         )
                         .changed()
@@ -1589,7 +1590,7 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
                 }
             });
 
-            ui.add_space(12.0);
+            ui.add_space(6.0);
             heading(ui, &theme, "Protocol settings");
             ui.add_space(2.0);
             ui.radio_value(
@@ -1603,7 +1604,7 @@ fn draw_launcher_step_details(app: &mut App, ui: &mut Ui) {
                 "Scan using my specified protocols",
             );
 
-            ui.add_space(10.0);
+            ui.add_space(4.0);
             egui::CollapsingHeader::new(RichText::new("Detailed scope configuration").strong())
                 .default_open(false)
                 .show(ui, |ui| {

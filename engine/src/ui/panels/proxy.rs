@@ -2743,8 +2743,8 @@ fn history(app: &mut App, ui: &mut Ui) {
                 app.panels.proxy_panel.history_req_fmt_mode = 2;
                 app.panels.proxy_panel.history_resp_fmt_mode = 2;
             }
-            let detail_h = (ui.available_height() - 18.0)
-                .max(app.panels.proxy_panel.detail_height.min(180.0));
+            let detail_h = (ui.available_height() - 38.0)
+                .clamp(120.0, app.panels.proxy_panel.detail_height.max(160.0));
             let mut ratio = app.panels.proxy_panel.split_ratio;
             vertical_split(
                 ui,
@@ -2877,7 +2877,9 @@ fn history(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    cookie_jar(app, ui);
+    if app.panels.proxy_panel.selected.is_none() {
+        cookie_jar(app, ui);
+    }
 }
 
 #[cfg(test)]
