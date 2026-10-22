@@ -136,6 +136,13 @@ pub struct ProxyPanel {
     pub tls_proto_1_2: bool,
     pub tls_proto_1_3: bool,
     pub support_http2: bool,
+    pub cert_custom_file: String,
+    pub cert_custom_password: String,
+    pub show_ca_wizard_modal: bool,
+    pub ca_wizard_mode: usize,
+    pub ca_wizard_file_path: String,
+    pub ca_wizard_key_path: String,
+    pub ca_wizard_password: String,
 }
 
 impl Default for ProxyPanel {
@@ -250,6 +257,13 @@ impl Default for ProxyPanel {
             tls_proto_1_2: true,
             tls_proto_1_3: true,
             support_http2: true,
+            cert_custom_file: String::new(),
+            cert_custom_password: String::new(),
+            show_ca_wizard_modal: false,
+            ca_wizard_mode: 0,
+            ca_wizard_file_path: "cacert.der".into(),
+            ca_wizard_key_path: "cakey.pkcs8.der".into(),
+            ca_wizard_password: String::new(),
         }
     }
 }
@@ -693,6 +707,32 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                                         .desired_width(160.0),
                                     );
                                 });
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut app.panels.proxy_panel.cert_mode,
+                                        3,
+                                        "Use a custom certificate:",
+                                    );
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut app.panels.proxy_panel.cert_custom_file,
+                                        )
+                                        .hint_text("custom-cert.p12 / .pem")
+                                        .desired_width(150.0),
+                                    );
+                                    ui.label("Password:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut app.panels.proxy_panel.cert_custom_password,
+                                        )
+                                        .password(true)
+                                        .desired_width(90.0),
+                                    );
+                                });
+                                app.proxy.set_cert_mode(
+                                    app.panels.proxy_panel.cert_mode,
+                                    app.panels.proxy_panel.cert_specific_host.clone(),
+                                );
                             }
                             3 => {
                                 ui.horizontal(|ui| {
@@ -818,8 +858,8 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
             muted(
                 ui,
                 &theme,
-                "The integrated Chromium browser trusts this session CA automatically via SPKI pinning. \
-                 External browsers can download the certificate from http://gulp/cert or http://gulpsuite/cert.",
+                "Each installation of Gulp generates its own CA certificate that Proxy listeners use when negotiating TLS connections. \
+                 You can import or export this certificate for use in other tools or external browsers, or download it from http://gulp/cert.",
             );
             if let Some(path) = app.proxy.authority_path() {
                 ui.horizontal(|ui| {
@@ -831,7 +871,23 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                     ui.monospace(path.with_extension("der").display().to_string());
                 });
             }
+            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
+                if ui.button("Import / export CA certificate").clicked() {
+                    app.panels.proxy_panel.show_ca_wizard_modal = true;
+                }
+                if ui.button("Regenerate CA certificate").clicked() {
+                    match app.proxy.regenerate_authority() {
+                        Ok(()) => {
+                            app.status =
+                                "Regenerated CA certificate and private key (updated PEM & DER on disk)"
+                                    .into();
+                        }
+                        Err(err) => {
+                            app.status = format!("Failed to regenerate CA certificate: {err}");
+                        }
+                    }
+                }
                 if ui.button("Copy CA PEM").clicked() {
                     if let Some(pem) = app.proxy.authority_pem() {
                         ui.ctx().copy_text(pem);
@@ -846,6 +902,258 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                 }
                 ui.monospace("http://gulp/cert");
             });
+
+            if app.panels.proxy_panel.show_ca_wizard_modal {
+                let ctx = ui.ctx().clone();
+                let mut open = true;
+                eframe::egui::Window::new("CA certificate")
+                    .open(&mut open)
+                    .resizable(true)
+                    .default_size([560.0, 390.0])
+                    .show(&ctx, |ui| {
+                        ui.label(
+                            eframe::egui::RichText::new(
+                                "What do you want to do with the Gulp CA certificate?",
+                            )
+                            .strong()
+                            .size(13.5),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(eframe::egui::RichText::new("Export").strong());
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                0,
+                                "Certificate in DER format",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path = "cacert.der".into();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                1,
+                                "Certificate in PEM format",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path =
+                                "gulpsuite-proxy-ca.pem".into();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                2,
+                                "Certificate and private key in PKCS#12 keystore",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path = "gulpsuite-ca.p12".into();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                3,
+                                "Raw private key in DER format",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path = "cakey.pkcs8.der".into();
+                        }
+
+                        ui.add_space(6.0);
+                        ui.label(eframe::egui::RichText::new("Import").strong());
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                4,
+                                "Certificate and private key in DER format",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path = "cacert.der".into();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                5,
+                                "Certificate and private key in PEM format",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path =
+                                "gulpsuite-proxy-ca.pem".into();
+                        }
+                        if ui
+                            .radio_value(
+                                &mut app.panels.proxy_panel.ca_wizard_mode,
+                                6,
+                                "Certificate and private key in PKCS#12 keystore",
+                            )
+                            .clicked()
+                        {
+                            app.panels.proxy_panel.ca_wizard_file_path = "gulpsuite-ca.p12".into();
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("File path:");
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(
+                                    &mut app.panels.proxy_panel.ca_wizard_file_path,
+                                )
+                                .desired_width(280.0),
+                            );
+                        });
+                        if matches!(app.panels.proxy_panel.ca_wizard_mode, 4 | 5) {
+                            ui.horizontal(|ui| {
+                                ui.label("Private key file (PKCS#8 DER / PEM):");
+                                ui.add(
+                                    eframe::egui::TextEdit::singleline(
+                                        &mut app.panels.proxy_panel.ca_wizard_key_path,
+                                    )
+                                    .desired_width(220.0),
+                                );
+                            });
+                        }
+                        if matches!(app.panels.proxy_panel.ca_wizard_mode, 2 | 6) {
+                            ui.horizontal(|ui| {
+                                ui.label("Keystore password:");
+                                ui.add(
+                                    eframe::egui::TextEdit::singleline(
+                                        &mut app.panels.proxy_panel.ca_wizard_password,
+                                    )
+                                    .password(true)
+                                    .desired_width(180.0),
+                                );
+                            });
+                        }
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if crate::ui::app::primary_button(ui, &theme, "Next").clicked() {
+                                let path = app
+                                    .panels
+                                    .proxy_panel
+                                    .ca_wizard_file_path
+                                    .trim()
+                                    .to_string();
+                                match app.panels.proxy_panel.ca_wizard_mode {
+                                    0 => {
+                                        if let Some(der) = app.proxy.authority_der() {
+                                            match std::fs::write(&path, &der) {
+                                                Ok(()) => {
+                                                    app.status = format!(
+                                                        "Exported CA certificate in DER format to {path}"
+                                                    );
+                                                    app.panels.proxy_panel.show_ca_wizard_modal =
+                                                        false;
+                                                }
+                                                Err(e) => {
+                                                    app.status = format!("Export failed: {e}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    1 => {
+                                        if let Some(pem) = app.proxy.authority_pem() {
+                                            match std::fs::write(&path, pem.as_bytes()) {
+                                                Ok(()) => {
+                                                    app.status = format!(
+                                                        "Exported CA certificate in PEM format to {path}"
+                                                    );
+                                                    app.panels.proxy_panel.show_ca_wizard_modal =
+                                                        false;
+                                                }
+                                                Err(e) => {
+                                                    app.status = format!("Export failed: {e}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    2 => {
+                                        let pem = app.proxy.authority_pem().unwrap_or_default();
+                                        let key = app
+                                            .proxy
+                                            .authority_private_key_pem()
+                                            .unwrap_or_default();
+                                        let bundle = format!("{pem}\n{key}");
+                                        match std::fs::write(&path, bundle.as_bytes()) {
+                                            Ok(()) => {
+                                                app.status = format!(
+                                                    "Exported CA certificate and private key bundle to {path}"
+                                                );
+                                                app.panels.proxy_panel.show_ca_wizard_modal = false;
+                                            }
+                                            Err(e) => {
+                                                app.status = format!("Export failed: {e}");
+                                            }
+                                        }
+                                    }
+                                    3 => {
+                                        if let Some(key_der) = app.proxy.authority_private_key_der()
+                                        {
+                                            match std::fs::write(&path, &key_der) {
+                                                Ok(()) => {
+                                                    app.status = format!(
+                                                        "Exported raw PKCS#8 private key in DER format to {path}"
+                                                    );
+                                                    app.panels.proxy_panel.show_ca_wizard_modal =
+                                                        false;
+                                                }
+                                                Err(e) => {
+                                                    app.status = format!("Export failed: {e}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    4 | 5 | 6 => {
+                                        let key_path = if matches!(
+                                            app.panels.proxy_panel.ca_wizard_mode,
+                                            4 | 5
+                                        ) {
+                                            app.panels
+                                                .proxy_panel
+                                                .ca_wizard_key_path
+                                                .trim()
+                                                .to_string()
+                                        } else {
+                                            path.clone()
+                                        };
+                                        match std::fs::read(&key_path) {
+                                            Ok(bytes) => match app.proxy.import_authority_key(&bytes)
+                                            {
+                                                Ok(()) => {
+                                                    app.status = format!(
+                                                        "Imported custom CA private key from {key_path}"
+                                                    );
+                                                    app.panels.proxy_panel.show_ca_wizard_modal =
+                                                        false;
+                                                }
+                                                Err(e) => {
+                                                    app.status = format!("Import failed: {e}");
+                                                }
+                                            },
+                                            Err(e) => {
+                                                app.status =
+                                                    format!("Cannot read {key_path}: {e}");
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if ui.button("Close").clicked() {
+                                app.panels.proxy_panel.show_ca_wizard_modal = false;
+                            }
+                        });
+                    });
+                if !open {
+                    app.panels.proxy_panel.show_ca_wizard_modal = false;
+                }
+            }
 
             // 2. Request and response interception rules
             ui.add_space(10.0);

@@ -1440,50 +1440,113 @@ fn host_of(target: &str) -> String {
 /// widths: "Dashboard" 53px, "Target" 30px, "Proxy" 27px, "Intruder" 37px, "Repeater" 44px and
 /// "Collaborator" 59px, all within half a pixel of the running Burp. The font file is only
 /// borrowed from the system, never copied into the app.
+fn load_font_bytes(candidates: &[&str], fc_pattern: Option<&str>) -> Option<Vec<u8>> {
+    for path in candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            return Some(bytes);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(pattern) = fc_pattern {
+        if let Ok(output) = std::process::Command::new("fc-match")
+            .args(["-f", "%{file}", pattern])
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let lower = path.to_ascii_lowercase();
+                // Reject variable fonts (`*VF*`, `*Variable*`) and ultra-thin weights (`*Light*`, `*Thin*`)
+                // because `ab_glyph` does not apply OpenType `fvar`/`gvar` weight axes and renders thin contours poorly.
+                if (lower.ends_with(".ttf") || lower.ends_with(".ttc"))
+                    && !lower.contains("vf")
+                    && !lower.contains("variable")
+                    && !lower.contains("light")
+                    && !lower.contains("thin")
+                {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        return Some(bytes);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = fc_pattern;
+    None
+}
+
 /// Installs the platform proportional and monospaced fonts (SF Pro + Menlo/SF Mono on macOS,
-/// Segoe UI + Consolas on Windows, Ubuntu/Liberation/DejaVu on Linux).
+/// Segoe UI + Consolas on Windows, and Noto/DejaVu/Liberation/Ubuntu on CachyOS, Arch, Fedora & Debian Linux).
 pub fn install_fonts(ctx: &Context) {
     let mut fonts = eframe::egui::FontDefinitions::default();
     let proportional_candidates = [
+        // macOS
         "/System/Library/Fonts/SFNS.ttf",
         "/System/Library/Fonts/HelveticaNeue.ttc",
+        // Windows
         "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/cantarell/Cantarell-Regular.otf",
+        // CachyOS / Arch Linux (`/usr/share/fonts/TTF`, `/usr/share/fonts/noto`, `/usr/share/fonts/liberation`)
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/TTF/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/TTF/Ubuntu-R.ttf",
+        "/usr/share/fonts/gnu-free/FreeSans.ttf",
+        // Fedora / openSUSE
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
+        // Debian / Ubuntu
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
     ];
-    for path in proportional_candidates {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "system".to_owned(),
-                eframe::egui::FontData::from_owned(bytes).into(),
-            );
-            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
-                family.insert(0, "system".to_owned());
-            }
-            break;
+    if let Some(bytes) = load_font_bytes(
+        &proportional_candidates,
+        Some("sans-serif:weight=regular:slant=roman:fontformat=TrueType"),
+    ) {
+        fonts.font_data.insert(
+            "system".to_owned(),
+            eframe::egui::FontData::from_owned(bytes).into(),
+        );
+        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
+            family.insert(0, "system".to_owned());
         }
     }
 
     let mono_candidates = [
+        // macOS
         "/System/Library/Fonts/Menlo.ttc",
         "/System/Library/Fonts/SFNSMono.ttf",
+        // Windows
         "C:\\Windows\\Fonts\\consola.ttf",
+        // CachyOS / Arch Linux
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+        "/usr/share/fonts/TTF/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+        "/usr/share/fonts/TTF/Hack-Regular.ttf",
+        "/usr/share/fonts/gnu-free/FreeMono.ttf",
+        // Fedora / openSUSE
+        "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+        "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf",
+        // Debian / Ubuntu
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
         "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     ];
-    for path in mono_candidates {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "system-mono".to_owned(),
-                eframe::egui::FontData::from_owned(bytes).into(),
-            );
-            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
-                family.insert(0, "system-mono".to_owned());
-            }
-            break;
+    if let Some(bytes) = load_font_bytes(
+        &mono_candidates,
+        Some("monospace:weight=regular:slant=roman:fontformat=TrueType"),
+    ) {
+        fonts.font_data.insert(
+            "system-mono".to_owned(),
+            eframe::egui::FontData::from_owned(bytes).into(),
+        );
+        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
+            family.insert(0, "system-mono".to_owned());
         }
     }
 
@@ -1491,39 +1554,57 @@ pub fn install_fonts(ctx: &Context) {
         "/System/Library/Fonts/Apple Symbols.ttf",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "C:\\Windows\\Fonts\\seguisym.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSansSymbols-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ];
-    for path in symbol_candidates {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "system-symbols".to_owned(),
-                eframe::egui::FontData::from_owned(bytes).into(),
-            );
-            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
-                let pos = family.len().min(1);
-                family.insert(pos, "system-symbols".to_owned());
-            }
-            if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
-                let pos = family.len().min(1);
-                family.insert(pos, "system-symbols".to_owned());
-            }
-            break;
+    if let Some(bytes) = load_font_bytes(&symbol_candidates, None) {
+        fonts.font_data.insert(
+            "system-symbols".to_owned(),
+            eframe::egui::FontData::from_owned(bytes).into(),
+        );
+        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
+            let pos = family.len().min(1);
+            family.insert(pos, "system-symbols".to_owned());
+        }
+        if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
+            let pos = family.len().min(1);
+            family.insert(pos, "system-symbols".to_owned());
         }
     }
     ctx.set_fonts(fonts);
 
+    #[cfg(target_os = "linux")]
+    ctx.options_mut(|opt| {
+        opt.tessellation_options.feathering = false;
+    });
+
+    let body_sz = if cfg!(target_os = "linux") { 13.0 } else { 12.0 };
+    let mono_sz = if cfg!(target_os = "linux") { 12.5 } else { 12.0 };
+    let small_sz = if cfg!(target_os = "linux") { 11.5 } else { 10.5 };
+    let heading_sz = if cfg!(target_os = "linux") { 15.5 } else { 15.0 };
+
     let mut style = (*ctx.style()).clone();
     style.text_styles.insert(
         TextStyle::Body,
-        eframe::egui::FontId::new(12.0, eframe::egui::FontFamily::Proportional),
+        eframe::egui::FontId::new(body_sz, eframe::egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         TextStyle::Button,
-        eframe::egui::FontId::new(12.0, eframe::egui::FontFamily::Proportional),
+        eframe::egui::FontId::new(body_sz, eframe::egui::FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Monospace,
+        eframe::egui::FontId::new(mono_sz, eframe::egui::FontFamily::Monospace),
+    );
+    style.text_styles.insert(
+        TextStyle::Small,
+        eframe::egui::FontId::new(small_sz, eframe::egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         TextStyle::Heading,
-        eframe::egui::FontId::new(15.0, eframe::egui::FontFamily::Proportional),
+        eframe::egui::FontId::new(heading_sz, eframe::egui::FontFamily::Proportional),
     );
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);
     ctx.set_style(style);
@@ -3428,318 +3509,417 @@ impl App {
                     );
                 });
                 ui.add_space(4.0);
-
-                match self.settings_category {
-                    0 => {
-                        super::panels::heading(ui, &theme, "Suite — Project files & Performance");
-                        super::panels::muted(
-                            ui,
-                            &theme,
-                            "Save or restore the entire workspace (tasks, issues, Organizer items, recordings, layout, and theme).",
-                        );
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            ui.label("Project file path:");
-                            ui.add(
-                                eframe::egui::TextEdit::singleline(&mut self.panels.project_path)
-                                    .hint_text("gulpsuite-project.json")
-                                    .desired_width(260.0),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            if ui.button("Save project").clicked() {
-                                self.save_project();
-                            }
-                            if ui.button("Open project").clicked() {
-                                self.open_project();
-                            }
-                            if ui.button("New temporary project").clicked() {
-                                self.clear_log();
-                                self.organizer.clear();
-                                self.workspace.issues = Default::default();
-                                self.status = "Started new temporary project".into();
-                            }
-                        });
-                        ui.add_space(10.0);
-                        ui.separator();
-                        super::panels::heading(ui, &theme, "Suite performance & limits");
-                        ui.label(format!("• Memory usage: {}", self.memory_text));
-                        ui.label(format!("• Proxy history ring capacity: {} entries ({} KB per body)", LOG_CAPACITY, LOG_BODY_LIMIT / 1024));
-                        ui.label(format!("• Organizer store capacity: {} items", ORGANIZER_CAPACITY));
-                        ui.add_space(10.0);
-                        ui.separator();
-                        self.draw_update_ui(ui);
-                    }
-                    1 => {
-                        super::panels::heading(ui, &theme, "User interface — Display, Inspector & Hotkeys");
-                        ui.horizontal(|ui| {
-                            ui.label("Theme:");
-                            if ui.selectable_label(self.is_dark(), "Dark").clicked() {
-                                self.set_dark(true);
-                            }
-                            if ui.selectable_label(!self.is_dark(), "Light").clicked() {
-                                self.set_dark(false);
-                            }
-                        });
-                        ui.burp_checkbox(
-                            &mut self.show_menu_bar,
-                            "Show in-window top menu bar (on macOS, native OS menu bar is used by default)",
-                        );
-                        ui.add_space(8.0);
-                        ui.separator();
-                        super::panels::heading(ui, &theme, "Hotkeys");
-                        eframe::egui::Grid::new("settings-hotkeys-grid")
-                            .num_columns(2)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                for (k, desc) in [
-                                    ("Cmd/Ctrl + S", "Save project"),
-                                    ("Cmd/Ctrl + O", "Open project"),
-                                    ("Cmd/Ctrl + K", "Command palette & Search"),
-                                    ("Cmd/Ctrl + R", "Repeater: Send request"),
-                                    ("Cmd/Ctrl + I", "Proxy: Toggle Intercept on/off"),
-                                    ("Cmd + ,", "Open Gulp Settings"),
-                                    ("Alt + D / T / P / N / R", "Switch to Dashboard / Target / Proxy / Intruder / Repeater"),
-                                    ("Alt + O / S / E / C / L / G / X / I", "Switch to Collaborator / Sequencer / Decoder / Comparer / Logger / Organizer / Extensions / Discover"),
-                                ] {
-                                    ui.monospace(k);
-                                    ui.label(desc);
-                                    ui.end_row();
-                                }
-                            });
-                    }
-                    2 => {
-                        super::panels::proxy::settings(self, ui);
-                    }
-                    3 => {
-                        super::panels::heading(ui, &theme, "Intruder configuration");
-                        ui.label(eframe::egui::RichText::new("Default Intruder side panel layout").strong());
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Default position:");
-                            ui.radio_value(&mut self.panels.intruder.side_panel_left, true, "Left");
-                            ui.radio_value(&mut self.panels.intruder.side_panel_left, false, "Right");
-                            ui.separator();
-                            ui.label("Display mode:");
-                            ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, false, "Auto-expand");
-                            ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, true, "Always collapsed");
-                        });
-                        ui.separator();
-                        ui.label(eframe::egui::RichText::new("Automatic payload placement").strong());
-                        ui.radio_value(&mut self.panels.intruder.auto_payload_append, false, "Replace base parameter value");
-                        ui.radio_value(&mut self.panels.intruder.auto_payload_append, true, "Append to base parameter value");
-                        ui.separator();
-                        ui.label(eframe::egui::RichText::new("New tab configuration").strong());
-                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 0, "Use default attack configuration");
-                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 1, "Copy configuration from first tab");
-                        ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 2, "Copy configuration from last tab");
-                        ui.separator();
-                        ui.label(eframe::egui::RichText::new("Behavior when closing result windows").strong());
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("In-progress attack:");
-                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 0, "Ask each time");
-                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 1, "Continue in background");
-                            ui.selectable_value(&mut self.panels.intruder.close_running_action, 2, "Delete attack");
-                        });
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Finished attack:");
-                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 0, "Ask each time");
-                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 1, "Save to project file");
-                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 2, "Keep in memory");
-                            ui.selectable_value(&mut self.panels.intruder.close_finished_action, 3, "Delete attack");
-                        });
-                        ui.separator();
-                        ui.label(eframe::egui::RichText::new("Default resource pool & network").strong());
-                        ui.horizontal(|ui| {
-                            ui.label("Default concurrent requests:");
-                            ui.add(
-                                eframe::egui::DragValue::new(&mut self.panels.intruder.threads)
-                                    .range(1..=64),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Request delay (ms):");
-                            ui.add(
-                                eframe::egui::DragValue::new(
-                                    &mut self.panels.intruder.request_delay_ms,
-                                )
-                                .range(0..=60_000),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Request timeout (ms):");
-                            ui.add(
-                                eframe::egui::DragValue::new(&mut self.panels.intruder.timeout_ms)
-                                    .range(100..=300_000),
-                            );
-                        });
-                        ui.burp_checkbox(
-                            &mut self.panels.intruder.update_host,
-                            "Update Host header to match target",
-                        );
-                    }
-                    4 => {
-                        super::panels::heading(ui, &theme, "Repeater configuration");
-                        ui.horizontal(|ui| {
-                            ui.label("Default split layout:");
-                            ui.selectable_value(
-                                &mut self.panels.repeater.stacked_layout,
-                                false,
-                                "Side-by-side",
-                            );
-                            ui.selectable_value(
-                                &mut self.panels.repeater.stacked_layout,
-                                true,
-                                "Top/Bottom",
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Editor height (px):");
-                            ui.add(
-                                eframe::egui::DragValue::new(
-                                    &mut self.panels.repeater.editor_height,
-                                )
-                                .range(120.0..=640.0),
-                            );
-                        });
-                    }
-                    5 => {
-                        super::panels::heading(ui, &theme, "Collaborator configuration");
-                        ui.burp_checkbox(
-                            &mut self.panels.collaborator_local,
-                            "Include Collaborator server location in generated payloads",
-                        );
-                        ui.horizontal(|ui| {
-                            ui.label("Token:");
-                            ui.text_edit_singleline(&mut self.panels.collaborator_token);
-                            if ui.button("Regenerate token").clicked() {
-                                self.panels.collaborator_token = crate::collaborator::new_token();
-                            }
-                        });
-                    }
-                    6 => {
-                        super::panels::heading(ui, &theme, "Scanner configuration");
-                        ui.horizontal(|ui| {
-                            ui.label("Max crawl depth:");
-                            ui.add(
-                                eframe::egui::DragValue::new(&mut self.panels.scanner.max_depth)
-                                    .range(1..=10),
-                            );
-                            ui.label("Max pages:");
-                            ui.add(
-                                eframe::egui::DragValue::new(&mut self.panels.scanner.max_pages)
-                                    .range(1..=5_000),
-                            );
-                        });
-                        ui.burp_checkbox(
-                            &mut self.panels.scanner.active_checks,
-                            "Enable active payload injection checks",
-                        );
-                        ui.burp_checkbox(
-                            &mut self.panels.scanner.only_high,
-                            "Show only High and Medium severity findings in Scanner view",
-                        );
-                    }
-                    7 => {
-                        super::panels::heading(ui, &theme, "Sequencer & Comparer configuration");
-                        ui.horizontal(|ui| {
-                            ui.label("Sequencer token parameter / cookie name:");
-                            ui.text_edit_singleline(&mut self.panels.sequencer.token);
-                        });
-                        ui.burp_checkbox(
-                            &mut self.panels.comparer.byte_mode,
-                            "Default Comparer to Byte-level (hex) comparison",
-                        );
-                    }
-                    8 => {
-                        super::panels::heading(ui, &theme, "Gulpsuite's integrated Chromium browser");
-                        super::panels::muted(
-                            ui,
-                            &theme,
-                            "Runs in an isolated per-session profile pre-configured with --proxy-server and --ignore-certificate-errors-spki-list.",
-                        );
-                        if let Ok(pin) = self.proxy.browser_ca_pin() {
-                            ui.horizontal(|ui| {
-                                ui.label("Session CA SPKI pin:");
-                                ui.monospace(&pin);
-                            });
-                        }
-                        if ui.button("Open integrated Chromium browser").clicked() {
-                            self.open_browser();
-                        }
-                    }
-                    9 => {
-                        super::panels::heading(ui, &theme, "Project — Scope, Tasks & Logging");
-                        ui.horizontal(|ui| {
-                            ui.label("Target Scope Include:");
-                            ui.text_edit_singleline(&mut self.panels.target_panel.scope);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Target Scope Exclude:");
-                            ui.text_edit_singleline(&mut self.panels.target_panel.scope_exclude);
-                        });
-                        ui.burp_checkbox(
-                            &mut self.panels.proxy_panel.dont_log_out_of_scope,
-                            "Don't send items to Proxy history or live tasks, if out of scope",
-                        );
-                        ui.burp_checkbox(
-                            &mut self.panels.logger.only_errors,
-                            "Logger: record only 4xx/5xx error responses",
-                        );
-                    }
-                    10 => {
-                        super::panels::heading(ui, &theme, "Sessions — Cookie jar & Session handling");
-                        super::panels::muted(
-                            ui,
-                            &theme,
-                            "The proxy automatically learns cookies from Set-Cookie headers and replays them on matching requests.",
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.button("Evict expired cookies").clicked() {
-                                let removed = self.proxy.cookies().evict_expired();
-                                self.status = format!("Evicted {removed} expired cookie(s)");
-                            }
-                            if ui.button("Clear cookie jar").clicked() {
-                                self.proxy.cookies().clear();
-                                self.status = "Cleared session cookie jar".into();
-                            }
-                            ui.label(format!("{} cookie(s) stored", self.proxy.cookies().len()));
-                        });
-                    }
-                    11 => {
-                        super::panels::heading(ui, &theme, "Network — Connections, HTTP & TLS");
-                        ui.burp_checkbox(
-                            &mut self.tls_intercepting,
-                            "Enable HTTPS MITM interception with session CA",
-                        );
-                        self.proxy.set_tls_interception(self.tls_intercepting);
-                        ui.burp_checkbox(
-                            &mut self.panels.proxy_panel.misc_keep_alive,
-                            "Use keep-alive for HTTP/1 connections",
-                        );
-                        if let Some(path) = self.proxy.authority_path() {
-                            ui.horizontal(|ui| {
-                                ui.label("CA PEM:");
-                                ui.monospace(path.display().to_string());
-                                if ui.button("Copy PEM").clicked() {
-                                    if let Some(pem) = self.proxy.authority_pem() {
-                                        ui.ctx().copy_text(pem);
+                eframe::egui::Frame::new()
+                    .fill(theme.color("ui.background.1"))
+                    .stroke(Stroke::new(1.0_f32, theme.color("ui.border.1")))
+                    .corner_radius(4.0)
+                    .inner_margin(eframe::egui::Margin::symmetric(16, 14))
+                    .outer_margin(eframe::egui::Margin::symmetric(2, 4))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                        match self.settings_category {
+                            0 => {
+                                super::panels::heading(ui, &theme, "Suite — Project files & Performance");
+                                super::panels::muted(
+                                    ui,
+                                    &theme,
+                                    "Save or restore the entire workspace (tasks, issues, Organizer items, recordings, layout, and theme).",
+                                );
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("Project file path:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(&mut self.panels.project_path)
+                                            .hint_text("gulpsuite-project.json")
+                                            .desired_width(260.0),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    if ui.button("Save project").clicked() {
+                                        self.save_project();
                                     }
+                                    if ui.button("Open project").clicked() {
+                                        self.open_project();
+                                    }
+                                    if ui.button("New temporary project").clicked() {
+                                        self.clear_log();
+                                        self.organizer.clear();
+                                        self.workspace.issues = Default::default();
+                                        self.status = "Started new temporary project".into();
+                                    }
+                                });
+                                ui.add_space(10.0);
+                                ui.separator();
+                                super::panels::heading(ui, &theme, "Suite performance & limits");
+                                ui.label(format!("• Memory usage: {}", self.memory_text));
+                                ui.label(format!("• Proxy history ring capacity: {} entries ({} KB per body)", LOG_CAPACITY, LOG_BODY_LIMIT / 1024));
+                                ui.label(format!("• Organizer store capacity: {} items", ORGANIZER_CAPACITY));
+                                ui.add_space(10.0);
+                                ui.separator();
+                                self.draw_update_ui(ui);
+                            }
+                            1 => {
+                                super::panels::heading(ui, &theme, "User interface — Display, Inspector & Hotkeys");
+                                ui.horizontal(|ui| {
+                                    ui.label("Theme:");
+                                    if ui.selectable_label(self.is_dark(), "Dark").clicked() {
+                                        self.set_dark(true);
+                                    }
+                                    if ui.selectable_label(!self.is_dark(), "Light").clicked() {
+                                        self.set_dark(false);
+                                    }
+                                });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Display scaling (UI Zoom):");
+                                    let cur_zoom = ui.ctx().zoom_factor();
+                                    for (pct, z) in [
+                                        ("90%", 0.90_f32),
+                                        ("100%", 1.00),
+                                        ("115%", 1.15),
+                                        ("125%", 1.25),
+                                        ("150%", 1.50),
+                                        ("175%", 1.75),
+                                    ] {
+                                        if ui
+                                            .selectable_label((cur_zoom - z).abs() < 0.03, pct)
+                                            .clicked()
+                                        {
+                                            ui.ctx().set_zoom_factor(z);
+                                        }
+                                    }
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.show_menu_bar,
+                                    "Show in-window top menu bar (on macOS, native OS menu bar is used by default)",
+                                );
+                                ui.add_space(8.0);
+                                ui.separator();
+                                super::panels::heading(ui, &theme, "Hotkeys");
+                                eframe::egui::Grid::new("settings-hotkeys-grid")
+                                    .num_columns(2)
+                                    .striped(true)
+                                    .show(ui, |ui| {
+                                        for (k, desc) in [
+                                            ("Cmd/Ctrl + S", "Save project"),
+                                            ("Cmd/Ctrl + O", "Open project"),
+                                            ("Cmd/Ctrl + K", "Command palette & Search"),
+                                            ("Cmd/Ctrl + R", "Repeater: Send request"),
+                                            ("Cmd/Ctrl + I", "Proxy: Toggle Intercept on/off"),
+                                            ("Cmd + ,", "Open Gulp Settings"),
+                                            ("Alt + D / T / P / N / R", "Switch to Dashboard / Target / Proxy / Intruder / Repeater"),
+                                            ("Alt + O / S / E / C / L / G / X / I", "Switch to Collaborator / Sequencer / Decoder / Comparer / Logger / Organizer / Extensions / Discover"),
+                                        ] {
+                                            ui.monospace(k);
+                                            ui.label(desc);
+                                            ui.end_row();
+                                        }
+                                    });
+                            }
+                            2 => {
+                                super::panels::proxy::settings(self, ui);
+                            }
+                            3 => {
+                                super::panels::heading(ui, &theme, "Intruder configuration");
+                                ui.label(eframe::egui::RichText::new("Default Intruder side panel layout").strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Default position:");
+                                    ui.radio_value(&mut self.panels.intruder.side_panel_left, true, "Left");
+                                    ui.radio_value(&mut self.panels.intruder.side_panel_left, false, "Right");
+                                    ui.separator();
+                                    ui.label("Display mode:");
+                                    ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, false, "Auto-expand");
+                                    ui.radio_value(&mut self.panels.intruder.side_panel_collapsed, true, "Always collapsed");
+                                });
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Automatic payload placement").strong());
+                                ui.radio_value(&mut self.panels.intruder.auto_payload_append, false, "Replace base parameter value");
+                                ui.radio_value(&mut self.panels.intruder.auto_payload_append, true, "Append to base parameter value");
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("New tab configuration").strong());
+                                ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 0, "Use default attack configuration");
+                                ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 1, "Copy configuration from first tab");
+                                ui.radio_value(&mut self.panels.intruder.new_tab_config_mode, 2, "Copy configuration from last tab");
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Behavior when closing result windows").strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("In-progress attack:");
+                                    ui.selectable_value(&mut self.panels.intruder.close_running_action, 0, "Ask each time");
+                                    ui.selectable_value(&mut self.panels.intruder.close_running_action, 1, "Continue in background");
+                                    ui.selectable_value(&mut self.panels.intruder.close_running_action, 2, "Delete attack");
+                                });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Finished attack:");
+                                    ui.selectable_value(&mut self.panels.intruder.close_finished_action, 0, "Ask each time");
+                                    ui.selectable_value(&mut self.panels.intruder.close_finished_action, 1, "Save to project file");
+                                    ui.selectable_value(&mut self.panels.intruder.close_finished_action, 2, "Keep in memory");
+                                    ui.selectable_value(&mut self.panels.intruder.close_finished_action, 3, "Delete attack");
+                                });
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Default resource pool & network").strong());
+                                ui.horizontal(|ui| {
+                                    ui.label("Default concurrent requests:");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(&mut self.panels.intruder.threads)
+                                            .range(1..=64),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Request delay (ms):");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(
+                                            &mut self.panels.intruder.request_delay_ms,
+                                        )
+                                        .range(0..=60_000),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Request timeout (ms):");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(&mut self.panels.intruder.timeout_ms)
+                                            .range(100..=300_000),
+                                    );
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.panels.intruder.update_host,
+                                    "Update Host header to match target",
+                                );
+                            }
+                            4 => {
+                                super::panels::heading(ui, &theme, "Repeater configuration");
+                                ui.horizontal(|ui| {
+                                    ui.label("Default split layout:");
+                                    ui.selectable_value(
+                                        &mut self.panels.repeater.stacked_layout,
+                                        false,
+                                        "Side-by-side",
+                                    );
+                                    ui.selectable_value(
+                                        &mut self.panels.repeater.stacked_layout,
+                                        true,
+                                        "Top/Bottom",
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Editor height (px):");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(
+                                            &mut self.panels.repeater.editor_height,
+                                        )
+                                        .range(120.0..=640.0),
+                                    );
+                                });
+                            }
+                            5 => {
+                                super::panels::heading(ui, &theme, "Collaborator configuration");
+                                ui.burp_checkbox(
+                                    &mut self.panels.collaborator_local,
+                                    "Include Collaborator server location in generated payloads",
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label("Token:");
+                                    ui.text_edit_singleline(&mut self.panels.collaborator_token);
+                                    if ui.button("Regenerate token").clicked() {
+                                        self.panels.collaborator_token = crate::collaborator::new_token();
+                                    }
+                                });
+                            }
+                            6 => {
+                                super::panels::heading(ui, &theme, "Scanner configuration");
+                                ui.horizontal(|ui| {
+                                    ui.label("Max crawl depth:");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(&mut self.panels.scanner.max_depth)
+                                            .range(1..=10),
+                                    );
+                                    ui.label("Max pages:");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(&mut self.panels.scanner.max_pages)
+                                            .range(1..=5_000),
+                                    );
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.panels.scanner.active_checks,
+                                    "Enable active payload injection checks",
+                                );
+                                ui.burp_checkbox(
+                                    &mut self.panels.scanner.only_high,
+                                    "Show only High and Medium severity findings in Scanner view",
+                                );
+                            }
+                            7 => {
+                                super::panels::heading(ui, &theme, "Sequencer & Comparer configuration");
+                                ui.horizontal(|ui| {
+                                    ui.label("Sequencer token parameter / cookie name:");
+                                    ui.text_edit_singleline(&mut self.panels.sequencer.token);
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.panels.comparer.byte_mode,
+                                    "Default Comparer to Byte-level (hex) comparison",
+                                );
+                            }
+                            8 => {
+                                super::panels::heading(ui, &theme, "Gulpsuite's integrated Chromium browser");
+                                super::panels::muted(
+                                    ui,
+                                    &theme,
+                                    "Runs in an isolated per-session profile pre-configured with --proxy-server and --ignore-certificate-errors-spki-list.",
+                                );
+                                if let Ok(pin) = self.proxy.browser_ca_pin() {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Session CA SPKI pin:");
+                                        ui.monospace(&pin);
+                                    });
                                 }
-                            });
+                                if ui.button("Open integrated Chromium browser").clicked() {
+                                    self.open_browser();
+                                }
+                            }
+                            9 => {
+                                super::panels::heading(ui, &theme, "Project — Scope, Tasks & Logging");
+                                ui.horizontal(|ui| {
+                                    ui.label("Target Scope Include:");
+                                    ui.text_edit_singleline(&mut self.panels.target_panel.scope);
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Target Scope Exclude:");
+                                    ui.text_edit_singleline(&mut self.panels.target_panel.scope_exclude);
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.panels.proxy_panel.dont_log_out_of_scope,
+                                    "Don't send items to Proxy history or live tasks, if out of scope",
+                                );
+                                ui.burp_checkbox(
+                                    &mut self.panels.logger.only_errors,
+                                    "Logger: record only 4xx/5xx error responses",
+                                );
+                            }
+                            10 => {
+                                super::panels::heading(ui, &theme, "Sessions — Cookie jar & Session handling");
+                                super::panels::muted(
+                                    ui,
+                                    &theme,
+                                    "The proxy automatically learns cookies from Set-Cookie headers and replays them on matching requests.",
+                                );
+                                ui.horizontal(|ui| {
+                                    if ui.button("Evict expired cookies").clicked() {
+                                        let removed = self.proxy.cookies().evict_expired();
+                                        self.status = format!("Evicted {removed} expired cookie(s)");
+                                    }
+                                    if ui.button("Clear cookie jar").clicked() {
+                                        self.proxy.cookies().clear();
+                                        self.status = "Cleared session cookie jar".into();
+                                    }
+                                    ui.label(format!("{} cookie(s) stored", self.proxy.cookies().len()));
+                                });
+                            }
+                            11 => {
+                                super::panels::heading(ui, &theme, "Network — Connections, HTTP & TLS");
+                                ui.burp_checkbox(
+                                    &mut self.tls_intercepting,
+                                    "Enable HTTPS MITM interception with session CA",
+                                );
+                                self.proxy.set_tls_interception(self.tls_intercepting);
+                                ui.burp_checkbox(
+                                    &mut self.panels.proxy_panel.misc_keep_alive,
+                                    "Use keep-alive for HTTP/1 connections",
+                                );
+                                ui.burp_checkbox(
+                                    &mut self.panels.proxy_panel.support_http2,
+                                    "Support HTTP/2 on proxy and upstream connections",
+                                );
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Server TLS certificate generator").strong());
+                                ui.radio_value(
+                                    &mut self.panels.proxy_panel.cert_mode,
+                                    0,
+                                    "Generate CA-signed per-host certificates (default)",
+                                );
+                                ui.radio_value(
+                                    &mut self.panels.proxy_panel.cert_mode,
+                                    1,
+                                    "Use a self-signed certificate",
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.panels.proxy_panel.cert_mode,
+                                        2,
+                                        "Generate a CA-signed certificate with a specific hostname:",
+                                    );
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.panels.proxy_panel.cert_specific_host,
+                                        )
+                                        .desired_width(160.0),
+                                    );
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.panels.proxy_panel.cert_mode,
+                                        3,
+                                        "Use a custom certificate (.p12 / .pem):",
+                                    );
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.panels.proxy_panel.cert_custom_file,
+                                        )
+                                        .desired_width(160.0),
+                                    );
+                                });
+                                self.proxy.set_cert_mode(
+                                    self.panels.proxy_panel.cert_mode,
+                                    self.panels.proxy_panel.cert_specific_host.clone(),
+                                );
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("TLS negotiation & protocols").strong());
+                                ui.radio_value(
+                                    &mut self.panels.proxy_panel.tls_use_custom_protocols,
+                                    false,
+                                    "Use the default protocols and ciphers for Gulp",
+                                );
+                                ui.radio_value(
+                                    &mut self.panels.proxy_panel.tls_use_custom_protocols,
+                                    true,
+                                    "Use custom protocols and ciphers",
+                                );
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_0, "TLSv1");
+                                    ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_1, "TLSv1.1");
+                                    ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_2, "TLSv1.2");
+                                    ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_3, "TLSv1.3");
+                                });
+                                ui.separator();
+                                if let Some(path) = self.proxy.authority_path() {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label("CA PEM:");
+                                        ui.monospace(path.display().to_string());
+                                        if ui.button("Copy PEM").clicked() {
+                                            if let Some(pem) = self.proxy.authority_pem() {
+                                                ui.ctx().copy_text(pem);
+                                            }
+                                        }
+                                        if ui.button("Import / export CA certificate").clicked() {
+                                            self.panels.proxy_panel.show_ca_wizard_modal = true;
+                                        }
+                                        if ui.button("Regenerate CA certificate").clicked() {
+                                            let _ = self.proxy.regenerate_authority();
+                                            self.status = "Regenerated CA certificate and private key".into();
+                                        }
+                                    });
+                                }
+                            }
+                            _ => {
+                                super::panels::heading(ui, &theme, "Extensions — Bambda & Script store");
+                                ui.horizontal(|ui| {
+                                    ui.label("Extension scripts folder:");
+                                    ui.text_edit_singleline(&mut self.panels.extender_folder);
+                                });
+                                ui.burp_checkbox(
+                                    &mut self.panels.extender.live,
+                                    "Apply active Bambda script to live Repeater requests",
+                                );
+                            }
                         }
-                    }
-                    _ => {
-                        super::panels::heading(ui, &theme, "Extensions — Bambda & Script store");
-                        ui.horizontal(|ui| {
-                            ui.label("Extension scripts folder:");
-                            ui.text_edit_singleline(&mut self.panels.extender_folder);
-                        });
-                        ui.burp_checkbox(
-                            &mut self.panels.extender.live,
-                            "Apply active Bambda script to live Repeater requests",
-                        );
-                    }
-                }
+                    });
             });
         });
     }

@@ -491,6 +491,46 @@ impl Proxy {
         self.inner.authority.as_ref().map(|a| a.pem())
     }
 
+    /// Raw DER bytes of the proxy's CA certificate (`cacert.der`).
+    pub fn authority_der(&self) -> Option<Vec<u8>> {
+        self.inner.authority.as_ref().map(|a| a.der_bytes())
+    }
+
+    /// Raw PKCS#8 DER bytes of the proxy's CA private key (`cakey.pkcs8.der`).
+    pub fn authority_private_key_der(&self) -> Option<Vec<u8>> {
+        self.inner.authority.as_ref().map(|a| a.private_key_der())
+    }
+
+    /// PEM-encoded PKCS#8 private key of the proxy's CA (`cakey.pem`).
+    pub fn authority_private_key_pem(&self) -> Option<String> {
+        self.inner.authority.as_ref().map(|a| a.private_key_pem())
+    }
+
+    /// Regenerates a fresh CA keypair and certificate, clearing cached per-host leaf certs.
+    pub fn regenerate_authority(&self) -> Result<(), String> {
+        self.inner
+            .authority
+            .as_ref()
+            .ok_or_else(|| String::from("Proxy certificate authority is not initialized"))?
+            .regenerate()
+    }
+
+    /// Imports a custom CA private key (PEM or PKCS#8 DER) and binds the CA certificate.
+    pub fn import_authority_key(&self, key_bytes: &[u8]) -> Result<(), String> {
+        self.inner
+            .authority
+            .as_ref()
+            .ok_or_else(|| String::from("Proxy certificate authority is not initialized"))?
+            .import_key(key_bytes)
+    }
+
+    /// Sets the listener TLS certificate generation mode (`0 = per-host`, `1 = self-signed`, `2 = specific host`).
+    pub fn set_cert_mode(&self, mode: usize, specific_host: String) {
+        if let Some(auth) = &self.inner.authority {
+            auth.set_cert_mode(mode, specific_host);
+        }
+    }
+
     pub fn browser_ca_pin(&self) -> Result<String, String> {
         self.inner.authority.as_ref().map(|a| a.spki_pin())
             .ok_or_else(|| "Proxy certificate authority could not be initialized".into())
