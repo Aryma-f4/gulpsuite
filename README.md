@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="Gulpsuite Logo" width="120" height="120" />
 
-# Gulpsuite (`v0.0.6`)
+# Gulpsuite (`v0.0.7`)
 
 > ***"Gulp it before burp"***
 
@@ -18,7 +18,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
-[**Download v0.0.6 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.6) · [**What's New in v0.0.6**](#-whats-new-in-v006) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
+[**Download v0.0.7 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.7) · [**What's New in v0.0.7**](#-whats-new-in-v007) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
 
 </div>
 
@@ -34,7 +34,7 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## ✨ What's New in `v0.0.6`
+## ✨ What's New in `v0.0.7`
 
 - **Official Gulpsuite Brand Identity**: Crisp orange `#F56700` `"g"` application icon integrated across native OS windows, macOS `.app` bundles (`.icns`), Windows executables/shortcuts (`.ico`), Linux desktop entries, and the graphical Setup Wizard.
 - **Worldwide CVE, Retire.js & Real-Time OSV.dev Vulnerability Audit**:
@@ -56,7 +56,7 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ## Why Gulpsuite? (Performance & Memory Benchmarks)
 
-| Metric | **Gulpsuite (`v0.0.6` Native Rust)** | Traditional JVM-Based Security Suites | Advantage |
+| Metric | **Gulpsuite (`v0.0.7` Native Rust)** | Traditional JVM-Based Security Suites | Advantage |
 |---|---|---|---|
 | **Idle Memory (RSS)** | **~50 MB** | ~850 MB – 2.2 GB+ | **~20× – 40× lower RAM** |
 | **Active Scan / Fuzzing Memory** | **~55 – 120 MB** (bounded ring buffers) | 2 GB – 6 GB+ | **Zero GC pauses or OOM freezes** |
@@ -66,29 +66,29 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## Cross-Platform Installers (`v0.0.6`)
+## Cross-Platform Installers (`v0.0.7`)
 
-Download pre-built native installers directly from [**GitHub Releases (`v0.0.6`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.6):
+Download pre-built native installers directly from [**GitHub Releases (`v0.0.7`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.7):
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.6-macos-arm64.dmg` / `Gulpsuite-0.0.6-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.6-macos-x64.dmg` / `Gulpsuite-0.0.6-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.0.6-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
-| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.0.6-x86_64.AppImage` / `gulpsuite-0.0.6-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
-| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.0.6-linux-x64-setup.run` / `gulpsuite_0.0.6_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.0.7-macos-arm64.dmg` / `Gulpsuite-0.0.7-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.0.7-macos-x64.dmg` / `Gulpsuite-0.0.7-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.0.7-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
+| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.0.7-x86_64.AppImage` / `gulpsuite-0.0.7-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
+| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.0.7-linux-x64-setup.run` / `gulpsuite_0.0.7_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ### Quick Start on CachyOS / Arch Linux (`AppImage` or `pacman`)
 ```bash
 # Option 1: Run Portable AppImage directly (FUSE-free — works out of the box on CachyOS)
-chmod +x Gulpsuite-0.0.6-x86_64.AppImage
-./Gulpsuite-0.0.6-x86_64.AppImage
+chmod +x Gulpsuite-0.0.7-x86_64.AppImage
+./Gulpsuite-0.0.7-x86_64.AppImage
 
 # Optional: Integrate AppImage into CachyOS desktop launcher & ~/.local/bin/gulpsuite
-./Gulpsuite-0.0.6-x86_64.AppImage --install
+./Gulpsuite-0.0.7-x86_64.AppImage --install
 
 # Option 2: Install native CachyOS / Arch Linux pacman package
-sudo pacman -U gulpsuite-0.0.6-1-x86_64.pkg.tar.gz
+sudo pacman -U gulpsuite-0.0.7-1-x86_64.pkg.tar.gz
 ```
 
 ---

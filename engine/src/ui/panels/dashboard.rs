@@ -878,27 +878,28 @@ fn issue_table(app: &mut App, ui: &mut Ui, task_id: TaskId) {
             let w_type = total_w * 0.54;
             let w_host = total_w * 0.28;
             let w_time = (total_w - w_type - w_host).max(56.0);
+            let body_fg = theme.color("ui.text.body");
 
-            egui::Frame::new()
-                .fill(theme.color("ui.background.3"))
-                .inner_margin(egui::Margin::symmetric(10, 7))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.allocate_ui(Vec2::new(w_type, 18.0), |ui| {
-                            ui.set_min_width(w_type);
-                            ui.label(egui::RichText::new("Issue type").strong());
-                        });
-                        ui.allocate_ui(Vec2::new(w_host, 18.0), |ui| {
-                            ui.set_min_width(w_host);
-                            ui.label(egui::RichText::new("Host").strong());
-                        });
-                        ui.allocate_ui(Vec2::new(w_time, 18.0), |ui| {
-                            ui.set_min_width(w_time);
-                            ui.label(egui::RichText::new("Time (UTC)").strong());
-                        });
-                    });
-                });
+            let (hdr_r, _) = ui.allocate_exact_size(Vec2::new(total_w, 28.0), Sense::hover());
+            ui.painter()
+                .rect_filled(hdr_r, 0.0, theme.color("ui.background.3"));
+            for (hx, cw, label) in [
+                (hdr_r.left(), w_type, "Issue type"),
+                (hdr_r.left() + w_type, w_host, "Host"),
+                (hdr_r.left() + w_type + w_host, w_time, "Time (UTC)"),
+            ] {
+                let cr = egui::Rect::from_min_size(egui::pos2(hx, hdr_r.top()), Vec2::new(cw, 28.0));
+                let clip_p = ui
+                    .painter()
+                    .with_clip_rect(cr.shrink2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()));
+                clip_p.text(
+                    egui::pos2(cr.left() + 10.0, cr.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(12.0),
+                    body_fg,
+                );
+            }
             if issues.is_empty() {
                 ui.add_space((ui.available_height() * 0.35).max(80.0));
                 ui.vertical_centered(|ui| {
@@ -915,92 +916,111 @@ fn issue_table(app: &mut App, ui: &mut Ui, task_id: TaskId) {
             } else {
                 let mut jump_to_issue: Option<String> = None;
                 let scroll_h = (ui.available_height() - 12.0).max(180.0);
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(10, 4))
+                egui::ScrollArea::vertical()
+                    .id_salt(("dashboard-summary-issues-scroll", task_id.0))
+                    .max_height(scroll_h)
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt(("dashboard-summary-issues-scroll", task_id.0))
-                            .max_height(scroll_h)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                for issue in issues.into_iter().take(128) {
-                                    let sev_icon = match issue.severity {
-                                        IssueSeverity::High => {
-                                            super::scanner::LauncherIcon::IssueHigh
-                                        }
-                                        IssueSeverity::Medium => {
-                                            super::scanner::LauncherIcon::IssueMedium
-                                        }
-                                        IssueSeverity::Low => {
-                                            super::scanner::LauncherIcon::IssueLow
-                                        }
-                                        IssueSeverity::Info => {
-                                            super::scanner::LauncherIcon::IssueInfo
-                                        }
-                                    };
-                                    let host = issue
-                                        .url
-                                        .split_once("://")
-                                        .map_or(issue.url.as_str(), |(_, rest)| rest)
-                                        .split('/')
-                                        .next()
-                                        .unwrap_or("");
-                                    let time_txt = issue_time(issue.observed_unix_ms);
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 0.0;
-                                        let r1 = ui
-                                            .allocate_ui(Vec2::new(w_type, 22.0), |ui| {
-                                                ui.set_min_width(w_type);
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                                    super::scanner::paint_launcher_icon(
-                                                        ui,
-                                                        Vec2::new(14.0, 14.0),
-                                                        Color32::WHITE,
-                                                        sev_icon,
-                                                    );
-                                                    ui.add(
-                                                        egui::Label::new(
-                                                            egui::RichText::new(&issue.name)
-                                                                .size(12.0),
-                                                        )
-                                                        .truncate()
-                                                        .sense(Sense::click()),
-                                                    )
-                                                })
-                                                .inner
-                                            })
-                                            .inner;
-                                        let r2 = ui
-                                            .allocate_ui(Vec2::new(w_host, 22.0), |ui| {
-                                                ui.set_min_width(w_host);
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(host).size(12.0),
-                                                    )
-                                                    .truncate()
-                                                    .sense(Sense::click()),
-                                                )
-                                            })
-                                            .inner;
-                                        let r3 = ui
-                                            .allocate_ui(Vec2::new(w_time, 22.0), |ui| {
-                                                ui.set_min_width(w_time);
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(time_txt).size(12.0),
-                                                    )
-                                                    .truncate()
-                                                    .sense(Sense::click()),
-                                                )
-                                            })
-                                            .inner;
-                                        if r1.clicked() || r2.clicked() || r3.clicked() {
-                                            jump_to_issue = Some(issue.name.clone());
-                                        }
-                                    });
-                                }
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let row_w = ui.available_width().max(240.0);
+                        let rw_type = row_w * 0.54;
+                        let rw_host = row_w * 0.28;
+                        let rw_time = (row_w - rw_type - rw_host).max(52.0);
+                        for issue in issues.into_iter().take(128) {
+                            let sev_icon = match issue.severity {
+                                IssueSeverity::High => super::scanner::LauncherIcon::IssueHigh,
+                                IssueSeverity::Medium => super::scanner::LauncherIcon::IssueMedium,
+                                IssueSeverity::Low => super::scanner::LauncherIcon::IssueLow,
+                                IssueSeverity::Info => super::scanner::LauncherIcon::IssueInfo,
+                            };
+                            let host = issue
+                                .url
+                                .split_once("://")
+                                .map_or(issue.url.as_str(), |(_, rest)| rest)
+                                .split('/')
+                                .next()
+                                .unwrap_or("");
+                            let time_txt = issue_time(issue.observed_unix_ms);
+                            let (row_rect, row_resp) =
+                                ui.allocate_exact_size(Vec2::new(row_w, 24.0), Sense::click());
+                            row_resp.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    &issue.name,
+                                )
                             });
+                            if row_resp.hovered() {
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    0.0,
+                                    theme.color("ui.background.2"),
+                                );
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+
+                            let c1 = egui::Rect::from_min_size(
+                                row_rect.min,
+                                Vec2::new(rw_type, row_rect.height()),
+                            );
+                            let ic_rect = egui::Rect::from_min_size(
+                                egui::pos2(c1.left() + 10.0, c1.center().y - 7.0),
+                                Vec2::new(14.0, 14.0),
+                            );
+                            super::scanner::paint_launcher_icon_in_rect(
+                                ui.painter(),
+                                ic_rect,
+                                Color32::WHITE,
+                                sev_icon,
+                            );
+                            ui.painter()
+                                .with_clip_rect(
+                                    c1.shrink2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()),
+                                )
+                                .text(
+                                    egui::pos2(c1.left() + 30.0, c1.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    &issue.name,
+                                    FontId::proportional(12.0),
+                                    body_fg,
+                                );
+
+                            let c2 = egui::Rect::from_min_size(
+                                egui::pos2(row_rect.left() + rw_type, row_rect.top()),
+                                Vec2::new(rw_host, row_rect.height()),
+                            );
+                            ui.painter()
+                                .with_clip_rect(
+                                    c2.shrink2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()),
+                                )
+                                .text(
+                                    egui::pos2(c2.left() + 10.0, c2.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    host,
+                                    FontId::proportional(12.0),
+                                    body_fg,
+                                );
+
+                            let c3 = egui::Rect::from_min_size(
+                                egui::pos2(row_rect.left() + rw_type + rw_host, row_rect.top()),
+                                Vec2::new(rw_time, row_rect.height()),
+                            );
+                            ui.painter()
+                                .with_clip_rect(
+                                    c3.shrink2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()),
+                                )
+                                .text(
+                                    egui::pos2(c3.left() + 10.0, c3.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    &time_txt,
+                                    FontId::proportional(12.0),
+                                    body_fg,
+                                );
+
+                            if row_resp.clicked() {
+                                jump_to_issue = Some(issue.name.clone());
+                            }
+                        }
                     });
                 if let Some(target_name) = jump_to_issue {
                     if let Some(idx) = app

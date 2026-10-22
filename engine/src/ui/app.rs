@@ -1624,11 +1624,40 @@ pub fn install_fonts(ctx: &Context) {
             family.insert(pos, "system-symbols".to_owned());
         }
     }
+    // Always embed crisp, smooth anti-aliased Lato Regular + Source Code Pro Regular directly
+    // in the binary so Linux (CachyOS/Arch/Ubuntu) and Windows never fall back to thin/unhinted fonts.
+    fonts.font_data.insert(
+        "bundled-sans".to_owned(),
+        eframe::egui::FontData::from_static(include_bytes!("../../assets/Lato-Regular.ttf")).into(),
+    );
+    fonts.font_data.insert(
+        "bundled-mono".to_owned(),
+        eframe::egui::FontData::from_static(include_bytes!(
+            "../../assets/SourceCodePro-Regular.ttf"
+        ))
+        .into(),
+    );
+    if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Proportional) {
+        let pos = if cfg!(target_os = "macos") {
+            family.len().min(1)
+        } else {
+            0
+        };
+        family.insert(pos, "bundled-sans".to_owned());
+    }
+    if let Some(family) = fonts.families.get_mut(&eframe::egui::FontFamily::Monospace) {
+        let pos = if cfg!(target_os = "macos") {
+            family.len().min(1)
+        } else {
+            0
+        };
+        family.insert(pos, "bundled-mono".to_owned());
+    }
+
     ctx.set_fonts(fonts);
 
-    #[cfg(target_os = "linux")]
     ctx.options_mut(|opt| {
-        opt.tessellation_options.feathering = false;
+        opt.tessellation_options.feathering = true;
     });
 
     let body_sz = if cfg!(target_os = "linux") { 13.0 } else { 12.0 };

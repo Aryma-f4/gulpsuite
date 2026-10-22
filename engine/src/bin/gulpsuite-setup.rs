@@ -56,6 +56,7 @@ fn main() -> eframe::Result<()> {
     let is_setup_exe = exe_name.contains("setup") || exe_name.contains("install");
     if !is_setup_exe && !uninstall && !yes && !force_setup && prefix.is_none() {
         let options = eframe::NativeOptions {
+            multisampling: 4,
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_inner_size([1280.0, 800.0])
                 .with_min_inner_size([760.0, 480.0])
@@ -112,6 +113,7 @@ fn main() -> eframe::Result<()> {
     wizard.destination = dest.to_string_lossy().into_owned();
 
     let options = eframe::NativeOptions {
+        multisampling: 4,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([720.0, 460.0])
             .with_min_inner_size([400.0, 300.0])

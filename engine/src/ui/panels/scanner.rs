@@ -581,7 +581,10 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(12, 6))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            let banner_w = ui.available_width();
+            let status_w = (banner_w * 0.25).clamp(88.0, 205.0);
+            let bar_w = (banner_w * 0.26).clamp(72.0, 210.0);
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 if is_running {
                     paint_burp_spinner(ui, Vec2::new(14.0, 14.0), Color32::from_rgb(0x5B, 0x4F, 0xFF));
@@ -620,11 +623,11 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
                     status_txt.clone()
                 };
                 ui.allocate_ui_with_layout(
-                    Vec2::new(205.0, 20.0),
+                    Vec2::new(status_w, 20.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.set_min_width(205.0);
-                        ui.set_max_width(205.0);
+                        ui.set_min_width(status_w);
+                        ui.set_max_width(status_w);
                         ui.add(
                             egui::Label::new(
                                 RichText::new(&short_status)
@@ -638,7 +641,7 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
                     },
                 );
                 ui.add_space(4.0);
-                paint_burp_progress_bar_animated(ui, 210.0, ratio, is_running, &theme);
+                paint_burp_progress_bar_animated(ui, bar_w, ratio, is_running, &theme);
                 let pct = (ratio * 100.0).round() as u32;
                 ui.allocate_ui_with_layout(
                     Vec2::new(38.0, 20.0),

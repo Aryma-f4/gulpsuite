@@ -603,10 +603,11 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             // Top Filter Bar matching `Pro-QSG-6-view-issues.png` & `custom-scan-check-issue.png`:
-            // Left: `▽ Filter  ( High ) ( Medium ) ( Low ) ( Info )  |  ( Certain ) ( Firm ) ( Tentative )`
-            // Right: `[ Search ]  [ Report issues… ]  [ Create manual issue… ]`
+            // Responsive: on wide panes (>= 900px), single row; on narrower panes (such as Dashboard -> Issue activity),
+            // wraps Search / Report issues / Create manual issue cleanly onto a second row instead of overlapping!
+            let filter_bar_w = ui.available_width();
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                 let (f_rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), egui::Sense::hover());
                 crate::ui::icons::paint(
                     ui.painter(),
@@ -666,24 +667,46 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                     }
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if filter_bar_w >= 920.0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if ui.small_button("Create manual issue…").clicked() {
+                            app.panels.scanner.show_manual_issue_modal = true;
+                        }
+                        if ui.small_button("Report issues…").clicked() {
+                            app.panels.scanner.report_host_filter.clear();
+                            app.panels.scanner.show_report_wizard = true;
+                        }
+                        ui.add(
+                            eframe::egui::TextEdit::singleline(
+                                &mut app.panels.target_panel.issue_filter,
+                            )
+                            .hint_text("Search")
+                            .desired_width(140.0),
+                        );
+                    });
+                }
+            });
+            if filter_bar_w < 920.0 {
+                ui.add_space(2.0);
+                ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    if ui.small_button("Create manual issue…").clicked() {
-                        app.panels.scanner.show_manual_issue_modal = true;
-                    }
-                    if ui.small_button("Report issues…").clicked() {
-                        app.panels.scanner.report_host_filter.clear();
-                        app.panels.scanner.show_report_wizard = true;
-                    }
                     ui.add(
                         eframe::egui::TextEdit::singleline(
                             &mut app.panels.target_panel.issue_filter,
                         )
                         .hint_text("Search")
-                        .desired_width(140.0),
+                        .desired_width(150.0),
                     );
+                    if ui.small_button("Report issues…").clicked() {
+                        app.panels.scanner.report_host_filter.clear();
+                        app.panels.scanner.show_report_wizard = true;
+                    }
+                    if ui.small_button("Create manual issue…").clicked() {
+                        app.panels.scanner.show_manual_issue_modal = true;
+                    }
                 });
-            });
+            }
             ui.add_space(4.0);
             super::scanner::draw_scanner_loading_banner(app, ui);
             ui.add_space(4.0);
@@ -763,26 +786,22 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
 
             // 5-Column Flat Bordered Discovered Issues Table matching `Pro-QSG-6-view-issues.png` & `custom-scan-check-issue.png`:
             // `Time ⌄ | Source | Issue type | Host | Path`
-            let avail_tbl_w = (ui.available_width() - 2.0).max(520.0);
-            let base_w = 136.0 + 78.0 + 250.0 + 185.0 + 175.0;
-            let extra = (avail_tbl_w - base_w).max(0.0);
-            let scale = if avail_tbl_w < base_w {
-                avail_tbl_w / base_w
-            } else {
-                1.0
-            };
+            let avail_tbl_w = (ui.available_width() - 2.0).max(320.0);
+            let w_time = (avail_tbl_w * 0.16).clamp(68.0, 142.0);
+            let w_source = (avail_tbl_w * 0.10).clamp(52.0, 82.0);
+            let rem_w = (avail_tbl_w - w_time - w_source).max(180.0);
             let cols = [
-                ("Time ⌄", 136.0 * scale),
-                ("Source", 78.0 * scale),
-                ("Issue type", 250.0 * scale + extra * 0.36),
-                ("Host", 185.0 * scale + extra * 0.28),
-                ("Path", 175.0 * scale + extra * 0.36),
+                ("Time ⌄", w_time),
+                ("Source", w_source),
+                ("Issue type", rem_w * 0.42),
+                ("Host", rem_w * 0.30),
+                ("Path", rem_w * 0.28),
             ];
             let tbl_w = cols.iter().map(|(_, w)| *w).sum::<f32>();
             let issues_tbl_h = if app.panels.target_panel.selected_issue.is_some() {
-                (ui.available_height() * 0.30).clamp(125.0, 230.0)
+                (ui.available_height() * 0.30).clamp(115.0, 220.0)
             } else {
-                (ui.available_height() - 36.0).max(185.0)
+                (ui.available_height() - 36.0).max(165.0)
             };
 
             egui::Frame::new()
@@ -800,7 +819,10 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                             egui::pos2(hx, hdr_r.top()),
                             Vec2::new(col_w, hdr_r.height()),
                         );
-                        ui.painter().text(
+                        let hdr_clip = ui.painter().with_clip_rect(
+                            cr.shrink2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()),
+                        );
+                        hdr_clip.text(
                             egui::pos2(cr.left() + 8.0, cr.center().y),
                             egui::Align2::LEFT_CENTER,
                             col_name,
@@ -895,7 +917,13 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                     let hh = (total_s / 3600) % 24;
                                     let mm = (total_s / 60) % 60;
                                     let ss = total_s % 60;
-                                    let time_col = if issue.observed_unix_ms == 0 {
+                                    let time_col = if w_time < 115.0 {
+                                        if issue.observed_unix_ms == 0 {
+                                            "12:04:46".to_string()
+                                        } else {
+                                            format!("{hh:02}:{mm:02}:{ss:02}")
+                                        }
+                                    } else if issue.observed_unix_ms == 0 {
                                         "12:04:46 21 Oct 2026".to_string()
                                     } else {
                                         format!("{hh:02}:{mm:02}:{ss:02} 21 Oct 2026")
@@ -1090,29 +1118,35 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                                     egui::ScrollArea::vertical()
                                         .id_salt("target-issue-advisory-scroll")
                                         .max_height(adv_h)
+                                        .auto_shrink([false, false])
                                         .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
+                                            ui.set_max_width(ui.available_width());
+                                            ui.horizontal_top(|ui| {
                                                 super::scanner::paint_launcher_icon(
                                                     ui,
-                                                    Vec2::new(26.0, 26.0),
+                                                    Vec2::new(24.0, 24.0),
                                                     Color32::WHITE,
                                                     sev_icon,
                                                 );
+                                                let max_title_w =
+                                                    (ui.available_width() - 8.0).max(140.0);
+                                                let galley = ui.painter().layout(
+                                                    issue.name.clone(),
+                                                    egui::FontId::proportional(16.5),
+                                                    heading_fg,
+                                                    max_title_w,
+                                                );
+                                                let title_h = galley.size().y.max(24.0);
                                                 let (title_rect, _) = ui.allocate_exact_size(
-                                                    Vec2::new(
-                                                        (ui.available_width() - 8.0).max(160.0),
-                                                        26.0,
-                                                    ),
+                                                    Vec2::new(max_title_w, title_h),
                                                     egui::Sense::hover(),
                                                 );
-                                                ui.painter().text(
+                                                ui.painter().galley(
                                                     egui::pos2(
                                                         title_rect.left() + 4.0,
-                                                        title_rect.center().y,
+                                                        title_rect.top() + 2.0,
                                                     ),
-                                                    egui::Align2::LEFT_CENTER,
-                                                    &issue.name,
-                                                    egui::FontId::proportional(17.5),
+                                                    galley,
                                                     heading_fg,
                                                 );
                                             });
