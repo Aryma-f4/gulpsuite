@@ -1221,16 +1221,19 @@ fn event_log(app: &App, ui: &mut Ui, task: &Task) {
         });
 }
 
-fn logger(app: &App, ui: &mut Ui, task: &Task) {
+fn logger(app: &mut App, ui: &mut Ui, task: &Task) {
     heading(ui, &app.theme, "Logger");
     muted(
         ui,
         &app.theme,
         &format!(
-            "{} item(s) attributed to this task.",
-            task.progress.completed
+            "{} item(s) attributed to this task · {} total HTTP transaction(s) in Logger.",
+            task.progress.completed,
+            app.log.len()
         ),
     );
+    ui.add_space(4.0);
+    super::logger::draw_http_log(app, ui);
 }
 
 fn audit_log(app: &App, ui: &mut Ui, task: &Task) {

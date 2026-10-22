@@ -3588,6 +3588,23 @@ pub(crate) fn start(app: &mut App) {
                 let coverage =
                     crate::scanner::crawler::crawl(start_url, &u_scope, &proxy, &on_progress)
                         .await;
+                if coverage.pages.is_empty() {
+                    let tls = start_url.starts_with("https://");
+                    let path = crate::scanner::http::path_of(start_url);
+                    let req = format!(
+                        "GET {path} HTTP/1.1\r\nHost: {u_host}\r\nUser-Agent: Gulpsuite-Scanner/{}\r\nConnection: close\r\n\r\n",
+                        crate::updater::CURRENT_VERSION
+                    );
+                    proxy.record_tx(
+                        "GET".into(),
+                        start_url.clone(),
+                        0,
+                        req,
+                        "HTTP/1.1 000 Target Unreachable (Connection Refused / Timeout)\r\n\r\n"
+                            .into(),
+                        tls,
+                    );
+                }
 
                 // Optional Application Login form submission when `use_login_credentials` is enabled
                 if let Some(ref cred) = login_creds {

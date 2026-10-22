@@ -632,10 +632,61 @@ impl Proxy {
         let roots = self.inner.extra_roots.lock().map(|roots| roots.clone()).unwrap_or_default();
         let call = one_shot(host, port, &raw, secure, &roots);
         match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), call).await {
-            Ok(Ok(pair)) => Ok(pair),
+            Ok(Ok((status, response))) => {
+                let first_line = raw.lines().next().unwrap_or("");
+                let mut parts = first_line.split_whitespace();
+                let method = parts.next().unwrap_or("GET").to_string();
+                let req_target = parts.next().unwrap_or("/");
+                let scheme = if secure { "https" } else { "http" };
+                let default_port = if secure { 443 } else { 80 };
+                let authority = if port == default_port {
+                    host.to_string()
+                } else {
+                    format!("{host}:{port}")
+                };
+                let target =
+                    if req_target.starts_with("http://") || req_target.starts_with("https://") {
+                        req_target.to_string()
+                    } else if req_target.starts_with('/') {
+                        format!("{scheme}://{authority}{req_target}")
+                    } else {
+                        format!("{scheme}://{authority}/{req_target}")
+                    };
+                self.emit(Event::Tx {
+                    method,
+                    target,
+                    status,
+                    bytes: response.len() as u64,
+                    request: raw,
+                    response: response.clone(),
+                    secure,
+                });
+                Ok((status, response))
+            }
             Ok(Err(e)) => Err(e.to_string()),
             Err(_) => Err("timed out".to_string()),
         }
+    }
+
+    /// Records a synthetic or failed tool transaction into the shared proxy/Logger stream.
+    pub fn record_tx(
+        &self,
+        method: String,
+        target: String,
+        status: u16,
+        request: String,
+        response: String,
+        secure: bool,
+    ) {
+        self.emit(Event::Tx {
+            method,
+            target,
+            status,
+            bytes: response.len() as u64,
+            request,
+            response,
+            secure,
+        });
     }
 
     /// Runs an Intruder grid with bounded concurrency, emitting one result per request.

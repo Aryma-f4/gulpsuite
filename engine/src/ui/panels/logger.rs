@@ -88,6 +88,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 }
 
+pub fn draw_http_log(app: &mut App, ui: &mut Ui) {
+    http(app, ui);
+}
+
 fn http(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     // Burp names the tool in its tab and the sub-tab below it, so a panel heading would repeat
