@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to upload installers to (e.g. v0.0.5)'
+        description: 'Release tag to upload installers to (e.g. v0.0.6)'
         required: true
-        default: 'v0.0.5'
+        default: 'v0.0.6'
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -72,8 +76,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Gulpsuite $TAG — Gulp it before burp" --generate-notes || true
           for f in dist/*.dmg dist/*.pkg dist/*-setup.exe dist/*-setup.run dist/*.AppImage dist/*.pkg.tar.gz dist/*.deb dist/*.sha256; do
             if [ -f "$f" ]; then
-              gh release upload "$TAG" "$f" --clobber
+              for attempt in 1 2 3; do
+                gh release upload "$TAG" "$f" --clobber && break || sleep 5
+              done
             fi
           done
