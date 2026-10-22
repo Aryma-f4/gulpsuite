@@ -9,6 +9,7 @@
 **Ultra-Fast, Lightweight Native Rust Web Security Testing, DAST Vulnerability Scanner, Nuclei YAML Engine & HTTP/HTTPS/WebSocket Interception Proxy Suite**
 
 [![Latest Release](https://img.shields.io/github/v/release/Aryma-f4/gulpsuite?style=flat-square&color=f56700&label=release)](https://github.com/Aryma-f4/gulpsuite/releases/latest)
+[![Listed in Awesome Reverse-Engineered](https://img.shields.io/badge/listed%20in-awesome--reverse--engineered-ffb000?style=flat-square&labelColor=0e0f0d)](https://github.com/alexgaoth/awesome-reverse-engineered)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Aryma-f4/gulpsuite/release.yml?style=flat-square&label=installers)](https://github.com/Aryma-f4/gulpsuite/actions)
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-f56700?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Memory Footprint](https://img.shields.io/badge/RAM-~50%20MB%20idle-1f883d?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
