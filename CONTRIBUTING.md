@@ -1,6 +1,10 @@
 # Contributing to Gulpsuite
 
-Thank you for your interest in contributing to **Gulpsuite**! We welcome bug reports, feature requests, scanner detection rules, and performance improvements.
+Thank you for your interest in contributing to **Gulpsuite**! **Anyone is welcome to contribute** — whether you are fixing bugs, adding vulnerability detection rules or Nuclei/BCheck templates, improving UI/UX across macOS, Windows, and Linux (including CachyOS / Arch / Debian), or optimizing performance.
+
+## Open-Source License (MIT)
+
+By contributing to Gulpsuite, you agree that your contributions will be licensed under the project's [MIT License](LICENSE), keeping Gulpsuite free and open for everyone in the security community.
 
 ## Development Workflow
 

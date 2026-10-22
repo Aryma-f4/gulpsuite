@@ -14,6 +14,8 @@
 [![Memory Footprint](https://img.shields.io/badge/RAM-~50%20MB%20idle-1f883d?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
 [![Cold Start](https://img.shields.io/badge/startup-%3C%200.2s-0068b5?style=flat-square)](#why-gulpsuite-performance--memory-benchmarks)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-5b4fff?style=flat-square)](https://github.com/Aryma-f4/gulpsuite/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f?style=flat-square)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
 [**Download v0.0.6 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.0.6) · [**What's New in v0.0.6**](#-whats-new-in-v006) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
@@ -217,9 +219,9 @@ open Gulpsuite.app
 ---
 
 ## Community & Governance
+- **Everyone Can Contribute**: Pull requests, issues, vulnerability checks, and platform improvements are welcome from anyone! See the [Contributing Guide](CONTRIBUTING.md).
 - [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Contributing Guide](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 
 ## License
-Provided for authorized security testing, research, and educational use.
+Licensed under the permissive open-source **[MIT License](LICENSE)** — Copyright (c) 2026 Aryma-f4 and Gulpsuite Contributors. Provided for authorized security testing, research, and educational use.

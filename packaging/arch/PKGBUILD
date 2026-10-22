@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="Gulp it before burp — Ultra-fast native Rust web security testing, DAST scanner, Nuclei engine & HTTP/HTTPS/WebSocket proxy suite"
 arch=('x86_64')
 url="https://github.com/Aryma-f4/gulpsuite"
-license=('custom')
+license=('MIT')
 depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'xdg-utils')
 makedepends=('cargo' 'python')
 source=("git+https://github.com/Aryma-f4/gulpsuite.git#tag=v${pkgver}")

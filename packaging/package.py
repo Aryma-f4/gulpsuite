@@ -327,7 +327,7 @@ def build_arch_pkg(layout, artifact, version):
             f'packager = Aryma-f4 <https://github.com/Aryma-f4/gulpsuite>\n'
             f'size = {size_bytes}\n'
             f'arch = x86_64\n'
-            f'license = custom\n'
+            f'license = MIT\n'
             f'depend = gtk3\n'
             f'depend = nss\n'
             f'depend = alsa-lib\n'
