@@ -88,6 +88,12 @@ pub struct TargetPanel {
     pub issue_conf_filter: [bool; 3],
     /// Tracks collapsed host, folder, and query-parent node keys in `Target -> Site map`.
     pub collapsed_nodes: std::collections::HashSet<String>,
+    pub adv_protocol: String,
+    pub adv_host_regex: String,
+    pub adv_port_regex: String,
+    pub adv_file_regex: String,
+    pub show_compare_sitemaps_modal: bool,
+    pub sitemap_baseline: Vec<(String, String, u16, usize)>,
 }
 
 impl Default for TargetPanel {
@@ -132,6 +138,12 @@ impl Default for TargetPanel {
             issue_sev_filter: [true, true, true, true],
             issue_conf_filter: [true, true, true],
             collapsed_nodes: std::collections::HashSet::new(),
+            adv_protocol: "Any".into(),
+            adv_host_regex: "^.*\\.example\\.com$".into(),
+            adv_port_regex: "^(80|443)$".into(),
+            adv_file_regex: "^/.*".into(),
+            show_compare_sitemaps_modal: false,
+            sitemap_baseline: Vec::new(),
         }
     }
 }
@@ -262,6 +274,89 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
                 &mut app.panels.target_panel.advanced_scope_control,
                 "Use advanced scope control",
             );
+            if app.panels.target_panel.advanced_scope_control {
+                ui.add_space(4.0);
+                egui::Frame::new()
+                    .fill(theme.color("ui.background.0"))
+                    .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
+                    .corner_radius(4.0)
+                    .inner_margin(10.0)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(
+                                "Advanced regex scope rule builder (Protocol + Host/IP range + Port + File regex)",
+                            )
+                            .strong(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Protocol:");
+                            egui::ComboBox::from_id_salt("adv-scope-proto")
+                                .selected_text(&app.panels.target_panel.adv_protocol)
+                                .width(80.0)
+                                .show_ui(ui, |ui| {
+                                    for p in ["Any", "HTTP", "HTTPS"] {
+                                        ui.selectable_value(
+                                            &mut app.panels.target_panel.adv_protocol,
+                                            p.to_string(),
+                                            p,
+                                        );
+                                    }
+                                });
+                            ui.label("Host or IP range:");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut app.panels.target_panel.adv_host_regex,
+                                )
+                                .desired_width(160.0),
+                            );
+                            ui.label("Port:");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut app.panels.target_panel.adv_port_regex,
+                                )
+                                .desired_width(78.0),
+                            );
+                            ui.label("File:");
+                            ui.add(
+                                egui::TextEdit::singleline(
+                                    &mut app.panels.target_panel.adv_file_regex,
+                                )
+                                .desired_width(110.0),
+                            );
+                            let build_rule = |tp: &TargetPanel| -> String {
+                                let proto = match tp.adv_protocol.as_str() {
+                                    "HTTP" => "http://",
+                                    "HTTPS" => "https://",
+                                    _ => "https://",
+                                };
+                                let host = tp
+                                    .adv_host_regex
+                                    .trim_start_matches('^')
+                                    .trim_end_matches('$')
+                                    .replace("\\.", ".");
+                                let file = tp
+                                    .adv_file_regex
+                                    .trim_start_matches('^')
+                                    .trim_end_matches('$');
+                                format!("{proto}{host}{file}")
+                            };
+                            if ui.button("Add to Include").clicked() {
+                                let rule = build_rule(&app.panels.target_panel);
+                                if !app.panels.target_panel.scope.trim().is_empty() {
+                                    app.panels.target_panel.scope.push_str(", ");
+                                }
+                                app.panels.target_panel.scope.push_str(&rule);
+                            }
+                            if ui.button("Add to Exclude").clicked() {
+                                let rule = build_rule(&app.panels.target_panel);
+                                if !app.panels.target_panel.scope_exclude.trim().is_empty() {
+                                    app.panels.target_panel.scope_exclude.push_str(", ");
+                                }
+                                app.panels.target_panel.scope_exclude.push_str(&rule);
+                            }
+                        });
+                    });
+            }
             ui.add_space(10.0);
 
             // 1. Include in scope (`site-map-target-scope.png`)
@@ -1713,6 +1808,11 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                         }
                     });
 
+                ui.add_space(6.0);
+                if ui.small_button("Compare site maps…").clicked() {
+                    app.panels.target_panel.show_compare_sitemaps_modal = true;
+                }
+
                 if !tree.is_empty() {
                     ui.add_space(6.0);
                     let filter_pill_bg = if theme.dark {
@@ -1764,6 +1864,131 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                 }
             });
         });
+
+    if app.panels.target_panel.show_compare_sitemaps_modal {
+        let ctx = ui.ctx().clone();
+        let mut open = true;
+        egui::Window::new("Compare site maps")
+            .open(&mut open)
+            .resizable(true)
+            .default_size([720.0, 420.0])
+            .show(&ctx, |ui| {
+                ui.label(
+                    RichText::new(
+                        "Compare two site maps to identify authorization & access-control differences across user roles or sessions.",
+                    )
+                    .strong(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if crate::ui::app::primary_button(
+                        ui,
+                        &theme,
+                        "Capture baseline snapshot (Site map 1)",
+                    )
+                    .clicked()
+                    {
+                        let mut snap = Vec::new();
+                        let mut seen = std::collections::HashSet::new();
+                        for tx in &app.log {
+                            let key = format!("{} {}", tx.method, tx.target);
+                            if seen.insert(key) {
+                                snap.push((
+                                    tx.method.clone(),
+                                    tx.target.clone(),
+                                    tx.status,
+                                    tx.response.len(),
+                                ));
+                            }
+                        }
+                        let count = snap.len();
+                        app.panels.target_panel.sitemap_baseline = snap;
+                        app.status =
+                            format!("Captured Site map baseline snapshot ({count} endpoints)");
+                    }
+                    ui.label(format!(
+                        "Baseline endpoints: {}  |  Current endpoints: {}",
+                        app.panels.target_panel.sitemap_baseline.len(),
+                        app.log.len()
+                    ));
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("compare-sitemaps-scroll")
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        egui::Grid::new("compare-sitemaps-grid")
+                            .num_columns(5)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.strong("Method");
+                                ui.strong("URL");
+                                ui.strong("Site map 1 (Baseline)");
+                                ui.strong("Site map 2 (Current)");
+                                ui.strong("Difference");
+                                ui.end_row();
+
+                                let mut cur_map = std::collections::BTreeMap::new();
+                                for tx in &app.log {
+                                    cur_map.insert(
+                                        (tx.method.clone(), tx.target.clone()),
+                                        (tx.status, tx.response.len()),
+                                    );
+                                }
+                                let mut base_map = std::collections::BTreeMap::new();
+                                for (m, u, st, len) in &app.panels.target_panel.sitemap_baseline {
+                                    base_map.insert((m.clone(), u.clone()), (*st, *len));
+                                }
+                                let mut all_keys: Vec<(String, String)> = cur_map
+                                    .keys()
+                                    .chain(base_map.keys())
+                                    .cloned()
+                                    .collect();
+                                all_keys.sort();
+                                all_keys.dedup();
+
+                                for (m, u) in all_keys {
+                                    let b = base_map.get(&(m.clone(), u.clone())).copied();
+                                    let c = cur_map.get(&(m.clone(), u.clone())).copied();
+                                    let (diff_lbl, diff_col) = match (b, c) {
+                                        (None, Some(_)) => (
+                                            "Added in Site map 2",
+                                            Color32::from_rgb(0x1F, 0x88, 0x3D),
+                                        ),
+                                        (Some(_), None) => (
+                                            "Deleted in Site map 2",
+                                            Color32::from_rgb(0xD6, 0x21, 0x3F),
+                                        ),
+                                        (Some((bs, _bl)), Some((cs, _cl))) if bs != cs => (
+                                            "Modified (Status code changed)",
+                                            Color32::from_rgb(0xFF, 0x66, 0x33),
+                                        ),
+                                        (Some((_, bl)), Some((_, cl))) if bl != cl => (
+                                            "Modified (Response length changed)",
+                                            Color32::from_rgb(0x26, 0x64, 0x9D),
+                                        ),
+                                        _ => ("Unchanged", theme.color("ui.text.muted")),
+                                    };
+                                    ui.monospace(&m);
+                                    ui.monospace(&u);
+                                    ui.label(
+                                        b.map(|(s, l)| format!("{s} ({l} B)"))
+                                            .unwrap_or_else(|| "—".into()),
+                                    );
+                                    ui.label(
+                                        c.map(|(s, l)| format!("{s} ({l} B)"))
+                                            .unwrap_or_else(|| "—".into()),
+                                    );
+                                    ui.colored_label(diff_col, diff_lbl);
+                                    ui.end_row();
+                                }
+                            });
+                    });
+            });
+        if !open {
+            app.panels.target_panel.show_compare_sitemaps_modal = false;
+        }
+    }
 
     if tree.is_empty() {
         let avail = ui.available_size();

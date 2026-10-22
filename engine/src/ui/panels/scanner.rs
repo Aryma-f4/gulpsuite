@@ -2602,6 +2602,55 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
     ui.add_space(4.0);
 
+    if !app.panels.scanner.pages.is_empty() {
+        eframe::egui::CollapsingHeader::new(
+            RichText::new(format!(
+                "Crawl paths & Insertion points ({} crawled endpoints)",
+                app.panels.scanner.pages.len()
+            ))
+            .strong(),
+        )
+        .default_open(false)
+        .show(ui, |ui| {
+            eframe::egui::Grid::new("scanner-crawl-paths-grid")
+                .num_columns(4)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong("Transition");
+                    ui.strong("Endpoint URL");
+                    ui.strong("Status");
+                    ui.strong("Nested Insertion Points");
+                    ui.end_row();
+                    for (idx, (url, status)) in app.panels.scanner.pages.iter().enumerate() {
+                        let transition = if idx == 0 {
+                            "Seed request (GET)"
+                        } else if (300..400).contains(status) {
+                            "Follow redirect (3xx)"
+                        } else if url.contains("/api/") || url.contains("graphql") {
+                            "API / GraphQL invoke"
+                        } else if url.contains('?') {
+                            "Form / Query transition"
+                        } else {
+                            "Link click (DOM / href)"
+                        };
+                        let insertion = if let Some((_, q)) = url.split_once('?') {
+                            format!("URL query ({}) → String / Base64 / JSON", q)
+                        } else if url.contains("/api/") {
+                            "JSON body / Path segment / Header".into()
+                        } else {
+                            "Path segment / Cookie / Header".into()
+                        };
+                        ui.label(transition);
+                        ui.monospace(url);
+                        ui.monospace(status.to_string());
+                        ui.label(insertion);
+                        ui.end_row();
+                    }
+                });
+        });
+        ui.add_space(4.0);
+    }
+
     if app.panels.scanner.findings.is_empty() {
         muted(
             ui,
@@ -3192,7 +3241,7 @@ pub fn generate_scan_report(app: &App) -> String {
     }
 }
 
-/// Parses OpenAPI v2/v3 JSON (`paths`) or Postman Collection v2.1 JSON (`item`) into `ApiEndpointRow`s.
+/// Parses OpenAPI v2/v3 JSON (`paths`), Postman Collection v2.1 JSON (`item`), or SOAP WSDL XML (`<operation name="...">`) into `ApiEndpointRow`s.
 pub fn parse_api_definition(content: &str, default_host: &str) -> Vec<ApiEndpointRow> {
     let mut out = Vec::new();
     let host_origin = crate::scanner::split(default_host)
@@ -3205,6 +3254,65 @@ pub fn parse_api_definition(content: &str, default_host: &str) -> Vec<ApiEndpoin
             format!("{scheme}://{h}")
         })
         .unwrap_or_else(|| "https://example.com".into());
+
+    // 1. SOAP WSDL XML definition support (`<wsdl:definitions>`, `<operation name="...">`, `<soap:address location="..."/>`)
+    if content.trim_start().starts_with('<')
+        || content.contains("wsdl:")
+        || content.contains("<definitions")
+    {
+        let mut service_host = host_origin.clone();
+        let mut service_path = String::from("/soap");
+        if let Some(loc_idx) = content.find("location=") {
+            let after = &content[loc_idx + "location=".len()..];
+            let quote = after.chars().next().unwrap_or('"');
+            if quote == '"' || quote == '\'' {
+                if let Some(end_q) = after[1..].find(quote) {
+                    let loc_url = &after[1..1 + end_q];
+                    if let Some((h, p)) = crate::scanner::split(loc_url) {
+                        let scheme = if loc_url.starts_with("https://") {
+                            "https"
+                        } else {
+                            "http"
+                        };
+                        service_host = format!("{scheme}://{h}");
+                        service_path = p;
+                    } else if loc_url.starts_with('/') {
+                        service_path = loc_url.to_string();
+                    }
+                }
+            }
+        }
+        let mut search_slice = content;
+        let mut seen_ops = std::collections::HashSet::new();
+        while let Some(op_pos) = search_slice.find("operation") {
+            let after_op = &search_slice[op_pos + "operation".len()..];
+            let tag_end = after_op.find('>').unwrap_or(after_op.len());
+            let tag_header = &after_op[..tag_end];
+            if let Some(name_pos) = tag_header.find("name=") {
+                let after_name = &tag_header[name_pos + "name=".len()..];
+                let q = after_name.chars().next().unwrap_or('"');
+                if (q == '"' || q == '\'') && after_name.len() > 1 {
+                    if let Some(end_q) = after_name[1..].find(q) {
+                        let op_name = after_name[1..1 + end_q].trim();
+                        if !op_name.is_empty() && seen_ops.insert(op_name.to_string()) {
+                            let sep = if service_path.contains('?') { '&' } else { '?' };
+                            out.push(ApiEndpointRow {
+                                selected: true,
+                                method: "POST".into(),
+                                content_type: "text/xml; charset=utf-8".into(),
+                                host: service_host.clone(),
+                                url: format!("{service_path}{sep}op={op_name}"),
+                            });
+                        }
+                    }
+                }
+            }
+            search_slice = &after_op[tag_end..];
+        }
+        if !out.is_empty() {
+            return out;
+        }
+    }
 
     let Ok(val) = serde_json::from_str::<serde_json::Value>(content) else {
         return out;

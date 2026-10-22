@@ -311,6 +311,14 @@ pub fn draw(app: &mut App, ui: &mut Ui, tool: &str) {
                             ),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Send to Repeater").clicked() {
+                                let host_url = format!("https://{}", conn.host);
+                                let req_with_ws = format!("{}\r\n{}", conn.request.trim_end(), fm.text);
+                                app.panels.repeater.open(&host_url, &req_with_ws);
+                                app.tool = crate::ui::app::REPEATER;
+                                app.view = 0;
+                                app.status = "Sent WebSocket message to Repeater".into();
+                            }
                             if ui.small_button("Copy message").clicked() {
                                 ui.ctx().copy_text(fm.text.clone());
                                 app.status = "Copied WebSocket message payload".into();

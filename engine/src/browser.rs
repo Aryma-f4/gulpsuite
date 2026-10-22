@@ -238,6 +238,7 @@ impl BrowserInstall {
     pub fn launch(&self, config: LaunchConfig) -> Result<BrowserSession, String> {
         config.arguments()?;
         std::fs::create_dir_all(&config.profile_dir).map_err(|e| e.to_string())?;
+        let _ = ensure_dom_invader_extension(&config.profile_dir);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -280,6 +281,69 @@ impl BrowserInstall {
             job,
         })
     }
+}
+
+/// Writes the preloaded Manifest V3 DOM Invader extension (`manifest.json` + `dom_invader.js`)
+/// into the session Chromium profile directory for client-side DOM XSS source/sink,
+/// `postMessage`, DOM clobbering, and prototype pollution instrumentation.
+pub fn ensure_dom_invader_extension(profile_dir: &Path) -> Result<PathBuf, String> {
+    let ext_dir = profile_dir.join("dom-invader-extension");
+    std::fs::create_dir_all(&ext_dir).map_err(|e| e.to_string())?;
+    let manifest = r#"{
+  "manifest_version": 3,
+  "name": "Gulpsuite DOM Invader",
+  "version": "1.0.0",
+  "description": "DOM XSS source/sink tracer, postMessage monitor, and Prototype Pollution scanner for Gulpsuite.",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dom_invader.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
+"#;
+    let content_js = r#"// Gulpsuite DOM Invader — Client-Side Source/Sink, postMessage & Prototype Pollution Monitor
+(function() {
+  const state = {
+    canary: "gulpsuite" + Math.random().toString(36).slice(2, 8),
+    sources: [],
+    sinks: [],
+    messages: [],
+    prototypePollution: []
+  };
+  window.__GULP_DOM_INVADER__ = state;
+
+  for (const [name, val] of [
+    ["location.search", window.location.search],
+    ["location.hash", window.location.hash],
+    ["window.name", window.name],
+    ["document.referrer", document.referrer]
+  ]) {
+    if (val && val.length > 1) {
+      state.sources.push({ source: name, value: val, timestamp: Date.now() });
+    }
+  }
+
+  window.addEventListener("message", function(ev) {
+    state.messages.push({
+      origin: ev.origin,
+      data: typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data),
+      timestamp: Date.now()
+    });
+  }, true);
+
+  const origWrite = document.write;
+  document.write = function(...args) {
+    state.sinks.push({ sink: "document.write", value: args.join(""), timestamp: Date.now() });
+    return origWrite.apply(this, args);
+  };
+})();
+"#;
+    std::fs::write(ext_dir.join("manifest.json"), manifest).map_err(|e| e.to_string())?;
+    std::fs::write(ext_dir.join("dom_invader.js"), content_js).map_err(|e| e.to_string())?;
+    Ok(ext_dir)
 }
 
 pub struct BrowserSession {

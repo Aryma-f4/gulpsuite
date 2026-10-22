@@ -845,13 +845,25 @@ pub fn attach_message_context_menu(
             }
         });
         ui.menu_button("Engagement tools", |ui| {
-            if has_req && ui.button("Generate CSRF PoC").clicked() {
-                app.open_csrf_poc(&url, &req);
+            if !url.is_empty() && ui.button("Find references").clicked() {
+                app.open_find_references(&url);
                 ui.close();
             }
             if ui.button("Discover content").clicked() {
                 app.tool = app::DISCOVER;
                 app.view = 0;
+                ui.close();
+            }
+            if ui.button("Schedule task").clicked() {
+                app.show_schedule_task_modal = true;
+                ui.close();
+            }
+            if has_req && ui.button("Generate CSRF PoC").clicked() {
+                app.open_csrf_poc(&url, &req);
+                ui.close();
+            }
+            if !url.is_empty() && ui.button("Clickbandit (Clickjacking PoC)").clicked() {
+                app.open_clickbandit(&url);
                 ui.close();
             }
             if ui.button("Search").clicked() {
@@ -1428,6 +1440,7 @@ pub fn draw_inspector_and_notes_sidebar(
             Some((k.trim().to_string(), v.trim().to_string()))
         })
         .collect();
+    let req_body_owned = req_body.to_string();
 
     eframe::egui::Frame::new()
         .fill(body_bg)
@@ -1854,6 +1867,22 @@ pub fn draw_inspector_and_notes_sidebar(
                                     attr_changed = true;
                                 }
                             });
+                            if edit_proto.eq_ignore_ascii_case("HTTP/2") {
+                                let host_val = req_headers
+                                    .iter()
+                                    .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+                                    .map(|(_, v)| v.clone())
+                                    .unwrap_or_default();
+                                ui.add_space(2.0);
+                                ui.label(
+                                    RichText::new(format!(
+                                        "HTTP/2 Pseudo-Headers: :method={edit_method}  :scheme=https  :authority={host_val}  :path={edit_path}"
+                                    ))
+                                    .size(10.5)
+                                    .monospace()
+                                    .color(theme.color("ui.text.secondary")),
+                                );
+                            }
                             if attr_changed {
                                 *raw_request = rebuild_http_request(
                                     raw_request,
@@ -1871,6 +1900,112 @@ pub fn draw_inspector_and_notes_sidebar(
                             }
                         },
                     );
+
+                    // 2b. GraphQL Query & Variables Inspector (`working-with-graphql.html`)
+                    if req_body_owned.trim_start().starts_with('{')
+                        && req_body_owned.contains("\"query\"")
+                    {
+                        if let Ok(mut gql_json) =
+                            serde_json::from_str::<serde_json::Value>(req_body_owned.trim())
+                        {
+                            let mut gql_query = gql_json
+                                .get("query")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let mut gql_op = gql_json
+                                .get("operationName")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let mut gql_vars = gql_json
+                                .get("variables")
+                                .map(|v| {
+                                    serde_json::to_string_pretty(v)
+                                        .unwrap_or_else(|_| "{}".into())
+                                })
+                                .unwrap_or_else(|| "{}".into());
+                            let mut gql_changed = false;
+                            draw_inspector_section_header(
+                                ui,
+                                theme,
+                                (id, "sec-graphql"),
+                                "GraphQL",
+                                None,
+                                true,
+                                drill.expand_all,
+                                |ui| {
+                                    ui.label(RichText::new("Operation Name").size(11.0).strong());
+                                    if ui
+                                        .add(
+                                            eframe::egui::TextEdit::singleline(&mut gql_op)
+                                                .font(eframe::egui::TextStyle::Monospace)
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .changed()
+                                    {
+                                        gql_changed = true;
+                                    }
+                                    ui.label(RichText::new("Query").size(11.0).strong());
+                                    if ui
+                                        .add(
+                                            eframe::egui::TextEdit::multiline(&mut gql_query)
+                                                .font(eframe::egui::TextStyle::Monospace)
+                                                .desired_rows(4)
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .changed()
+                                    {
+                                        gql_changed = true;
+                                    }
+                                    ui.label(RichText::new("Variables (JSON)").size(11.0).strong());
+                                    if ui
+                                        .add(
+                                            eframe::egui::TextEdit::multiline(&mut gql_vars)
+                                                .font(eframe::egui::TextStyle::Monospace)
+                                                .desired_rows(3)
+                                                .desired_width(f32::INFINITY),
+                                        )
+                                        .changed()
+                                    {
+                                        gql_changed = true;
+                                    }
+                                },
+                            );
+                            if gql_changed {
+                                if let Some(obj) = gql_json.as_object_mut() {
+                                    obj.insert(
+                                        "query".into(),
+                                        serde_json::Value::String(gql_query),
+                                    );
+                                    if !gql_op.trim().is_empty() {
+                                        obj.insert(
+                                            "operationName".into(),
+                                            serde_json::Value::String(gql_op),
+                                        );
+                                    }
+                                    if let Ok(parsed_vars) =
+                                        serde_json::from_str::<serde_json::Value>(&gql_vars)
+                                    {
+                                        obj.insert("variables".into(), parsed_vars);
+                                    }
+                                }
+                                if let Ok(new_body) = serde_json::to_string(&gql_json) {
+                                    let (head, _) = crate::analysis::split_message(raw_request);
+                                    let updated_req = format!("{head}\r\n\r\n{new_body}");
+                                    *raw_request = rebuild_http_request(
+                                        &updated_req,
+                                        &method,
+                                        &path,
+                                        &proto,
+                                        &query_params,
+                                        None,
+                                        &req_headers,
+                                    );
+                                }
+                            }
+                        }
+                    }
 
                     // 3. Request Query Parameters
                     let mut delete_query: Option<usize> = None;

@@ -570,6 +570,29 @@ pub struct App {
     pub update_status_message: String,
     update_rx: Option<Receiver<crate::updater::UpdateEvent>>,
     update_open_modal_on_check: bool,
+    pub find_references_target: Option<String>,
+    pub clickbandit_target: Option<(String, String)>,
+    pub show_schedule_task_modal: bool,
+    pub schedule_start_time: String,
+    pub schedule_pause_time: String,
+    pub schedule_enabled: bool,
+    pub auto_backup_enabled: bool,
+    pub auto_backup_interval_mins: u64,
+    pub dom_invader_enabled: bool,
+    pub dom_invader_canary: String,
+    pub session_rules: Vec<(bool, String, String, String)>,
+    pub new_session_rule_name: String,
+    pub new_session_rule_header: String,
+    pub upstream_proxy_host: String,
+    pub upstream_proxy_port: String,
+    pub dns_overrides: Vec<(String, String)>,
+    pub new_dns_host: String,
+    pub new_dns_ip: String,
+    pub rest_api_enabled: bool,
+    pub rest_api_port: u16,
+    pub rest_api_key: String,
+    pub detached_tools: std::collections::BTreeSet<usize>,
+    pub hidden_tools: std::collections::BTreeSet<usize>,
 }
 
 impl App {
@@ -709,6 +732,34 @@ impl App {
             ),
             update_rx: None,
             update_open_modal_on_check: false,
+            find_references_target: None,
+            clickbandit_target: None,
+            show_schedule_task_modal: false,
+            schedule_start_time: "09:00".into(),
+            schedule_pause_time: "18:00".into(),
+            schedule_enabled: false,
+            auto_backup_enabled: false,
+            auto_backup_interval_mins: 30,
+            dom_invader_enabled: true,
+            dom_invader_canary: "gulpsuitecanary".into(),
+            session_rules: vec![(
+                true,
+                "Use cookies from Gulp's cookie jar".into(),
+                "Cookie jar".into(),
+                "Proxy, Repeater, Scanner, Intruder".into(),
+            )],
+            new_session_rule_name: String::new(),
+            new_session_rule_header: String::new(),
+            upstream_proxy_host: String::new(),
+            upstream_proxy_port: String::new(),
+            dns_overrides: Vec::new(),
+            new_dns_host: String::new(),
+            new_dns_ip: String::new(),
+            rest_api_enabled: false,
+            rest_api_port: 1337,
+            rest_api_key: String::new(),
+            detached_tools: Default::default(),
+            hidden_tools: Default::default(),
             runtime,
         }
         .tuned()
@@ -2284,6 +2335,96 @@ impl App {
         self.status = format!("Generated CSRF PoC for {url}");
     }
 
+    /// Opens the Engagement tools -> Find references modal for `url`.
+    pub fn open_find_references(&mut self, url: &str) {
+        self.find_references_target = Some(url.to_string());
+        self.status = format!("Searching references to {url}");
+    }
+
+    /// Opens the Clickbandit Clickjacking PoC generator modal for `url`.
+    pub fn open_clickbandit(&mut self, url: &str) {
+        let html = Self::generate_clickbandit_html(url);
+        self.clickbandit_target = Some((url.to_string(), html));
+        self.status = format!("Generated Clickbandit Clickjacking PoC for {url}");
+    }
+
+    /// Generates a self-contained Clickbandit Clickjacking PoC HTML document with adjustable opacity.
+    pub fn generate_clickbandit_html(target_url: &str) -> String {
+        format!(
+            "<!doctype html>\n\
+             <html><head><meta charset=\"utf-8\"><title>Gulpsuite Clickbandit PoC</title>\n\
+             <style>\n\
+             body {{ font-family: -apple-system, sans-serif; margin: 0; background: #1e2228; color: #fff; }}\n\
+             #banner {{ display: flex; align-items: center; gap: 14px; padding: 10px 18px; background: #f56700; color: #fff; font-weight: 600; }}\n\
+             #stage {{ position: relative; width: 1024px; height: 680px; margin: 20px auto; background: #fff; overflow: hidden; border-radius: 6px; }}\n\
+             iframe {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; opacity: 0.45; z-index: 2; }}\n\
+             #decoy {{ position: absolute; top: 180px; left: 320px; z-index: 1; padding: 14px 28px; background: #26649d; color: #fff; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; }}\n\
+             </style></head><body>\n\
+             <div id=\"banner\">\n\
+               <span>Gulpsuite Clickbandit — Clickjacking PoC</span>\n\
+               <label>Iframe Opacity: <input type=\"range\" min=\"0\" max=\"100\" value=\"45\" oninput=\"document.getElementById('f').style.opacity=this.value/100\"></label>\n\
+             </div>\n\
+             <div id=\"stage\">\n\
+               <div id=\"decoy\">Click Here to Claim Reward</div>\n\
+               <iframe id=\"f\" src=\"{target_url}\"></iframe>\n\
+             </div>\n\
+             </body></html>\n"
+        )
+    }
+
+    /// Starts the local headless REST API server on `127.0.0.1:{self.rest_api_port}`.
+    pub fn start_rest_api(&mut self) {
+        let port = self.rest_api_port;
+        let api_key = self.rest_api_key.trim().to_string();
+        let issues_count = self.workspace.issues.len();
+        let tasks_count = self.workspace.tasks.len();
+        self.runtime.handle().spawn(async move {
+            let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await else {
+                return;
+            };
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let key = api_key.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buf = [0u8; 4096];
+                    let Ok(n) = stream.read(&mut buf).await else { return };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = req.lines().next().unwrap_or("");
+                    let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+                    if !key.is_empty() && !req.contains(&key) {
+                        let body = "{\"error\":\"unauthorized\"}";
+                        let resp = format!(
+                            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(resp.as_bytes()).await;
+                        return;
+                    }
+                    let body = if path.contains("issue_definitions") {
+                        serde_json::to_string(crate::issue_definitions::all()).unwrap_or_else(|_| "[]".into())
+                    } else {
+                        serde_json::json!({
+                            "product": "Gulpsuite",
+                            "tagline": "Gulp it before burp",
+                            "version": crate::updater::CURRENT_VERSION,
+                            "tasks": tasks_count,
+                            "issues": issues_count,
+                            "status": "running"
+                        })
+                        .to_string()
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        self.rest_api_enabled = true;
+        self.status = format!("Started Gulpsuite REST API on http://127.0.0.1:{port}/v0.1/");
+    }
+
     /// Launches a crawl + active/passive scan of `url` and registers the task on the Dashboard.
     pub fn scan_url(&mut self, url: &str, active: bool) {
         self.panels.scanner.seed = url.to_string();
@@ -2922,6 +3063,15 @@ impl App {
                     }
                 }
                 ui.separator();
+                if ui.button("Detach current tool window").clicked() {
+                    self.detached_tools.insert(self.tool);
+                    ui.close();
+                }
+                if !self.detached_tools.is_empty() && ui.button("Reattach all tool windows").clicked() {
+                    self.detached_tools.clear();
+                    ui.close();
+                }
+                ui.separator();
                 if ui.button("Event log").clicked() {
                     self.shell.toggle_drawer(crate::ui::drawers::DrawerKind::EventLog);
                     ui.close();
@@ -3303,6 +3453,130 @@ impl App {
                 self.csrf_poc = None;
             }
         }
+        if let Some(ref_url) = self.find_references_target.clone() {
+            let mut open = true;
+            eframe::egui::Window::new("Engagement tools — Find references")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([680.0, 380.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        eframe::egui::RichText::new(format!("References to: {ref_url}")).strong(),
+                    );
+                    ui.separator();
+                    let needle = ref_url.to_lowercase();
+                    let mut jump_req: Option<(String, String)> = None;
+                    eframe::egui::ScrollArea::vertical()
+                        .id_salt("find-refs-scroll")
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            eframe::egui::Grid::new("find-refs-grid")
+                                .num_columns(4)
+                                .striped(true)
+                                .show(ui, |ui| {
+                                    ui.strong("Method");
+                                    ui.strong("Referrer URL");
+                                    ui.strong("Status");
+                                    ui.strong("Action");
+                                    ui.end_row();
+                                    for tx in &self.log {
+                                        if tx.response.to_lowercase().contains(&needle)
+                                            || tx.request.to_lowercase().contains(&needle)
+                                        {
+                                            ui.monospace(&tx.method);
+                                            ui.monospace(&tx.target);
+                                            ui.label(tx.status.to_string());
+                                            if ui.small_button("Send to Repeater").clicked() {
+                                                jump_req =
+                                                    Some((tx.target.clone(), tx.request.clone()));
+                                            }
+                                            ui.end_row();
+                                        }
+                                    }
+                                });
+                        });
+                    if let Some((u, r)) = jump_req {
+                        self.panels.repeater.open(&u, &r);
+                        self.go(REPEATER, 0);
+                    }
+                });
+            if !open {
+                self.find_references_target = None;
+            }
+        }
+        if let Some((mut cb_url, mut cb_html)) = self.clickbandit_target.clone() {
+            let mut open = true;
+            eframe::egui::Window::new("Clickbandit — Clickjacking PoC Generator")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([700.0, 440.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Target URL:");
+                        if ui.text_edit_singleline(&mut cb_url).changed() {
+                            cb_html = Self::generate_clickbandit_html(&cb_url);
+                        }
+                        if ui.button("Copy Clickbandit HTML").clicked() {
+                            ui.ctx().copy_text(cb_html.clone());
+                            self.status = "Copied Clickbandit Clickjacking PoC HTML".into();
+                        }
+                        if ui.button("Open in browser").clicked() {
+                            self.open_browser();
+                        }
+                    });
+                    ui.separator();
+                    ui.add(
+                        eframe::egui::TextEdit::multiline(&mut cb_html)
+                            .font(TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(16),
+                    );
+                });
+            if open {
+                self.clickbandit_target = Some((cb_url, cb_html));
+            } else {
+                self.clickbandit_target = None;
+            }
+        }
+        if self.show_schedule_task_modal {
+            let mut open = true;
+            eframe::egui::Window::new("Schedule task")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([440.0, 220.0])
+                .show(ctx, |ui| {
+                    ui.burp_checkbox(
+                        &mut self.schedule_enabled,
+                        "Enable automatic task start / pause schedule",
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Start tasks at (HH:MM):");
+                        ui.text_edit_singleline(&mut self.schedule_start_time);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Pause tasks at (HH:MM):");
+                        ui.text_edit_singleline(&mut self.schedule_pause_time);
+                    });
+                });
+            self.show_schedule_task_modal = open;
+        }
+        for tool_idx in self.detached_tools.clone() {
+            let mut open = true;
+            let title = format!("Gulpsuite — {} (Detached)", TOOLS.get(tool_idx).copied().unwrap_or("Tool"));
+            eframe::egui::Window::new(title)
+                .open(&mut open)
+                .resizable(true)
+                .default_size([920.0, 580.0])
+                .show(ctx, |ui| {
+                    let prev_tool = self.tool;
+                    self.tool = tool_idx;
+                    super::panels::draw(self, ui);
+                    self.tool = prev_tool;
+                });
+            if !open {
+                self.detached_tools.remove(&tool_idx);
+            }
+        }
     }
 
     /// Complete Settings dialog (`settings-panel-01.jpg`, `settings/index.html`, `settings/tools/proxy.html`):
@@ -3554,6 +3828,35 @@ impl App {
                                 ui.label(format!("• Memory usage: {}", self.memory_text));
                                 ui.label(format!("• Proxy history ring capacity: {} entries ({} KB per body)", LOG_CAPACITY, LOG_BODY_LIMIT / 1024));
                                 ui.label(format!("• Organizer store capacity: {} items", ORGANIZER_CAPACITY));
+                                ui.add_space(8.0);
+                                ui.separator();
+                                super::panels::heading(ui, &theme, "REST API service");
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Service port:");
+                                    ui.add(
+                                        eframe::egui::DragValue::new(&mut self.rest_api_port)
+                                            .range(1024..=65535),
+                                    );
+                                    ui.label("API key:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(&mut self.rest_api_key)
+                                            .hint_text("Optional API key")
+                                            .desired_width(150.0),
+                                    );
+                                    if ui
+                                        .add_enabled(
+                                            !self.rest_api_enabled,
+                                            eframe::egui::Button::new(if self.rest_api_enabled {
+                                                "REST API Running"
+                                            } else {
+                                                "Start REST API"
+                                            }),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.start_rest_api();
+                                    }
+                                });
                                 ui.add_space(10.0);
                                 ui.separator();
                                 self.draw_update_ui(ui);
@@ -3762,7 +4065,7 @@ impl App {
                                 super::panels::muted(
                                     ui,
                                     &theme,
-                                    "Runs in an isolated per-session profile pre-configured with --proxy-server and --ignore-certificate-errors-spki-list.",
+                                    "Runs in an isolated per-session profile pre-configured with --proxy-server, --ignore-certificate-errors-spki-list, and the preloaded Gulpsuite DOM Invader extension.",
                                 );
                                 if let Ok(pin) = self.proxy.browser_ca_pin() {
                                     ui.horizontal(|ui| {
@@ -3770,6 +4073,14 @@ impl App {
                                         ui.monospace(&pin);
                                     });
                                 }
+                                ui.burp_checkbox(
+                                    &mut self.dom_invader_enabled,
+                                    "Enable Gulpsuite DOM Invader extension (DOM XSS source/sink, postMessage & Prototype Pollution scanner)",
+                                );
+                                ui.horizontal(|ui| {
+                                    ui.label("DOM Invader canary:");
+                                    ui.text_edit_singleline(&mut self.dom_invader_canary);
+                                });
                                 if ui.button("Open integrated Chromium browser").clicked() {
                                     self.open_browser();
                                 }
@@ -3792,13 +4103,30 @@ impl App {
                                     &mut self.panels.logger.only_errors,
                                     "Logger: record only 4xx/5xx error responses",
                                 );
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Automatic project backup & Task scheduler").strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.burp_checkbox(
+                                        &mut self.auto_backup_enabled,
+                                        "Automatically back up project every (minutes):",
+                                    );
+                                    ui.add(
+                                        eframe::egui::DragValue::new(
+                                            &mut self.auto_backup_interval_mins,
+                                        )
+                                        .range(5..=240),
+                                    );
+                                    if ui.button("Schedule tasks…").clicked() {
+                                        self.show_schedule_task_modal = true;
+                                    }
+                                });
                             }
                             10 => {
                                 super::panels::heading(ui, &theme, "Sessions — Cookie jar & Session handling");
                                 super::panels::muted(
                                     ui,
                                     &theme,
-                                    "The proxy automatically learns cookies from Set-Cookie headers and replays them on matching requests.",
+                                    "The proxy automatically learns cookies from Set-Cookie headers and applies session handling rules & macros.",
                                 );
                                 ui.horizontal(|ui| {
                                     if ui.button("Evict expired cookies").clicked() {
@@ -3810,6 +4138,55 @@ impl App {
                                         self.status = "Cleared session cookie jar".into();
                                     }
                                     ui.label(format!("{} cookie(s) stored", self.proxy.cookies().len()));
+                                });
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Session handling rules & Macros").strong());
+                                eframe::egui::Grid::new("session-handling-rules-grid")
+                                    .num_columns(4)
+                                    .striped(true)
+                                    .show(ui, |ui| {
+                                        ui.strong("Enabled");
+                                        ui.strong("Rule description");
+                                        ui.strong("Action");
+                                        ui.strong("Scope / Header");
+                                        ui.end_row();
+                                        for (en, name, act, hdr) in &mut self.session_rules {
+                                            ui.checkbox(en, "");
+                                            ui.label(name.as_str());
+                                            ui.label(act.as_str());
+                                            ui.monospace(hdr.as_str());
+                                            ui.end_row();
+                                        }
+                                    });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Rule name:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.new_session_rule_name,
+                                        )
+                                        .hint_text("Attach custom auth token")
+                                        .desired_width(160.0),
+                                    );
+                                    ui.label("Header / Macro URL:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.new_session_rule_header,
+                                        )
+                                        .hint_text("X-Auth-Token: secret")
+                                        .desired_width(160.0),
+                                    );
+                                    if ui.button("Add rule").clicked()
+                                        && !self.new_session_rule_name.trim().is_empty()
+                                    {
+                                        self.session_rules.push((
+                                            true,
+                                            self.new_session_rule_name.trim().to_string(),
+                                            "Set header / Run macro".into(),
+                                            self.new_session_rule_header.trim().to_string(),
+                                        ));
+                                        self.new_session_rule_name.clear();
+                                        self.new_session_rule_header.clear();
+                                    }
                                 });
                             }
                             11 => {
@@ -3887,6 +4264,53 @@ impl App {
                                     ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_2, "TLSv1.2");
                                     ui.checkbox(&mut self.panels.proxy_panel.tls_proto_1_3, "TLSv1.3");
                                 });
+                                ui.separator();
+                                ui.label(eframe::egui::RichText::new("Upstream proxy & Custom DNS overrides").strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Upstream proxy host:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.upstream_proxy_host,
+                                        )
+                                        .hint_text("127.0.0.1")
+                                        .desired_width(120.0),
+                                    );
+                                    ui.label("Port:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(
+                                            &mut self.upstream_proxy_port,
+                                        )
+                                        .hint_text("9050")
+                                        .desired_width(64.0),
+                                    );
+                                    ui.separator();
+                                    ui.label("DNS override host:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(&mut self.new_dns_host)
+                                            .hint_text("internal.corp")
+                                            .desired_width(120.0),
+                                    );
+                                    ui.label("→ IP:");
+                                    ui.add(
+                                        eframe::egui::TextEdit::singleline(&mut self.new_dns_ip)
+                                            .hint_text("10.0.0.12")
+                                            .desired_width(100.0),
+                                    );
+                                    if ui.button("Add DNS override").clicked()
+                                        && !self.new_dns_host.trim().is_empty()
+                                        && !self.new_dns_ip.trim().is_empty()
+                                    {
+                                        self.dns_overrides.push((
+                                            self.new_dns_host.trim().to_string(),
+                                            self.new_dns_ip.trim().to_string(),
+                                        ));
+                                        self.new_dns_host.clear();
+                                        self.new_dns_ip.clear();
+                                    }
+                                });
+                                for (h, ip) in &self.dns_overrides {
+                                    ui.monospace(format!("{h} → {ip}"));
+                                }
                                 ui.separator();
                                 if let Some(path) = self.proxy.authority_path() {
                                     ui.horizontal_wrapped(|ui| {
