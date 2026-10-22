@@ -256,6 +256,16 @@ def build_linux_appimage(layout, artifact, version):
             '#!/bin/sh\n'
             'HERE="$(dirname "$(readlink -f "$0")")"\n'
             'export APPDIR="$HERE"\n'
+            'if [ "${1:-}" = "--install" ]; then\n'
+            '  mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/512x512/apps"\n'
+            '  SRC="${APPIMAGE:-$HERE/usr/opt/gulpsuite/gulpsuite}"\n'
+            '  cp -f "$SRC" "$HOME/.local/bin/gulpsuite"\n'
+            '  chmod 0755 "$HOME/.local/bin/gulpsuite"\n'
+            '  [ -f "$HERE/gulpsuite.png" ] && cp -f "$HERE/gulpsuite.png" "$HOME/.local/share/icons/hicolor/512x512/apps/gulpsuite.png"\n'
+            '  sed "s|^Exec=.*|Exec=$HOME/.local/bin/gulpsuite --appimage-extract-and-run|" "$HERE/gulpsuite.desktop" > "$HOME/.local/share/applications/gulpsuite.desktop"\n'
+            '  echo "Installed Gulpsuite to ~/.local/bin/gulpsuite and desktop launcher."\n'
+            '  exit 0\n'
+            'fi\n'
             'exec "$HERE/usr/opt/gulpsuite/gulpsuite" "$@"\n'
         )
         apprun.chmod(0o755)

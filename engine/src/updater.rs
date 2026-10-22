@@ -127,13 +127,25 @@ pub fn select_installer_asset(assets: &[ReleaseAsset], platform: &str) -> Option
             "macos-x64.tar.gz",
         ],
         "windows-x64" => &["windows-x64-setup.exe", "windows-x64.zip", ".exe"],
-        "linux-x64" => &[
-            "x86_64.appimage",
-            "linux-x64-setup.run",
-            ".pkg.tar.gz",
-            "_amd64.deb",
-            "linux-x64.tar.gz",
-        ],
+        "linux-x64" => {
+            if std::env::var_os("APPIMAGE").is_some() {
+                &[
+                    "x86_64.appimage",
+                    "linux-x64-setup.run",
+                    ".pkg.tar.gz",
+                    "_amd64.deb",
+                    "linux-x64.tar.gz",
+                ]
+            } else {
+                &[
+                    "linux-x64-setup.run",
+                    "x86_64.appimage",
+                    ".pkg.tar.gz",
+                    "_amd64.deb",
+                    "linux-x64.tar.gz",
+                ]
+            }
+        }
         _ => &[],
     };
 
@@ -515,12 +527,23 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         if name.ends_with(".appimage") {
+            if let Some(current_appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
+                let _ = std::fs::copy(installer_path, &current_appimage);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &current_appimage,
+                        std::fs::Permissions::from_mode(0o755),
+                    );
+                }
+            }
             std::process::Command::new(installer_path)
-                .arg("--install")
+                .arg("--appimage-extract-and-run")
                 .spawn()
-                .map_err(|e| format!("Failed to install AppImage {}: {e}", name))?;
+                .map_err(|e| format!("Failed to launch updated AppImage {}: {e}", name))?;
             return Ok(format!(
-                "Installed Gulpsuite AppImage: {}",
+                "Updated and launched Gulpsuite AppImage: {}",
                 installer_path.display()
             ));
         }
