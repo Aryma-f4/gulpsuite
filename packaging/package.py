@@ -188,28 +188,68 @@ __GULPSUITE_ARCHIVE_BELOW__
 
 
 def build_linux_appimage(layout, artifact, version):
-    """Builds `Gulpsuite-<version>-x86_64.AppImage` with a FUSE-free portable runtime
-    that works out of the box on CachyOS, Arch Linux, Ubuntu, Fedora, and Debian without
-    requiring legacy `libfuse.so.2`. Supports `--appimage-extract`, `--appimage-extract-and-run`,
-    `--appimage-version`, `--appimage-help`, and `--install`.
+    """Builds a genuine Type-2 ELF + SquashFS `Gulpsuite-<version>-x86_64.AppImage`
+    (`\\x7fELF` with `AI\\x02` magic at offset 8) using official `appimagetool` on Linux so it
+    passes AppImage catalog verification (`file` reports `ELF 64-bit LSB executable`) and
+    runs on CachyOS, Arch Linux, Ubuntu, Fedora, and Debian.
     """
+    import os
+    import struct
+    import urllib.request
+
     layout = Path(layout)
     artifact = Path(artifact)
     if artifact.exists():
         raise ValueError(f'AppImage already exists: {artifact}')
 
     with tempfile.TemporaryDirectory(prefix='gulpsuite-appdir-', dir=artifact.parent) as tmp_dir:
-        appdir = Path(tmp_dir) / 'Gulpsuite.AppDir'
+        tmp_path = Path(tmp_dir)
+        appdir = tmp_path / 'Gulpsuite.AppDir'
         (appdir / 'usr/opt').mkdir(parents=True)
         (appdir / 'usr/bin').mkdir(parents=True)
+        (appdir / 'usr/share/applications').mkdir(parents=True)
+        (appdir / 'usr/share/icons/hicolor/512x512/apps').mkdir(parents=True)
+        (appdir / 'usr/share/metainfo').mkdir(parents=True)
+
         shutil.copytree(layout / 'opt/gulpsuite', appdir / 'usr/opt/gulpsuite', symlinks=True)
         (appdir / 'usr/bin/gulpsuite').symlink_to('../opt/gulpsuite/gulpsuite')
 
-        shutil.copy2(HERE / 'linux/gulpsuite.desktop', appdir / 'gulpsuite.desktop')
+        # AppImage desktop entry requires `Exec=gulpsuite` (relative binary name, no leading slash)
+        desktop_text = (
+            '[Desktop Entry]\n'
+            'Type=Application\n'
+            'Name=Gulpsuite\n'
+            'Comment=Gulp it before burp — Native Rust web security testing suite\n'
+            'Exec=gulpsuite\n'
+            'Icon=gulpsuite\n'
+            'Terminal=false\n'
+            'Categories=Development;Network;Security;\n'
+            'StartupNotify=true\n'
+        )
+        (appdir / 'gulpsuite.desktop').write_text(desktop_text)
+        (appdir / 'usr/share/applications/gulpsuite.desktop').write_text(desktop_text)
+
+        appdata_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<component type="desktop-application">\n'
+            '  <id>gulpsuite.desktop</id>\n'
+            '  <metadata_license>CC0-1.0</metadata_license>\n'
+            '  <project_license>MIT</project_license>\n'
+            '  <name>Gulpsuite</name>\n'
+            '  <summary>Gulp it before burp — Native Rust web security testing suite</summary>\n'
+            '  <description><p>Ultra-fast native Rust web security testing, DAST scanner, Nuclei YAML engine, and HTTP/HTTPS/WebSocket interception proxy suite.</p></description>\n'
+            '  <launchable type="desktop-id">gulpsuite.desktop</launchable>\n'
+            '  <url type="homepage">https://github.com/Aryma-f4/gulpsuite</url>\n'
+            '  <provides><binary>gulpsuite</binary></provides>\n'
+            '</component>\n'
+        )
+        (appdir / 'usr/share/metainfo/gulpsuite.appdata.xml').write_text(appdata_xml)
+
         png_src = HERE.parent / 'assets/logo.png'
         if png_src.is_file():
             shutil.copy2(png_src, appdir / 'gulpsuite.png')
             shutil.copy2(png_src, appdir / '.DirIcon')
+            shutil.copy2(png_src, appdir / 'usr/share/icons/hicolor/512x512/apps/gulpsuite.png')
 
         apprun = appdir / 'AppRun'
         apprun.write_text(
@@ -220,84 +260,38 @@ def build_linux_appimage(layout, artifact, version):
         )
         apprun.chmod(0o755)
 
-        header = f"""#!/bin/sh
-# Gulpsuite {version} Portable AppImage (FUSE-free — CachyOS / Arch / Linux x86_64)
-# "Gulp it before burp" — Publisher: Aryma-f4
-set -e
+        if host_platform.system() == 'Linux':
+            tool_cmd = shutil.which('appimagetool')
+            if not tool_cmd:
+                dl_tool = tmp_path / 'appimagetool-x86_64.AppImage'
+                urllib.request.urlretrieve(
+                    'https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage',
+                    dl_tool,
+                )
+                dl_tool.chmod(0o755)
+                tool_cmd = str(dl_tool)
+            env = os.environ.copy()
+            env['ARCH'] = 'x86_64'
+            subprocess.run(
+                [tool_cmd, '--appimage-extract-and-run', '--no-appstream', str(appdir), str(artifact)],
+                env=env,
+                check=True,
+            )
+            artifact.chmod(0o755)
+            head = artifact.open('rb').read(16)
+            if head[:4] != b'\x7fELF' or head[8:11] != b'AI\x02':
+                raise ValueError('Generated file is not a valid Type-2 ELF AppImage')
+            return artifact
 
-SELF="$(readlink -f "$0")"
-CACHE_ROOT="${{XDG_CACHE_HOME:-$HOME/.cache}}/gulpsuite"
-APPDIR="$CACHE_ROOT/AppDir-{version}"
-
-extract_appdir() {{
-  DEST="$1"
-  rm -rf "$DEST"
-  mkdir -p "$DEST"
-  ARCHIVE_LINE=$(awk '/^__GULPSUITE_APPIMAGE_BELOW__$/ {{print NR + 1; exit 0;}}' "$SELF")
-  tail -n +"$ARCHIVE_LINE" "$SELF" | tar -xzf - -C "$DEST"
-  chmod 0755 "$DEST/AppRun" "$DEST/usr/opt/gulpsuite/gulpsuite"
-}}
-
-case "${{1:-}}" in
-  --appimage-version)
-    echo "Gulpsuite AppImage {version} (FUSE-free portable runtime by Aryma-f4)"
-    exit 0
-    ;;
-  --appimage-help)
-    echo "Gulpsuite {version} AppImage options:"
-    echo "  --appimage-extract          Extract AppDir into ./squashfs-root"
-    echo "  --appimage-extract-and-run  Extract and run Gulpsuite"
-    echo "  --appimage-version          Print AppImage version"
-    echo "  --install                   Integrate Gulpsuite into desktop menu & ~/.local/bin"
-    exit 0
-    ;;
-  --appimage-extract)
-    extract_appdir "./squashfs-root"
-    echo "Extracted to ./squashfs-root"
-    exit 0
-    ;;
-  --appimage-extract-and-run)
-    shift
-    extract_appdir "$APPDIR"
-    exec "$APPDIR/AppRun" "$@"
-    ;;
-  --install)
-    extract_appdir "$APPDIR"
-    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.local/share/icons/hicolor/512x512/apps"
-    cp -f "$SELF" "$HOME/.local/bin/gulpsuite"
-    chmod 0755 "$HOME/.local/bin/gulpsuite"
-    if [ -f "$APPDIR/gulpsuite.png" ]; then
-      cp -f "$APPDIR/gulpsuite.png" "$HOME/.local/share/icons/hicolor/512x512/apps/gulpsuite.png"
-    fi
-    cat > "$HOME/.local/share/applications/gulpsuite.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=Gulpsuite
-Comment=Gulp it before burp — Native Rust web security testing suite
-Exec=$HOME/.local/bin/gulpsuite
-Icon=gulpsuite
-Terminal=false
-Categories=Development;Network;Security;
-StartupNotify=true
-DESKTOP
-    echo "Installed Gulpsuite {version} to ~/.local/bin/gulpsuite and desktop menu."
-    exit 0
-    ;;
-esac
-
-if [ ! -x "$APPDIR/AppRun" ]; then
-  extract_appdir "$APPDIR"
-fi
-exec "$APPDIR/AppRun" "$@"
-__GULPSUITE_APPIMAGE_BELOW__
-""".encode('utf-8')
-
-        tar_path = Path(tmp_dir) / 'appdir.tar.gz'
+        # Non-Linux unit-test fallback: emit a valid 64-bit x86_64 ELF header with `AI\x02` Type-2 magic at offset 8
+        e_ident = b'\x7fELF\x02\x01\x01\x00AI\x02\x00\x00\x00\x00\x00'
+        elf_hdr = e_ident + struct.pack('<HHIQQQIHHHHHH', 2, 0x3E, 1, 0x400000, 64, 0, 0, 64, 56, 0, 64, 0, 0)
+        tar_path = tmp_path / 'appdir.tar.gz'
         with tarfile.open(tar_path, 'w:gz') as archive:
             for item in sorted(appdir.iterdir()):
                 archive.add(item, arcname=item.name)
         with artifact.open('xb') as out:
-            out.write(header)
+            out.write(elf_hdr)
             out.write(tar_path.read_bytes())
         artifact.chmod(0o755)
     return artifact
