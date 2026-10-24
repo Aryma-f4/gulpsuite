@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to upload installers to (e.g. v0.0.7)'
+        description: 'Release tag to upload installers to (e.g. v0.0.8)'
         required: true
-        default: 'v0.0.7'
+        default: 'v0.0.8'
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}

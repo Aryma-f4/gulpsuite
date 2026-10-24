@@ -1,6 +1,6 @@
 # Maintainer: Aryma-f4 <https://github.com/Aryma-f4/gulpsuite>
 pkgname=gulpsuite
-pkgver=0.0.7
+pkgver=0.0.8
 pkgrel=1
 pkgdesc="Gulp it before burp — Ultra-fast native Rust web security testing, DAST scanner, Nuclei engine & HTTP/HTTPS/WebSocket proxy suite"
 arch=('x86_64')
