@@ -837,16 +837,6 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                     FontId::proportional(12.0),
                                     txt_col,
                                 );
-                                if !hit_snapshot.read {
-                                    // Faux bold pass for unread Collaborator rows
-                                    clip_p.text(
-                                        pos2(text_pos.x + 0.5, text_pos.y),
-                                        egui::Align2::LEFT_CENTER,
-                                        val,
-                                        FontId::proportional(12.0),
-                                        txt_col,
-                                    );
-                                }
                                 cx = cell_r.right();
                             }
 

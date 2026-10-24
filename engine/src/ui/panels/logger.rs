@@ -131,8 +131,15 @@ fn http(app: &mut App, ui: &mut Ui) {
         .enumerate()
         .rev()
         .take(500)
-        .filter(|(_, tx)| !errors_only || tx.status >= 400)
-        .filter(|(_, tx)| filter.is_empty() || tx.target.to_lowercase().contains(&filter))
+        .filter(|(_, tx)| !errors_only || tx.status >= 400 || tx.status == 0)
+        .filter(|(_, tx)| {
+            filter.is_empty()
+                || tx.target.to_lowercase().contains(&filter)
+                || tx.method.to_lowercase().contains(&filter)
+                || tx.status.to_string().contains(&filter)
+                || tx.request.to_lowercase().contains(&filter)
+                || tx.response.to_lowercase().contains(&filter)
+        })
         .collect();
 
     if rows.is_empty() {
@@ -169,6 +176,14 @@ fn http(app: &mut App, ui: &mut Ui) {
         });
     }
 
+    if app.panels.logger.selected.is_none()
+        || !rows
+            .iter()
+            .any(|(idx, _)| Some(*idx) == app.panels.logger.selected)
+    {
+        app.panels.logger.selected = rows.first().map(|(idx, _)| *idx);
+    }
+
     let table_h = if app.panels.logger.selected.is_some() {
         app.panels
             .logger
@@ -180,7 +195,7 @@ fn http(app: &mut App, ui: &mut Ui) {
     eframe::egui::ScrollArea::vertical()
         .id_salt("logger-table-scroll")
         .max_height(table_h)
-        .stick_to_bottom(true)
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             eframe::egui::Grid::new("logger-grid")
                 .num_columns(6)

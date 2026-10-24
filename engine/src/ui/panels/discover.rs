@@ -104,13 +104,31 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 fn start(app: &mut App) {
     let paths = crate::discover::paths_from(&app.panels.discover_paths);
     // `host` is recorded as host:port, which is what the probe needs; `target` is only a path.
-    let hosts = crate::discover::hosts_from(app.log.iter().map(|tx| {
+    let mut hosts = crate::discover::hosts_from(app.log.iter().map(|tx| {
         if tx.secure {
             format!("https://{}", tx.host)
         } else {
             format!("http://{}", tx.host)
         }
     }));
+    if hosts.is_empty() {
+        let mut fallback_seeds = Vec::new();
+        for cand in [
+            app.panels.scanner.seed.trim(),
+            app.panels.repeater.active().host.trim(),
+        ] {
+            if cand.starts_with("http://") || cand.starts_with("https://") {
+                fallback_seeds.push(cand.to_string());
+            }
+        }
+        for rule in app.panels.target_panel.scope.split([',', '\n']) {
+            let trimmed = rule.trim();
+            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                fallback_seeds.push(trimmed.to_string());
+            }
+        }
+        hosts = crate::discover::hosts_from(fallback_seeds.into_iter());
+    }
     if hosts.is_empty() || paths.is_empty() {
         app.status = "Discover needs history to work from and at least one path".into();
         return;

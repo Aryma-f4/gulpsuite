@@ -1719,87 +1719,70 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
         rows.sort_by_key(|row| row.index);
     }
 
-    // 8 Burp Suite Pro v2026.3.3 columns (`Request`, `Payload`, `Status`, `Length`, `Time (ms)`, `Error`, `Timeout`, `Result`)
-    egui::Grid::new("intruder-results-heading")
-        .num_columns(8)
-        .min_col_width(64.0)
-        .show(ui, |ui| {
-            for (col_idx, name) in [
-                "Request",
-                "Payload",
-                "Status",
-                "Length",
-                "Time (ms)",
-                "Error",
-                "Timeout",
-                "Result",
-            ]
+    if app.panels.intruder.selected.is_none()
+        || !rows
             .iter()
-            .enumerate()
-            {
-                let active = app.panels.intruder.sort_column == Some(col_idx);
-                let label_text = if active {
-                    if app.panels.intruder.sort_ascending {
-                        format!("{name} ▲")
-                    } else {
-                        format!("{name} ▼")
-                    }
-                } else {
-                    (*name).to_string()
-                };
-                if ui
-                    .selectable_label(active, egui::RichText::new(label_text).strong())
-                    .clicked()
-                {
-                    if app.panels.intruder.sort_column == Some(col_idx) {
-                        if app.panels.intruder.sort_ascending {
-                            app.panels.intruder.sort_ascending = false;
-                        } else {
-                            app.panels.intruder.sort_column = None;
-                            app.panels.intruder.sort_ascending = true;
-                        }
-                    } else {
-                        app.panels.intruder.sort_column = Some(col_idx);
-                        app.panels.intruder.sort_ascending = true;
-                    }
-                }
-            }
-        });
+            .any(|r| Some(r.index) == app.panels.intruder.selected)
+    {
+        app.panels.intruder.selected = rows.first().map(|r| r.index);
+    }
 
+    // 8 Burp Suite Pro v2026.3.3 columns (`Request`, `Payload`, `Status`, `Length`, `Time (ms)`, `Error`, `Timeout`, `Result`)
     let results_h = app.panels.intruder.results_height;
     egui::ScrollArea::both()
         .id_salt("intruder-results")
         .max_height(results_h)
-        .show_rows(ui, 20.0, rows.len(), |ui, range| {
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
             egui::Grid::new("intruder-results-grid")
                 .num_columns(8)
                 .min_col_width(64.0)
-                .max_col_width(150.0)
                 .striped(true)
                 .show(ui, |ui| {
-                    for row in &rows[range] {
-                        let r_sel = ui
-                            .push_id(row.index, |ui| {
-                                ui.selectable_label(
-                                    app.panels.intruder.selected == Some(row.index),
-                                    row.index.to_string(),
-                                )
-                            })
-                            .inner;
-                        if r_sel.clicked() {
-                            app.panels.intruder.selected = Some(row.index);
-                        }
-                        let r_pay = ui.label(row.payloads.join(" | "));
-                        ui.label(row.status.to_string());
-                        ui.label(row.length.to_string());
-                        ui.label(row.elapsed_ms.to_string());
-                        ui.label(if row.error.is_some() { "✓" } else { "" });
-                        ui.label(if row.timed_out { "✓" } else { "" });
-                        ui.label(row.error.as_deref().unwrap_or(if row.matched {
-                            "match"
+                    for (col_idx, name) in [
+                        "Request",
+                        "Payload",
+                        "Status",
+                        "Length",
+                        "Time (ms)",
+                        "Error",
+                        "Timeout",
+                        "Result",
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let active = app.panels.intruder.sort_column == Some(col_idx);
+                        let label_text = if active {
+                            if app.panels.intruder.sort_ascending {
+                                format!("{name} ▲")
+                            } else {
+                                format!("{name} ▼")
+                            }
                         } else {
-                            &row.comment
-                        }));
+                            (*name).to_string()
+                        };
+                        if ui
+                            .selectable_label(active, egui::RichText::new(label_text).strong())
+                            .clicked()
+                        {
+                            if app.panels.intruder.sort_column == Some(col_idx) {
+                                if app.panels.intruder.sort_ascending {
+                                    app.panels.intruder.sort_ascending = false;
+                                } else {
+                                    app.panels.intruder.sort_column = None;
+                                    app.panels.intruder.sort_ascending = true;
+                                }
+                            } else {
+                                app.panels.intruder.sort_column = Some(col_idx);
+                                app.panels.intruder.sort_ascending = true;
+                            }
+                        }
+                    }
+                    ui.end_row();
+
+                    for row in rows.iter().take(500) {
+                        let is_sel = app.panels.intruder.selected == Some(row.index);
                         let host_url = row
                             .target
                             .as_ref()
@@ -1811,15 +1794,39 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
                                 )
                             })
                             .unwrap_or_else(|| app.panels.intruder.host.clone());
-                        for cell in [&r_sel, &r_pay] {
-                            super::attach_message_context_menu(
-                                app,
-                                cell,
-                                &host_url,
-                                &row.request,
-                                &row.response,
+                        ui.push_id(("intruder-res-row", row.index), |ui| {
+                            let c0 = ui.selectable_label(is_sel, row.index.to_string());
+                            let c1 = ui.selectable_label(is_sel, row.payloads.join(" | "));
+                            let c2 = ui.selectable_label(is_sel, row.status.to_string());
+                            let c3 = ui.selectable_label(is_sel, row.length.to_string());
+                            let c4 = ui.selectable_label(is_sel, row.elapsed_ms.to_string());
+                            let c5 = ui.selectable_label(
+                                is_sel,
+                                if row.error.is_some() { "✓" } else { "" },
                             );
-                        }
+                            let c6 =
+                                ui.selectable_label(is_sel, if row.timed_out { "✓" } else { "" });
+                            let c7 = ui.selectable_label(
+                                is_sel,
+                                row.error.as_deref().unwrap_or(if row.matched {
+                                    "match"
+                                } else {
+                                    &row.comment
+                                }),
+                            );
+                            for cell in [&c0, &c1, &c2, &c3, &c4, &c5, &c6, &c7] {
+                                if cell.clicked() || cell.secondary_clicked() {
+                                    app.panels.intruder.selected = Some(row.index);
+                                }
+                                super::attach_message_context_menu(
+                                    app,
+                                    cell,
+                                    &host_url,
+                                    &row.request,
+                                    &row.response,
+                                );
+                            }
+                        });
                         ui.end_row();
                     }
                 });
