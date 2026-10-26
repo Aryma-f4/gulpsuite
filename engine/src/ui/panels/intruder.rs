@@ -1461,35 +1461,85 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             .selected_text(app.panels.intruder.attack_type.title())
             .width(combo_w)
             .show_ui(ui, |ui| {
-                ui.set_min_width(combo_w);
+                let row_w = combo_w.max(260.0);
+                ui.set_min_width(row_w);
+                ui.spacing_mut().item_spacing.y = 3.0;
                 for mode in AttackType::ALL {
                     ui.add_enabled_ui(!app.panels.intruder.running, |ui| {
                         let selected = app.panels.intruder.attack_type == mode;
-                        let row_bg = if selected {
-                            Color32::from_rgb(0xC9, 0xDC, 0xF2)
-                        } else {
-                            Color32::TRANSPARENT
+                        let (row_rect, resp) =
+                            ui.allocate_exact_size(Vec2::new(row_w, 46.0), egui::Sense::click());
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::SelectableLabel,
+                                selected,
+                                mode.title(),
+                            )
+                        });
+                        let hovered = resp.hovered();
+                        if hovered && !app.panels.intruder.running {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        let row_bg = match (theme.dark, selected, hovered) {
+                            (true, true, true) => Color32::from_rgb(0x35, 0x63, 0x94),
+                            (true, true, false) => Color32::from_rgb(0x2C, 0x51, 0x75),
+                            (true, false, true) => Color32::from_rgb(0x3D, 0x42, 0x4B),
+                            (false, true, true) => Color32::from_rgb(0xB8, 0xD0, 0xEC),
+                            (false, true, false) => Color32::from_rgb(0xC9, 0xDC, 0xF2),
+                            (false, false, true) => Color32::from_rgb(0xE6, 0xEE, 0xF8),
+                            (_, false, false) => Color32::TRANSPARENT,
                         };
-                        let resp = egui::Frame::new()
-                            .fill(row_bg)
-                            .inner_margin(egui::Margin::symmetric(8, 6))
-                            .show(ui, |ui| {
-                                ui.set_min_width(combo_w - 16.0);
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new(mode.title())
-                                            .strong()
-                                            .color(Color32::from_rgb(0x16, 0x16, 0x16)),
-                                    );
-                                    ui.label(
-                                        RichText::new(mode.description())
-                                            .size(11.5)
-                                            .color(Color32::from_rgb(0x2B, 0x2B, 0x2B)),
-                                    );
-                                })
-                            })
-                            .response
-                            .interact(egui::Sense::click());
+                        if row_bg != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(row_rect, 4.0, row_bg);
+                        }
+                        if selected || hovered {
+                            let border_col = if theme.dark {
+                                Color32::from_rgb(0x53, 0x84, 0xB2)
+                            } else {
+                                Color32::from_rgb(0x9F, 0xBB, 0xD4)
+                            };
+                            ui.painter().rect_stroke(
+                                row_rect,
+                                4.0,
+                                Stroke::new(1.0, border_col),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        let title_col = if theme.dark {
+                            Color32::WHITE
+                        } else {
+                            Color32::from_rgb(0x11, 0x11, 0x11)
+                        };
+                        let desc_col = if theme.dark {
+                            if selected || hovered {
+                                Color32::from_rgb(0xE6, 0xEC, 0xF5)
+                            } else {
+                                Color32::from_rgb(0xC5, 0xC7, 0xC8)
+                            }
+                        } else {
+                            Color32::from_rgb(0x33, 0x33, 0x33)
+                        };
+                        ui.painter().text(
+                            pos2(row_rect.min.x + 10.0, row_rect.min.y + 7.0),
+                            egui::Align2::LEFT_TOP,
+                            mode.title(),
+                            egui::FontId::proportional(12.5),
+                            title_col,
+                        );
+                        ui.painter().text(
+                            pos2(row_rect.min.x + 10.4, row_rect.min.y + 7.0),
+                            egui::Align2::LEFT_TOP,
+                            mode.title(),
+                            egui::FontId::proportional(12.5),
+                            title_col,
+                        );
+                        ui.painter().text(
+                            pos2(row_rect.min.x + 10.0, row_rect.min.y + 25.0),
+                            egui::Align2::LEFT_TOP,
+                            mode.description(),
+                            egui::FontId::proportional(11.2),
+                            desc_col,
+                        );
                         if resp.clicked() {
                             app.panels.intruder.attack_type = mode;
                             ui.close();
@@ -3190,12 +3240,20 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         let active = !app.panels.intruder.side_panel_collapsed
                             && app.panels.intruder.side_panel_tab == tab_idx;
                         let fill = if active {
-                            Color32::from_rgb(0xCC, 0xDD, 0xF2)
+                            if theme.dark {
+                                Color32::from_rgb(0x2C, 0x51, 0x75)
+                            } else {
+                                Color32::from_rgb(0xCC, 0xDD, 0xF2)
+                            }
                         } else {
                             Color32::TRANSPARENT
                         };
                         let fg = if active {
-                            Color32::from_rgb(0x16, 0x16, 0x16)
+                            if theme.dark {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_rgb(0x16, 0x16, 0x16)
+                            }
                         } else {
                             theme.color("ui.text.body")
                         };

@@ -2184,7 +2184,7 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
     style.visuals.widgets.open.corner_radius = CornerRadius::same(radius);
 
     style.visuals.selection.bg_fill = theme.color("ui.background.6");
-    style.visuals.selection.stroke = Stroke::new(1.0, accent);
+    style.visuals.selection.stroke = Stroke::new(1.0, if theme.dark { white } else { hover_text });
     style.visuals.hyperlink_color = accent;
     style.visuals.error_fg_color = theme.color("ui.icon.error");
     style.visuals.warn_fg_color = theme.color("ui.icon.warning");
