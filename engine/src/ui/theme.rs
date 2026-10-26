@@ -103,6 +103,14 @@ impl Theme {
         // always get Gulp's true surface and primary orange colours.
         values.insert("background.0".into(), resolve("$mono[1]", &raw.colors, 0));
         values.insert("icon.accent".into(), resolve("@orange", &raw.colors, 0));
+        values.insert("icon.accent.blue".into(), resolve("@blue[3]", &raw.colors, 0));
+        if let Some(&border_col) = values.get("border.1") {
+            values.insert("border.default".into(), border_col);
+        }
+        if let Some(&disabled_col) = values.get("text.disabled") {
+            values.insert("text.muted".into(), disabled_col);
+            values.insert("text.secondary".into(), disabled_col);
+        }
         if let Some(&header_col) = values.get("text.header") {
             values.insert("text.heading".into(), header_col);
         }

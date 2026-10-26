@@ -1476,7 +1476,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
                                 mode.title(),
                             )
                         });
-                        let hovered = resp.hovered();
+                        let hovered = resp.hovered() || ui.rect_contains_pointer(row_rect);
                         if hovered && !app.panels.intruder.running {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
@@ -1540,7 +1540,11 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
                             egui::FontId::proportional(11.2),
                             desc_col,
                         );
-                        if resp.clicked() {
+                        if resp.clicked()
+                            || (hovered
+                                && !app.panels.intruder.running
+                                && ui.input(|i| i.pointer.primary_clicked()))
+                        {
                             app.panels.intruder.attack_type = mode;
                             ui.close();
                         }
@@ -2642,7 +2646,7 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                                                 "0\n1\n2\n3\n4\n5\n6\n7\n8\n9",
                                             ),
                                         ] {
-                                            if ui.button(label).clicked() {
+                                            if ui.selectable_label(false, label).clicked() {
                                                 set.values = items.into();
                                                 ui.close();
                                             }
@@ -3186,7 +3190,14 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             theme.color("ui.icon.accent"),
                         );
                     }
-                    if cell_out.inner.clicked() {
+                    if ui.rect_contains_pointer(cell_rect) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if cell_out.inner.clicked()
+                        || (close_tab != Some(idx)
+                            && ui.rect_contains_pointer(cell_rect)
+                            && ui.input(|i| i.pointer.primary_clicked()))
+                    {
                         app.panels.intruder.active_tab = idx;
                         app.panels.intruder.show_getting_started = false;
                     }

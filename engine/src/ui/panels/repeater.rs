@@ -564,28 +564,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     } else {
                         for (idx, label) in &hist_items {
                             let is_cur = cur_hist == Some(*idx);
-                            let row_bg = if is_cur {
-                                Color32::from_rgb(0xF3, 0xC3, 0x97)
-                            } else {
-                                Color32::TRANSPARENT
-                            };
-                            let resp = egui::Frame::new()
-                                .fill(row_bg)
-                                .inner_margin(egui::Margin::symmetric(8, 3))
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(label).color(if is_cur {
-                                                Color32::from_rgb(0x16, 0x16, 0x16)
-                                            } else {
-                                                theme.color("ui.text.body")
-                                            }),
-                                        )
-                                        .sense(egui::Sense::click()),
-                                    )
-                                })
-                                .inner;
-                            if resp.clicked() {
+                            if ui.selectable_label(is_cur, label).clicked() {
                                 app.panels.repeater.active_mut().jump_to_history(*idx);
                                 ui.close();
                             }
@@ -1975,7 +1954,14 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
 
                     let mut tab_resp = cell_out.inner;
                     tab_resp.rect = cell_rect;
-                    if tab_resp.clicked() {
+                    if ui.rect_contains_pointer(cell_rect) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if tab_resp.clicked()
+                        || (close_action != Some(index)
+                            && ui.rect_contains_pointer(cell_rect)
+                            && ui.input(|i| i.pointer.primary_clicked()))
+                    {
                         app.panels.repeater.active = index;
                     }
                     if tab_resp.double_clicked() {

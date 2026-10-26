@@ -2166,7 +2166,11 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
     style.visuals.widgets.inactive.corner_radius = CornerRadius::same(radius);
 
     style.visuals.widgets.hovered.bg_fill = button_hover_bg;
-    style.visuals.widgets.hovered.weak_bg_fill = button_hover_bg;
+    style.visuals.widgets.hovered.weak_bg_fill = if theme.dark {
+        eframe::egui::Color32::from_rgb(0x36, 0x4C, 0x63)
+    } else {
+        eframe::egui::Color32::from_rgb(0xE2, 0xEC, 0xF7)
+    };
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, hover_text);
     style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, button_hover_border);
     style.visuals.widgets.hovered.corner_radius = CornerRadius::same(radius);

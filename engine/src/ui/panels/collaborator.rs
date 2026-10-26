@@ -317,7 +317,14 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             Color32::from_rgb(0xE0, 0x53, 0x20),
                         );
                     }
-                    if cell_out.inner.clicked() {
+                    if ui.rect_contains_pointer(cell_rect) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if cell_out.inner.clicked()
+                        || (close_tab != Some(idx)
+                            && ui.rect_contains_pointer(cell_rect)
+                            && ui.input(|i| i.pointer.primary_clicked()))
+                    {
                         app.panels.collaborator_panel.active_tab = idx;
                         app.panels.collaborator_token = tab_tok;
                     }
