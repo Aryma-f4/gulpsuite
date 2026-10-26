@@ -1288,6 +1288,7 @@ pub fn draw_inspector_and_notes_sidebar(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 3.0;
+                        ui.spacing_mut().button_padding = eframe::egui::Vec2::new(6.0, 2.0);
                         if ui
                             .small_button("×")
                             .on_hover_text("Collapse side panel")
@@ -2443,7 +2444,7 @@ fn draw_inspector_kv_table(
                 if ui
                     .add(
                         eframe::egui::Button::new(
-                            eframe::egui::RichText::new(truncate_insp(k, 13))
+                            eframe::egui::RichText::new(truncate_insp(k, 18))
                                 .monospace()
                                 .size(11.0),
                         )

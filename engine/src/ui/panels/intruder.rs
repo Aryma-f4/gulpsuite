@@ -2225,28 +2225,43 @@ fn draw_payloads_side_panel(app: &mut App, ui: &mut Ui) {
                 .inner_margin(egui::Margin::same(1))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    for (dock_left, lbl, tip) in [
-                        (false, "▤|", "Dock side panel on the Right"),
-                        (true, "|▤", "Dock side panel on the Left"),
+                    for (dock_left, tip) in [
+                        (false, "Dock side panel on the Right"),
+                        (true, "Dock side panel on the Left"),
                     ] {
                         let is_act = app.panels.intruder.side_panel_left == dock_left;
                         let fill = if is_act { active_blue } else { Color32::TRANSPARENT };
                         let fg = if is_act {
                             Color32::WHITE
                         } else {
-                            theme.color("ui.text.body")
+                            theme.color("ui.icon.default")
                         };
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new(lbl).size(11.0).color(fg).strong())
-                                    .fill(fill)
-                                    .stroke(Stroke::NONE)
-                                    .corner_radius(2.0)
-                                    .min_size(Vec2::new(24.0, 20.0)),
+                        let (btn_rect, resp) =
+                            ui.allocate_exact_size(Vec2::new(24.0, 20.0), egui::Sense::click());
+                        if fill != Color32::TRANSPARENT {
+                            ui.painter().rect_filled(btn_rect, 2.0, fill);
+                        }
+                        let icon_rect =
+                            egui::Rect::from_center_size(btn_rect.center(), Vec2::new(12.0, 10.0));
+                        ui.painter().rect_stroke(
+                            icon_rect,
+                            1.0,
+                            Stroke::new(1.2, fg),
+                            egui::StrokeKind::Inside,
+                        );
+                        let pane_rect = if dock_left {
+                            egui::Rect::from_min_max(
+                                icon_rect.min,
+                                pos2(icon_rect.min.x + 4.5, icon_rect.max.y),
                             )
-                            .on_hover_text(tip)
-                            .clicked()
-                        {
+                        } else {
+                            egui::Rect::from_min_max(
+                                pos2(icon_rect.max.x - 4.5, icon_rect.min.y),
+                                icon_rect.max,
+                            )
+                        };
+                        ui.painter().rect_filled(pane_rect, 0.5, fg);
+                        if resp.on_hover_text(tip).clicked() {
                             app.panels.intruder.side_panel_left = dock_left;
                         }
                     }

@@ -159,8 +159,8 @@ impl Default for ProxyPanel {
             split_ratio: 0.5,
             detached_split_ratio: 0.5,
             history_column_widths: [
-                34., 185., 62., 300., 50., 50., 82., 62., 85., 70., 140., 90., 40.,
-                110., 130., 100., 100., 140., 140.,
+                34., 165., 62., 260., 50., 50., 82., 62., 85., 70., 140., 75., 40.,
+                90., 130., 100., 100., 140., 140.,
             ],
             sort_column: None,
             sort_ascending: true,

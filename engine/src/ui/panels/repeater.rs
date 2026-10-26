@@ -854,7 +854,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         - if app.panels.repeater.show_analysis_drawer {
             190.0
         } else {
-            24.0
+            30.0
         })
     .max(220.0);
     let editor_h = (avail_h - 68.0).max(160.0);
