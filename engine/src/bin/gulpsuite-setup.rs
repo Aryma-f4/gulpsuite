@@ -55,18 +55,19 @@ fn main() -> eframe::Result<()> {
     // If launched as the installed `gulpsuite.exe` / `gulpsuite` / `Gulpsuite` binary, run the main app!
     let is_setup_exe = exe_name.contains("setup") || exe_name.contains("install");
     if !is_setup_exe && !uninstall && !yes && !force_setup && prefix.is_none() {
+        let title = format!("Gulpsuite v{} — Temporary Project", env!("CARGO_PKG_VERSION"));
         let options = eframe::NativeOptions {
             multisampling: 4,
             viewport: eframe::egui::ViewportBuilder::default()
                 .with_inner_size([1280.0, 800.0])
                 .with_min_inner_size([760.0, 480.0])
                 .with_resizable(true)
-                .with_title("Gulpsuite")
+                .with_title(title.clone())
                 .with_icon(gulpsuite::app_icon()),
             ..Default::default()
         };
         return eframe::run_native(
-            "Gulpsuite",
+            &title,
             options,
             Box::new(|cc| Ok(Box::new(App::new(cc)))),
         );
@@ -112,18 +113,22 @@ fn main() -> eframe::Result<()> {
     wizard.source_root = source_root;
     wizard.destination = dest.to_string_lossy().into_owned();
 
+    let setup_title = format!(
+        "Gulpsuite v{} Setup — Publisher: Aryma-f4",
+        env!("CARGO_PKG_VERSION")
+    );
     let options = eframe::NativeOptions {
         multisampling: 4,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([720.0, 460.0])
             .with_min_inner_size([400.0, 300.0])
             .with_resizable(true)
-            .with_title("Gulpsuite Setup — Publisher: Aryma-f4")
+            .with_title(setup_title.clone())
             .with_icon(gulpsuite::app_icon()),
         ..Default::default()
     };
     eframe::run_native(
-        "Gulpsuite Setup — Publisher: Aryma-f4",
+        &setup_title,
         options,
         Box::new(|cc| {
             gulpsuite::ui::app::install_fonts(&cc.egui_ctx);

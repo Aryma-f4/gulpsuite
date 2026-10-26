@@ -247,7 +247,7 @@ impl SuiteShell {
         }
 
         let memory_width = text_width(memory);
-        let memory_x = rect.max.x - 178.0 - memory_width;
+        let memory_x = rect.max.x - 216.0 - memory_width;
         painter.text(
             pos2(memory_x, baseline),
             eframe::egui::Align2::LEFT_CENTER,
@@ -268,8 +268,9 @@ impl SuiteShell {
             2.0,
             accent,
         );
+        let version_label = format!("v{} ↻", crate::updater::CURRENT_VERSION);
         let update_rect =
-            Rect::from_center_size(pos2(rect.max.x - 82.0, baseline), Vec2::new(26.0, 24.0));
+            Rect::from_center_size(pos2(rect.max.x - 100.0, baseline), Vec2::new(62.0, 24.0));
         let update_btn = ui.interact(update_rect, ui.id().with("status-update"), Sense::click());
         update_btn.widget_info(|| {
             eframe::egui::WidgetInfo::labeled(
@@ -294,8 +295,8 @@ impl SuiteShell {
         painter.text(
             update_rect.center(),
             eframe::egui::Align2::CENTER_CENTER,
-            "↻",
-            FontId::proportional(13.0),
+            &version_label,
+            FontId::proportional(11.0),
             if update_btn.hovered() { accent } else { idle },
         );
         if update_btn.hovered() {
@@ -491,6 +492,34 @@ impl SuiteShell {
             ),
         ];
         let utility_x = rect.max.x - 104.0;
+        if x + 64.0 < utility_x {
+            let ver_text = format!("v{}", crate::updater::CURRENT_VERSION);
+            let ver_rect = Rect::from_min_max(
+                pos2(utility_x - 62.0, rect.min.y + 4.0),
+                pos2(utility_x - 14.0, rect.max.y - 4.0),
+            );
+            let ver_resp = ui.interact(ver_rect, ui.id().with("top-version-pill"), Sense::click());
+            painter.text(
+                pos2(utility_x - 18.0, rect.center().y - 1.0),
+                eframe::egui::Align2::RIGHT_CENTER,
+                &ver_text,
+                FontId::proportional(11.0),
+                if ver_resp.hovered() {
+                    theme.color("ui.icon.link")
+                } else {
+                    theme.color("ui.text.disabled")
+                },
+            );
+            if ver_resp.hovered() {
+                ver_resp.clone().on_hover_text(format!(
+                    "Gulpsuite v{} — Click to check for updates",
+                    crate::updater::CURRENT_VERSION
+                ));
+            }
+            if ver_resp.clicked() {
+                commands.push(ShellCommand::OpenUpdate);
+            }
+        }
         for (index, (glyph, command, tooltip)) in utilities.into_iter().enumerate() {
             let area = Rect::from_center_size(
                 pos2(utility_x + index as f32 * 24.0, rect.center().y),
