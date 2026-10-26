@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use eframe::egui::{self, Color32, RichText, Stroke, Ui, Vec2};
 
 use super::{
-    SiteMapIcon, burp_message_formatter_bar, burp_numbered_message_view_wrapped, empty_state, heading,
+    SiteMapIcon, gulp_message_formatter_bar, gulp_numbered_message_view_wrapped, empty_state, heading,
     muted, paint_sitemap_node_icon,
 };
 use crate::ui::app::{App, SiteMapPaths};
@@ -45,7 +45,7 @@ fn tree(app: &mut App) -> BTreeMap<String, SiteMapPaths> {
 /// Per-panel state.
 #[derive(Clone)]
 pub struct TargetPanel {
-    /// Burp's include and exclude scope entries (scope/Scope in the shipped API).
+    /// Gulp's include and exclude scope entries (scope/Scope in the shipped API).
     pub scope: String,
     pub scope_exclude: String,
     pub advanced_scope_control: bool,
@@ -1066,7 +1066,7 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                             let req = sample_tx
                                 .map(|t| t.request)
                                 .unwrap_or_else(|| format!("GET {} HTTP/1.1\r\n\r\n", issue.url));
-                            let r = super::burp_numbered_message_view(
+                            let r = super::gulp_numbered_message_view(
                                 ui,
                                 &theme,
                                 "target-issue-req",
@@ -1081,7 +1081,7 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
                             let resp = sample_tx
                                 .map(|t| t.response)
                                 .unwrap_or_else(|| issue.evidence.clone());
-                            let r = super::burp_numbered_message_view(
+                            let r = super::gulp_numbered_message_view(
                                 ui,
                                 &theme,
                                 "target-issue-resp",
@@ -1796,7 +1796,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
     let border_col = theme.color("ui.border.1");
     let tree = tree(app);
 
-    // Top row: `[ URL view | Crawl paths view ]` segmented pill + Burp Filter bar (`site-map-filters.png`)
+    // Top row: `[ URL view | Crawl paths view ]` segmented pill + Gulp Filter bar (`site-map-filters.png`)
     egui::Frame::new()
         .fill(bg0)
         .inner_margin(egui::Margin::symmetric(10, 6))
@@ -2053,7 +2053,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                             "The site map displays information about the contents of your target applications,\n\
                              along with any issues that have been discovered. The URL view shows your targets as\n\
                              a tree of URLs, organized hierarchically by domain and directory. To populate the\n\
-                             URL view, run a scan or browse using Burp's browser.",
+                             URL view, run a scan or browse using Gulp's browser.",
                         )
                         .size(12.0)
                         .color(theme.color("ui.text.body")),
@@ -2923,7 +2923,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                     rem_h,
                                     |pane_side, ui| {
                                         if pane_side == 0 {
-                                            burp_message_formatter_bar(
+                                            gulp_message_formatter_bar(
                                                 ui,
                                                 &theme,
                                                 "target-req-fmt",
@@ -2933,7 +2933,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 &mut app.panels.target_panel.req_wrap,
                                                 &mut app.panels.target_panel.req_non_printable,
                                             );
-                                            let r = burp_numbered_message_view_wrapped(
+                                            let r = gulp_numbered_message_view_wrapped(
                                                 ui,
                                                 &theme,
                                                 "target-req-view",
@@ -2951,7 +2951,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 &tx.response,
                                             );
                                         } else {
-                                            burp_message_formatter_bar(
+                                            gulp_message_formatter_bar(
                                                 ui,
                                                 &theme,
                                                 "target-resp-fmt",
@@ -2961,7 +2961,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                 &mut app.panels.target_panel.resp_wrap,
                                                 &mut app.panels.target_panel.resp_non_printable,
                                             );
-                                            let r = burp_numbered_message_view_wrapped(
+                                            let r = gulp_numbered_message_view_wrapped(
                                                 ui,
                                                 &theme,
                                                 "target-resp-view",

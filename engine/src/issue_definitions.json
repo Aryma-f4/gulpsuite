@@ -9,7 +9,7 @@
     "references": [
       {
         "title": "Web Security Academy: OS command injection",
-        "url": "https://portswigger.net/web-security/os-command-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -41,15 +41,15 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Test for Injection Flaws",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965677-using-burp-to-test-for-injection-flaws"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/"
       },
       {
         "title": "Web Security Academy: SQL Injection Cheat Sheet",
-        "url": "https://portswigger.net/web-security/sql-injection/cheat-sheet"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -81,15 +81,15 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Test for Injection Flaws",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965677-using-burp-to-test-for-injection-flaws"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/"
       },
       {
         "title": "Web Security Academy: SQL Injection Cheat Sheet",
-        "url": "https://portswigger.net/web-security/sql-injection/cheat-sheet"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -121,7 +121,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -149,7 +149,7 @@
     "references": [
       {
         "title": "Web Security Academy: Directory traversal",
-        "url": "https://portswigger.net/web-security/file-path-traversal"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -185,7 +185,7 @@
     "references": [
       {
         "title": "Web Security Academy: XXE injection",
-        "url": "https://portswigger.net/web-security/xxe"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -232,7 +232,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side XPath injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-xpath-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -268,7 +268,7 @@
     "references": [
       {
         "title": "Web Security Academy: XXE injection",
-        "url": "https://portswigger.net/web-security/xxe"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -308,7 +308,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -332,7 +332,7 @@
     "references": [
       {
         "title": "Web Security Academy: Access Control",
-        "url": "https://portswigger.net/web-security/access-control"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "OWASP A01:2021 - Broken Access Control",
@@ -371,15 +371,15 @@
     "references": [
       {
         "title": "Gulp Collaborator",
-        "url": "https://portswigger.net/blog/introducing-burp-collaborator"
+        "url": "https://github.com/Aryma-f4/gulpsuite#readme"
       },
       {
         "title": "Out-of-band application security testing (OAST)",
-        "url": "https://portswigger.net/burp/application-security-testing/oast"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Cracking the Lens",
-        "url": "https://portswigger.net/research/cracking-the-lens-targeting-https-hidden-attack-surface"
+        "title": "Web Security Research: Cracking the Lens",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -403,7 +403,7 @@
     "references": [
       {
         "title": "Web Security Academy: Directory traversal",
-        "url": "https://portswigger.net/web-security/file-path-traversal"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -673,11 +673,11 @@
     "references": [
       {
         "title": "Web Security Academy: Server-side template injection",
-        "url": "https://portswigger.net/web-security/server-side-template-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Server-side template injection",
-        "url": "https://portswigger.net/research/server-side-template-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "FreeMarker hardening",
@@ -749,15 +749,15 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Stored cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/stored"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Find XSS issues",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965737-Methodology_XSS.html"
+        "url": "https://owasp.org/www-community/attacks/xss/"
       }
     ],
     "classifications": [
@@ -793,11 +793,11 @@
     "references": [
       {
         "title": "HTTP Request Smuggling",
-        "url": "https://portswigger.net/web-security/request-smuggling"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "HTTP Desync Attacks",
-        "url": "https://portswigger.net/blog/http-desync-attacks"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -821,11 +821,11 @@
     "references": [
       {
         "title": "HTTP Request Smuggling",
-        "url": "https://portswigger.net/web-security/request-smuggling"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Browser-Powered Desync Attacks",
-        "url": "https://portswigger.net/research/browser-powered-desync-attacks"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -849,15 +849,15 @@
     "references": [
       {
         "title": "Web Security Academy: Web cache poisoning",
-        "url": "https://portswigger.net/web-security/web-cache-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Practical Web Cache Poisoning",
-        "url": "https://portswigger.net/research/web-cache-poisoning"
+        "title": "Web Security Research: Practical Web Cache Poisoning",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Web Cache Entanglement",
-        "url": "https://portswigger.net/research/web-cache-entanglement-novel-pathways-to-poisoning"
+        "title": "Web Security Research: Web Cache Entanglement",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "HTTP Vary header",
@@ -904,15 +904,15 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Reflected cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/reflected"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Find XSS issues",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965737-Methodology_XSS.html"
+        "url": "https://owasp.org/www-community/attacks/xss/"
       }
     ],
     "classifications": [
@@ -948,11 +948,11 @@
     "references": [
       {
         "title": "XSS without HTML: Client-Side Template Injection with AngularJS",
-        "url": "https://portswigger.net/research/xss-without-html-client-side-template-injection-with-angularjs"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: AngularJS sandbox escapes",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/contexts/angularjs-sandbox"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "AngularJS Security Considerations",
@@ -988,11 +988,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: DOM-based cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/dom-based"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1028,15 +1028,15 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Reflected cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/reflected"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: DOM-based cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/dom-based"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1072,15 +1072,15 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Stored cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/stored"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: DOM-based cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/dom-based"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1116,11 +1116,11 @@
     "references": [
       {
         "title": "Testing for client-side prototype pollution in DOM Invader",
-        "url": "https://portswigger.net/burp/documentation/desktop/tools/dom-invader/prototype-pollution.html"
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.html"
       },
       {
         "title": "Web Security Academy: Prototype pollution",
-        "url": "https://portswigger.net/web-security/prototype-pollution"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1140,7 +1140,7 @@
     "references": [
       {
         "title": "Web Security Academy: JavaScript injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/javascript-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1172,7 +1172,7 @@
     "references": [
       {
         "title": "Web Security Academy: JavaScript injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/javascript-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1204,7 +1204,7 @@
     "references": [
       {
         "title": "Web Security Academy: JavaScript injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/javascript-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1236,7 +1236,7 @@
     "references": [
       {
         "title": "Detecting and exploiting path-relative stylesheet import (PRSSI) vulnerabilities",
-        "url": "https://portswigger.net/research/detecting-and-exploiting-path-relative-stylesheet-import-prssi-vulnerabilities"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1264,11 +1264,11 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Client-side SQL injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1300,11 +1300,11 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Client-side SQL injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1336,11 +1336,11 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Client-side SQL injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1372,7 +1372,7 @@
     "references": [
       {
         "title": "Web Security Academy: WebSocket URL poisoning (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/websocket-url-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1400,7 +1400,7 @@
     "references": [
       {
         "title": "Web Security Academy: WebSocket URL poisoning (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/websocket-url-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1428,7 +1428,7 @@
     "references": [
       {
         "title": "Web Security Academy: WebSocket URL poisoning (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/websocket-url-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1456,7 +1456,7 @@
     "references": [
       {
         "title": "Web Security Academy: Local file path manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/local-file-path-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1484,7 +1484,7 @@
     "references": [
       {
         "title": "Web Security Academy: Local file path manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/local-file-path-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1512,7 +1512,7 @@
     "references": [
       {
         "title": "Web Security Academy: Local file path manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/local-file-path-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1540,7 +1540,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side XPath injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-xpath-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1572,7 +1572,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side XPath injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-xpath-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1604,7 +1604,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side XPath injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-xpath-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1636,7 +1636,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side JSON injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-json-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1668,7 +1668,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side JSON injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-json-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1700,7 +1700,7 @@
     "references": [
       {
         "title": "Web Security Academy: Client-side JSON injection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/client-side-json-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -1762,19 +1762,19 @@
     "references": [
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: What is XSS?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting#what-is-cross-site-scripting-xss"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Mitigating XSS attacks using CSP",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy#mitigating-xss-attacks-using-csp"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Preventing XSS",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/preventing"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1814,19 +1814,19 @@
     "references": [
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: What is XSS?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting#what-is-cross-site-scripting-xss"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Mitigating XSS attacks using CSP",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy#mitigating-xss-attacks-using-csp"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Preventing XSS",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/preventing"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1866,15 +1866,15 @@
     "references": [
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Blind CSS exfiltration",
-        "url": "https://portswigger.net/research/blind-css-exfiltration"
+        "title": "Web Security Research: Blind CSS exfiltration",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Offensive CSS research",
-        "url": "https://portswigger.net/research/detecting-and-exploiting-path-relative-stylesheet-import-prssi-vulnerabilities#badcss"
+        "title": "Web Security Research: Offensive CSS research",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1906,7 +1906,7 @@
     "references": [
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1925,7 +1925,7 @@
     "references": [
       {
         "title": "Web Security Academy: Clickjacking",
-        "url": "https://portswigger.net/web-security/clickjacking"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "X-Frame-Options",
@@ -1933,11 +1933,11 @@
       },
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Protecting against clickjacking using CSP",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy#protecting-against-clickjacking-using-csp"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1968,12 +1968,12 @@
     "remediation": "We recommend using the form-action directive in the CSP response header to control form post destinations. If no form actions are used, set form-action to 'none' to block\n\nuntrusted forms. For applications without external form URLs, use 'self' to allow only same-origin URLs. If needed, allow list hosts for external URL form submissions, but\n\nbe aware this lets attackers submit to these external resources.",
     "references": [
       {
-        "title": "PortSwigger Research: Stealing passwords from infosec Mastodon - without bypassing CSP",
-        "url": "https://portswigger.net/research/stealing-passwords-from-infosec-mastodon-without-bypassing-csp"
+        "title": "Web Security Research: Stealing passwords from infosec Mastodon - without bypassing CSP",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -1997,7 +1997,7 @@
     "references": [
       {
         "title": "Web Security Academy: What is CSP?",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/content-security-policy"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Content Security Policy (CSP)",
@@ -2016,7 +2016,7 @@
     "references": [
       {
         "title": "Web Security Academy: GraphQL API vulnerabilities",
-        "url": "https://portswigger.net/web-security/graphql"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": []
@@ -2031,7 +2031,7 @@
     "references": [
       {
         "title": "Web Security Academy: GraphQL API vulnerabilities",
-        "url": "https://portswigger.net/web-security/graphql"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": []
@@ -2050,7 +2050,7 @@
       },
       {
         "title": "Web Security Academy: GraphQL API vulnerabilities",
-        "url": "https://portswigger.net/web-security/graphql"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2078,7 +2078,7 @@
       },
       {
         "title": "Web Security Academy: GraphQL API vulnerabilities",
-        "url": "https://portswigger.net/web-security/graphql"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2098,11 +2098,11 @@
     "references": [
       {
         "title": "Web Security Academy: GraphQL API vulnerabilities",
-        "url": "https://portswigger.net/web-security/graphql"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Cross-site request forgery",
-        "url": "https://portswigger.net/web-security/csrf"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2126,11 +2126,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-origin resource sharing (CORS)",
-        "url": "https://portswigger.net/web-security/cors"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Exploiting CORS Misconfigurations",
-        "url": "https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2150,11 +2150,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-origin resource sharing (CORS)",
-        "url": "https://portswigger.net/web-security/cors"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Exploiting CORS Misconfigurations",
-        "url": "https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2174,11 +2174,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-origin resource sharing (CORS)",
-        "url": "https://portswigger.net/web-security/cors"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Exploiting CORS Misconfigurations",
-        "url": "https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2198,11 +2198,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-origin resource sharing (CORS)",
-        "url": "https://portswigger.net/web-security/cors"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Exploiting CORS Misconfigurations",
-        "url": "https://portswigger.net/research/exploiting-cors-misconfigurations-for-bitcoins-and-bounties"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2232,11 +2232,11 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site request forgery",
-        "url": "https://portswigger.net/web-security/csrf"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Test for Cross-Site Request Forgery",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965674-using-burp-to-test-for-cross-site-request-forgery-csrf-"
+        "url": "https://owasp.org/www-community/attacks/csrf"
       },
       {
         "title": "The Deputies Are Still Confused",
@@ -2264,7 +2264,7 @@
     "references": [
       {
         "title": "Gulp Collaborator",
-        "url": "https://portswigger.net/blog/introducing-burp-collaborator"
+        "url": "https://github.com/Aryma-f4/gulpsuite#readme"
       }
     ],
     "classifications": [
@@ -2385,15 +2385,15 @@
     "references": [
       {
         "title": "Gulp Collaborator",
-        "url": "https://portswigger.net/blog/introducing-burp-collaborator"
+        "url": "https://github.com/Aryma-f4/gulpsuite#readme"
       },
       {
         "title": "Out-of-band application security testing (OAST)",
-        "url": "https://portswigger.net/burp/application-security-testing/oast"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Cracking the Lens",
-        "url": "https://portswigger.net/research/cracking-the-lens-targeting-https-hidden-attack-surface"
+        "title": "Web Security Research: Cracking the Lens",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2417,15 +2417,15 @@
     "references": [
       {
         "title": "Gulp Collaborator",
-        "url": "https://portswigger.net/blog/introducing-burp-collaborator"
+        "url": "https://github.com/Aryma-f4/gulpsuite#readme"
       },
       {
         "title": "Out-of-band application security testing (OAST)",
-        "url": "https://portswigger.net/burp/application-security-testing/oast"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
-        "title": "PortSwigger Research: Cracking the Lens",
-        "url": "https://portswigger.net/research/cracking-the-lens-targeting-https-hidden-attack-surface"
+        "title": "Web Security Research: Cracking the Lens",
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2449,11 +2449,11 @@
     "references": [
       {
         "title": "Gulp Collaborator",
-        "url": "https://portswigger.net/blog/introducing-burp-collaborator"
+        "url": "https://github.com/Aryma-f4/gulpsuite#readme"
       },
       {
         "title": "Out-of-band application security testing (OAST)",
-        "url": "https://portswigger.net/burp/application-security-testing/oast"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2526,7 +2526,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2569,7 +2569,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2593,15 +2593,15 @@
     "references": [
       {
         "title": "Web Security Academy: SQL injection",
-        "url": "https://portswigger.net/web-security/sql-injection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Using Gulp to Test for Injection Flaws",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965677-using-burp-to-test-for-injection-flaws"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/07-Input_Validation_Testing/"
       },
       {
         "title": "Web Security Academy: SQL Injection Cheat Sheet",
-        "url": "https://portswigger.net/web-security/sql-injection/cheat-sheet"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2644,7 +2644,7 @@
       },
       {
         "title": "Web Security Academy: Insecure deserialization",
-        "url": "https://portswigger.net/web-security/deserialization"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2668,7 +2668,7 @@
     "references": [
       {
         "title": "Web Security Academy: XXE injection",
-        "url": "https://portswigger.net/web-security/xxe"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2692,7 +2692,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2716,7 +2716,7 @@
     "references": [
       {
         "title": "Web Security Academy: Insecure deserialization",
-        "url": "https://portswigger.net/web-security/deserialization"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2793,7 +2793,7 @@
     "references": [
       {
         "title": "Backslash Powered Scanning: Hunting Unknown Vulnerability Classes",
-        "url": "https://portswigger.net/research/backslash-powered-scanning-hunting-unknown-vulnerability-classes"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2817,7 +2817,7 @@
     "references": [
       {
         "title": "Backslash Powered Scanning: Hunting Unknown Vulnerability Classes",
-        "url": "https://portswigger.net/research/backslash-powered-scanning-hunting-unknown-vulnerability-classes"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2841,15 +2841,15 @@
     "references": [
       {
         "title": "Web Security Academy: HTTP Host header attacks",
-        "url": "https://portswigger.net/web-security/host-header"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Web Security Academy: Web cache poisoning",
-        "url": "https://portswigger.net/web-security/web-cache-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Practical Web Cache Poisoning",
-        "url": "https://portswigger.net/blog/practical-web-cache-poisoning"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2892,7 +2892,7 @@
     "references": [
       {
         "title": "Using Gulp to Test for Open Redirections",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965733-Methodology_Testing%20for%20Open%20Redirections.html"
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
       },
       {
         "title": "Fun With Redirects",
@@ -2916,7 +2916,7 @@
     "references": [
       {
         "title": "Using Gulp to Test for Open Redirections",
-        "url": "https://support.portswigger.net/customer/portal/articles/1965733-Methodology_Testing%20for%20Open%20Redirections.html"
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
       },
       {
         "title": "Fun With Redirects",
@@ -2940,7 +2940,7 @@
     "references": [
       {
         "title": "Web Security Academy: Open redirection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/open-redirection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2960,7 +2960,7 @@
     "references": [
       {
         "title": "Web Security Academy: Open redirection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/open-redirection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -2980,7 +2980,7 @@
     "references": [
       {
         "title": "Web Security Academy: Open redirection (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/open-redirection"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3034,7 +3034,7 @@
       },
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3074,11 +3074,11 @@
     "references": [
       {
         "title": "Web Security Academy: Exploiting XSS vulnerabilities",
-        "url": "https://portswigger.net/web-security/cross-site-scripting/exploiting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "HttpOnly effectiveness",
-        "url": "https://portswigger.net/research/web-storage-the-lesser-evil-for-session-tokens#httponly"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3191,7 +3191,7 @@
     "references": [
       {
         "title": "Web Security Academy: Clickjacking",
-        "url": "https://portswigger.net/web-security/clickjacking"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "X-Frame-Options",
@@ -3223,7 +3223,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Controlling the XSS Filter",
@@ -3251,7 +3251,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure via TRACE method",
-        "url": "https://portswigger.net/web-security/information-disclosure/exploiting#information-disclosure-due-to-insecure-configuration"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3271,7 +3271,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cookie manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/cookie-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3299,7 +3299,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cookie manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/cookie-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3327,7 +3327,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cookie manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/cookie-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3355,7 +3355,7 @@
     "references": [
       {
         "title": "Web Security Academy: Ajax request header manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/ajax-request-header-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3379,7 +3379,7 @@
     "references": [
       {
         "title": "Web Security Academy: Ajax request header manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/ajax-request-header-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3403,7 +3403,7 @@
     "references": [
       {
         "title": "Web Security Academy: Ajax request header manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/ajax-request-header-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3427,7 +3427,7 @@
     "references": [
       {
         "title": "Web Security Academy: Denial of service (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/denial-of-service"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3451,7 +3451,7 @@
     "references": [
       {
         "title": "Web Security Academy: Denial of service (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/denial-of-service"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3475,7 +3475,7 @@
     "references": [
       {
         "title": "Web Security Academy: Denial of service (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/denial-of-service"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3499,7 +3499,7 @@
     "references": [
       {
         "title": "Web Security Academy: Web message manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/web-message-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3523,7 +3523,7 @@
     "references": [
       {
         "title": "Web Security Academy: Web message manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/web-message-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3547,7 +3547,7 @@
     "references": [
       {
         "title": "Web Security Academy: Web message manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/web-message-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3571,7 +3571,7 @@
     "references": [
       {
         "title": "Web Security Academy: HTML5 storage manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/html5-storage-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3595,7 +3595,7 @@
     "references": [
       {
         "title": "Web Security Academy: HTML5 storage manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/html5-storage-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3619,7 +3619,7 @@
     "references": [
       {
         "title": "Web Security Academy: HTML5 storage manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/html5-storage-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3643,7 +3643,7 @@
     "references": [
       {
         "title": "Web Security Academy: Link manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/link-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3667,7 +3667,7 @@
     "references": [
       {
         "title": "Web Security Academy: Link manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/link-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3691,7 +3691,7 @@
     "references": [
       {
         "title": "Web Security Academy: Link manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/link-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3771,7 +3771,7 @@
     "references": [
       {
         "title": "Web Security Academy: Document domain manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/document-domain-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3795,7 +3795,7 @@
     "references": [
       {
         "title": "Web Security Academy: Document domain manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/document-domain-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3819,7 +3819,7 @@
     "references": [
       {
         "title": "Web Security Academy: Document domain manipulation (DOM-based)",
-        "url": "https://portswigger.net/web-security/dom-based/document-domain-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3843,7 +3843,7 @@
     "references": [
       {
         "title": "Web Security Academy: DOM data manipulation",
-        "url": "https://portswigger.net/web-security/dom-based/dom-data-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3867,7 +3867,7 @@
     "references": [
       {
         "title": "Web Security Academy: DOM data manipulation",
-        "url": "https://portswigger.net/web-security/dom-based/dom-data-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3891,7 +3891,7 @@
     "references": [
       {
         "title": "Web Security Academy: DOM data manipulation",
-        "url": "https://portswigger.net/web-security/dom-based/dom-data-manipulation"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -3915,7 +3915,7 @@
     "references": [
       {
         "title": "Malicious CSS",
-        "url": "https://portswigger.net/research/detecting-and-exploiting-path-relative-stylesheet-import-prssi-vulnerabilities#badcss"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Abusing unicode-range of @font-face",
@@ -3947,7 +3947,7 @@
     "references": [
       {
         "title": "Malicious CSS",
-        "url": "https://portswigger.net/research/detecting-and-exploiting-path-relative-stylesheet-import-prssi-vulnerabilities#badcss"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       },
       {
         "title": "Abusing unicode-range of @font-face",
@@ -4081,7 +4081,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4109,7 +4109,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4153,7 +4153,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure via backup files",
-        "url": "https://portswigger.net/web-security/information-disclosure/exploiting#source-code-disclosure-via-backup-files"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4181,7 +4181,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure via directory listings",
-        "url": "https://portswigger.net/web-security/information-disclosure/exploiting#directory-listings"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4209,7 +4209,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4233,7 +4233,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4257,7 +4257,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4281,7 +4281,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4309,7 +4309,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4396,7 +4396,7 @@
     "references": [
       {
         "title": "Web Security Academy: Identifying API endpoints",
-        "url": "https://portswigger.net/web-security/api-testing#identifying-api-endpoints"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4416,7 +4416,7 @@
     "references": [
       {
         "title": "Web Security Academy: Identifying API endpoints",
-        "url": "https://portswigger.net/web-security/api-testing#identifying-api-endpoints"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4436,7 +4436,7 @@
     "references": [
       {
         "title": "Web Security Academy: Information disclosure",
-        "url": "https://portswigger.net/web-security/information-disclosure"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4487,7 +4487,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4549,7 +4549,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4577,7 +4577,7 @@
     "references": [
       {
         "title": "Web Security Academy: Cross-site scripting",
-        "url": "https://portswigger.net/web-security/cross-site-scripting"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [
@@ -4729,7 +4729,7 @@
     "references": [
       {
         "title": "HTTP/2: The Sequel is Always Worse",
-        "url": "https://portswigger.net/research/http2"
+        "url": "https://owasp.org/www-project-web-security-testing-guide/"
       }
     ],
     "classifications": [

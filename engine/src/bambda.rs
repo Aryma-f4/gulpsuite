@@ -1,6 +1,6 @@
 //! Bambda-style transform scripting.
 //!
-//! Burp's Bambda lets an operator rewrite a message on its way through the proxy. This is a much
+//! Gulp's Bambda lets an operator rewrite a message on its way through the proxy. This is a much
 //! smaller language over the same idea: a handful of statements applied to one message, with the
 //! `regex` crate already used by the scanner doing the pattern work. No new dependency, no embedded
 //! general-purpose interpreter, and no way for a script to reach outside the message it is given.
@@ -29,7 +29,7 @@ pub enum Statement {
 }
 
 impl Statement {
-    /// The rule as Burp writes it, e.g. `set_header "Host" "x"`.
+    /// The rule as Gulp writes it, e.g. `set_header "Host" "x"`.
     pub fn describe(&self) -> String {
         match self {
             Statement::Replace { find, with } => format!("replace \"{find}\" \"{with}\""),

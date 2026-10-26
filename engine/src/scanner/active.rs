@@ -79,7 +79,7 @@ pub enum InjectionMethod {
     Header,
 }
 
-/// Returns `true` when `name` matches Burp's `ignored_insertion_points` list from
+/// Returns `true` when `name` matches Gulp's `ignored_insertion_points` list from
 /// `resources/Preferences/AuditDefaults.json` (`_ga`, `_gid`, `_gat`, `AWSALB*`, `JSESSIONID`,
 /// `PHPSESSID`, `ASP.NET_SessionId`, `__VIEWSTATE`, `__EVENTVALIDATION`, etc.).
 pub fn is_ignored_insertion_point(name: &str) -> bool {
@@ -110,7 +110,7 @@ pub fn is_ignored_insertion_point(name: &str) -> bool {
         || lower.starts_with("xmlns")
 }
 
-/// Computes Burp Scanner's 80/20 Audit Prioritization Score (`auditing.html#audit-prioritization`):
+/// Computes Gulp Scanner's 80/20 Audit Prioritization Score (`auditing.html#audit-prioritization`):
 /// - 80% weight: Attack surface exposure (`unique_insertion_points * 16`, up to 80)
 /// - 20% weight: Interest level (state-changing method POST/PUT/PATCH/DELETE +8,
 ///   structured content JSON/XML/HTML +6, authenticated +6).
@@ -196,20 +196,33 @@ impl InjectionPoint {
         let raw = match self.method {
             InjectionMethod::Query => {
                 let base = super::http::path_of(&self.url);
-                let without = base
-                    .split(&format!("{}=", self.name))
-                    .next()
-                    .unwrap_or(&base)
-                    .to_string();
-                let query = format!(
+                let encoded_pair = format!(
                     "{}={}",
                     super::http::encode(&self.name),
                     super::http::encode(value)
                 );
-                let target = format!(
-                    "{without}{}{query}",
-                    if without.contains('?') { "&" } else { "?" }
-                );
+                let target = if let Some((path_only, query_str)) = base.split_once('?') {
+                    let mut replaced = false;
+                    let mut pairs: Vec<String> = query_str
+                        .split('&')
+                        .filter(|s| !s.is_empty())
+                        .map(|pair| {
+                            let k = pair.split('=').next().unwrap_or(pair);
+                            if k == self.name || super::http::encode(&self.name) == k {
+                                replaced = true;
+                                encoded_pair.clone()
+                            } else {
+                                pair.to_string()
+                            }
+                        })
+                        .collect();
+                    if !replaced {
+                        pairs.push(encoded_pair);
+                    }
+                    format!("{path_only}?{}", pairs.join("&"))
+                } else {
+                    format!("{base}?{encoded_pair}")
+                };
                 format!(
                     "GET {target} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
                     host_header(&host, port, tls)
@@ -1222,7 +1235,7 @@ mod tests {
     }
 
     #[test]
-    fn audit_prioritization_and_ignored_insertion_points_follow_burp_defaults() {
+    fn audit_prioritization_and_ignored_insertion_points_follow_gulp_defaults() {
         assert!(is_ignored_insertion_point("_ga"));
         assert!(is_ignored_insertion_point("_ga_ABCD123"));
         assert!(is_ignored_insertion_point("JSESSIONID"));

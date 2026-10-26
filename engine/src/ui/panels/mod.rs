@@ -145,7 +145,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// A heading with Burp's title colour.
+/// A heading with Gulp's title colour.
 pub fn heading(ui: &mut Ui, theme: &Theme, text: &str) {
     crate::ui::app::bold_text(ui, text, 15.0, theme.color("ui.text.body"));
 }
@@ -162,7 +162,7 @@ pub fn muted(ui: &mut Ui, theme: &Theme, text: &str) {
     );
 }
 
-/// Burp's isometric three-tile illustration shown above centered empty states.
+/// Gulp's isometric three-tile illustration shown above centered empty states.
 pub fn empty_illustration(ui: &mut Ui, colour: eframe::egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(
         eframe::egui::Vec2::new(140.0, 84.0),
@@ -192,7 +192,7 @@ pub fn empty_illustration(ui: &mut Ui, colour: eframe::egui::Color32) {
     }
 }
 
-/// Centered Burp-style empty state: isometric icon, 20px bold headline, description,
+/// Centered Gulp-style empty state: isometric icon, 20px bold headline, description,
 /// and optional `Learn more` + primary action buttons. Returns `(learn_more_clicked, primary_clicked)`.
 pub fn empty_state(
     ui: &mut Ui,
@@ -231,7 +231,7 @@ pub fn empty_state(
             };
             ui.allocate_ui(eframe::egui::Vec2::new(width, 28.0), |ui| {
                 ui.horizontal(|ui| {
-                    if learn_more && crate::ui::app::burp_button(ui, "Learn more").clicked() {
+                    if learn_more && crate::ui::app::gulp_button(ui, "Learn more").clicked() {
                         learned = true;
                     }
                     if let Some(label) = primary_action {
@@ -689,7 +689,7 @@ pub fn show_persistent_context_menu(
         .show(add_contents);
 }
 
-/// Attaches Burp Suite Pro v2026.3.3's universal right-click context menu
+/// Attaches Gulpsuite Professional's universal right-click context menu
 /// (`quick-start-pro-send-to-repeater.png`, `getting-started-logger-tab-3-context-menu.png`, `context-menu.html`)
 /// to any HTTP message or row widget.
 pub fn attach_message_context_menu(
@@ -1030,7 +1030,7 @@ fn auto_decode_value(val: &str) -> String {
 }
 
 /// Returns each auto-decoded step `(encoding_label, decoded_value)` in order (up to 3 steps),
-/// matching Burp's multi-step `Decoded from: [URL encoding / Base64 / HTML / ASCII hex]` chain
+/// matching Gulp's multi-step `Decoded from: [URL encoding / Base64 / HTML / ASCII hex]` chain
 /// (`inspector-cookie-decoding.png`).
 pub fn decode_chain_steps(val: &str) -> Vec<(String, String)> {
     let mut steps = Vec::new();
@@ -1079,7 +1079,7 @@ pub fn reencode_chain(decoded_edit: &str, steps: &[(String, String)]) -> String 
     cur
 }
 
-/// Paints Burp's 16x16 `resources/Media/svg/inspector.svg` icon (spy fedora hat + glasses).
+/// Paints Gulp's 16x16 `resources/Media/svg/inspector.svg` icon (spy fedora hat + glasses).
 pub fn paint_inspector_icon(ui: &mut Ui, color: eframe::egui::Color32) {
     use eframe::egui::{Pos2, Sense, Shape, Stroke, Vec2, pos2};
     let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
@@ -1100,7 +1100,7 @@ pub fn paint_inspector_icon(ui: &mut Ui, color: eframe::egui::Color32) {
     painter.line_segment([p(7.3, 11.6), p(8.7, 11.6)], Stroke::new(1.3 * u, color));
 }
 
-/// Paints Burp's 16x16 `resources/Media/svg/notes.svg` icon (lined document sheet).
+/// Paints Gulp's 16x16 `resources/Media/svg/notes.svg` icon (lined document sheet).
 pub fn paint_notes_icon(ui: &mut Ui, color: eframe::egui::Color32) {
     use eframe::egui::{Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2};
     let (rect, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
@@ -1214,7 +1214,7 @@ fn sync_cookies_into_headers(
     }
 }
 
-/// Burp Suite Pro v2026.3.3 Dockable Right/Left Side Panel (`Inspector` | `Notes`):
+/// Gulpsuite Professional Dockable Right/Left Side Panel (`Inspector` | `Notes`):
 /// Matches `inspector.png`, `inspector-cookie-decoding.png`, `inspector-edit-cookie.png`,
 /// and `inspector-selector-widget.png`.
 pub fn draw_inspector_and_notes_sidebar(
@@ -2494,7 +2494,7 @@ fn truncate_insp(s: &str, max_chars: usize) -> String {
     }
 }
 
-/// Burp's Inspector accordion: parses and displays Request attributes, Query parameters,
+/// Gulp's Inspector accordion: parses and displays Request attributes, Query parameters,
 /// Body parameters, Request cookies, Request headers, and Response headers with automatic decoding.
 pub fn draw_inspector(
     ui: &mut Ui,
@@ -2681,7 +2681,7 @@ pub fn draw_inspector(
     });
 }
 
-/// Exact Burp Suite Pro v2026.3.3 Site Map tree icons (`resources/Media/svg/site-map-*.svg`).
+/// Exact Gulpsuite Professional Site Map tree icons (`resources/Media/svg/site-map-*.svg`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SiteMapIcon {
     /// `site-map-secure.svg`: Gold padlock (`https://`)
@@ -2698,7 +2698,7 @@ pub enum SiteMapIcon {
     DefaultPage,
 }
 
-/// Paints a 16x16 Burp Site Map node icon with an optional bottom-right status/severity indicator dot
+/// Paints a 16x16 Gulp Site Map node icon with an optional bottom-right status/severity indicator dot
 /// (matching `Pro-QSG-5-site-map.png` and `site-map-populated.png`).
 pub fn paint_sitemap_node_icon(
     ui: &mut Ui,
@@ -2784,7 +2784,7 @@ pub fn paint_sitemap_node_icon(
     }
 }
 
-fn format_burp_hex_dump(text: &str) -> String {
+fn format_gulp_hex_dump(text: &str) -> String {
     let mut out = String::new();
     for (row, chunk) in text.as_bytes().chunks(16).enumerate() {
         out.push_str(&format!("{:08x}  ", row * 16));
@@ -2813,12 +2813,12 @@ fn format_non_printable(text: &str) -> String {
         .replace('\t', "\\t")
 }
 
-/// Renders Burp Suite Pro v2026.3.3's Message Editor header & formatter tab bar
+/// Renders Gulpsuite Professional's Message Editor header & formatter tab bar
 /// (`Pro-QSG-5-site-map.png`, `quick-start-pro-proxy-history.png`, `quick-start-pro-intercepted-request.png`):
 /// Bold `Request` / `Response` title on top, followed by `Pretty | Raw | Hex` (and optional `Render`)
 /// tabs with a 3px solid orange (`#FF6633`) underline under the active tab, plus the right-aligned
 /// `eye-crossed-out`, `line-wrap` (`#1858A8` blue pill when active), `\n`, and `≡` icons.
-pub fn burp_message_formatter_bar(
+pub fn gulp_message_formatter_bar(
     ui: &mut Ui,
     theme: &Theme,
     id_salt: &str,
@@ -2964,7 +2964,7 @@ pub fn burp_message_formatter_bar(
 }
 
 /// Read-only message view with wrapping enabled by default.
-pub fn burp_numbered_message_view(
+pub fn gulp_numbered_message_view(
     ui: &mut Ui,
     theme: &Theme,
     id_salt: &str,
@@ -2973,7 +2973,7 @@ pub fn burp_numbered_message_view(
     mode: usize,
     show_non_printable: bool,
 ) -> eframe::egui::Response {
-    burp_numbered_message_view_wrapped(
+    gulp_numbered_message_view_wrapped(
         ui,
         theme,
         id_salt,
@@ -2987,7 +2987,7 @@ pub fn burp_numbered_message_view(
 
 /// A single scroll viewport keeps wrapped message lines and their gutter aligned.
 /// Disables `ScrollArea` drag-to-scroll (`drag: false`) so mouse dragging selects ("blocks") text.
-pub fn burp_numbered_message_view_wrapped(
+pub fn gulp_numbered_message_view_wrapped(
     ui: &mut Ui,
     theme: &Theme,
     id_salt: &str,
@@ -3125,7 +3125,7 @@ fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
     }
 
     let display = if mode == 2 {
-        format_burp_hex_dump(raw)
+        format_gulp_hex_dump(raw)
     } else if mode == 0 {
         // Formatting is display-only; never rewrite a captured or editable message.
         let boundary = raw
@@ -3203,7 +3203,7 @@ fn html_text_preview(raw: &str) -> String {
 }
 
 /// Editable message; only the layout changes when wrapping is toggled.
-pub fn burp_numbered_message_editor(
+pub fn gulp_numbered_message_editor(
     ui: &mut Ui,
     theme: &Theme,
     id_salt: &str,
@@ -3211,10 +3211,10 @@ pub fn burp_numbered_message_editor(
     text: &mut String,
     mode: usize,
 ) -> (eframe::egui::Response, bool) {
-    burp_numbered_message_editor_wrapped(ui, theme, id_salt, height, text, mode, true)
+    gulp_numbered_message_editor_wrapped(ui, theme, id_salt, height, text, mode, true)
 }
 
-pub fn burp_numbered_message_editor_wrapped(
+pub fn gulp_numbered_message_editor_wrapped(
     ui: &mut Ui,
     theme: &Theme,
     id_salt: &str,
@@ -3226,7 +3226,7 @@ pub fn burp_numbered_message_editor_wrapped(
     use eframe::egui::{self, FontId};
     if mode >= 2 {
         return (
-            burp_numbered_message_view_wrapped(ui, theme, id_salt, height, text, mode, false, wrap),
+            gulp_numbered_message_view_wrapped(ui, theme, id_salt, height, text, mode, false, wrap),
             false,
         );
     }

@@ -1,6 +1,6 @@
 //! Discover: content discovery over the captured host list.
 //!
-//! Burp's Discover walks a starting point and reports what it finds. This does the same from the
+//! Gulp's Discover walks a starting point and reports what it finds. This does the same from the
 //! proxy history: it takes hosts already seen, requests a bounded set of well-known paths against
 //! them through the proxy, and lists what answered.
 
@@ -56,7 +56,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     ui.add_space(4.0);
     if app.panels.discover_running {
         ui.horizontal(|ui| {
-            super::scanner::paint_burp_spinner(
+            super::scanner::paint_gulp_spinner(
                 ui,
                 eframe::egui::Vec2::new(16.0, 16.0),
                 eframe::egui::Color32::from_rgb(0x5B, 0x4F, 0xFF),

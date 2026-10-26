@@ -11,7 +11,7 @@ engine/target/
 /*.app.backup.*/
 *.dSYM
 
-# Reverse engineering scratch: extracted Burp classes and resources, not part of the app
+# Local scratch directory
 /recon/
 
 # macOS

@@ -138,7 +138,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 }
 
 fn draw_contents(app: &mut App, ui: &mut Ui) {
-    let split = crate::ui::reference::burp_2026_3_3().dashboard.split_ratio;
+    let split = crate::ui::reference::gulp_reference().dashboard.split_ratio;
     let left = (ui.available_width() * split).max(260.0);
     let mut commands = Vec::new();
     ui.horizontal_top(|ui| {
@@ -380,11 +380,11 @@ fn task_card(app: &mut App, ui: &mut Ui, task: &Task, commands: &mut Vec<Dashboa
             } else {
                 0.22
             };
-            super::scanner::paint_burp_progress_bar_animated(ui, 185.0, ratio, is_running, &theme);
+            super::scanner::paint_gulp_progress_bar_animated(ui, 185.0, ratio, is_running, &theme);
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if is_running {
-                    super::scanner::paint_burp_spinner(
+                    super::scanner::paint_gulp_spinner(
                         ui,
                         Vec2::new(14.0, 14.0),
                         Color32::from_rgb(0x5B, 0x4F, 0xFF),
@@ -754,7 +754,7 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                         .clamp(0.15, 0.96)
                 };
                 ui.horizontal(|ui| {
-                    super::scanner::paint_burp_spinner(
+                    super::scanner::paint_gulp_spinner(
                         ui,
                         Vec2::new(14.0, 14.0),
                         Color32::from_rgb(0x5B, 0x4F, 0xFF),
@@ -765,7 +765,7 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                         theme.color("ui.icon.default"),
                         super::scanner::LauncherIcon::ScanDetails,
                     );
-                    super::scanner::paint_burp_progress_bar_animated(
+                    super::scanner::paint_gulp_progress_bar_animated(
                         ui,
                         150.0,
                         ratio,

@@ -58,7 +58,7 @@ fn wrapping_changes_message_layout_without_changing_text() {
         .with_size(Vec2::new(340.0, 400.0))
         .build_ui_state(
             |ui, state: &mut (String, bool)| {
-                gulpsuite::ui::panels::burp_numbered_message_view_wrapped(
+                gulpsuite::ui::panels::gulp_numbered_message_view_wrapped(
                     ui,
                     &gulpsuite::ui::theme::Theme::load(false),
                     "wrap-test",
@@ -127,7 +127,7 @@ fn pretty_json_is_display_only_and_raw_keeps_the_original_body() {
         .with_size(Vec2::new(440.0, 300.0))
         .build_ui_state(
             |ui, state: &mut (String, usize)| {
-                gulpsuite::ui::panels::burp_numbered_message_view(
+                gulpsuite::ui::panels::gulp_numbered_message_view(
                     ui,
                     &gulpsuite::ui::theme::Theme::load(false),
                     "json-test",

@@ -100,6 +100,14 @@ pub fn links(body: &str, base: &str) -> Vec<String> {
 
 /// Pulls every form and its fields out of an HTML body.
 pub fn forms(body: &str, base: &str) -> Vec<Vec<(String, String)>> {
+    forms_with_actions(body, base)
+        .into_iter()
+        .map(|(_, fields)| fields)
+        .collect()
+}
+
+/// Pulls every form, its resolved `action` URL, and its input fields out of an HTML body.
+pub fn forms_with_actions(body: &str, base: &str) -> Vec<(String, Vec<(String, String)>)> {
     let mut found = Vec::new();
     let lower = body.to_ascii_lowercase();
     let mut cursor = 0usize;
@@ -109,9 +117,15 @@ pub fn forms(body: &str, base: &str) -> Vec<Vec<(String, String)>> {
         let chunk = &body[from..from + end];
         cursor = from + end;
 
+        let form_tag_end = chunk.find('>').unwrap_or(chunk.len());
+        let form_tag = &chunk[..form_tag_end];
+        let action_url = attribute(form_tag, "action")
+            .and_then(|act| resolve(base, &act))
+            .unwrap_or_else(|| base.to_string());
+
         let mut fields = Vec::new();
         let mut at = 0usize;
-        while let Some(input_at) = chunk[at..].find("<input") {
+        while let Some(input_at) = chunk[at..].to_ascii_lowercase().find("<input") {
             let start = at + input_at;
             let Some(tag_end) = chunk[start..].find('>') else { break };
             let tag = &chunk[start..start + tag_end];
@@ -130,20 +144,25 @@ pub fn forms(body: &str, base: &str) -> Vec<Vec<(String, String)>> {
             fields.push((name, value));
         }
         if !fields.is_empty() {
-            found.push(fields);
+            found.push((action_url, fields));
         }
     }
-    let _ = base;
     found
 }
 
 fn attribute(tag: &str, name: &str) -> Option<String> {
     let lower = tag.to_ascii_lowercase();
-    let needle = format!("{name}=\"");
-    let at = lower.find(&needle)? + needle.len();
-    let rest = &tag[at..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+    for quote in ['"', '\''] {
+        let needle = format!("{name}={quote}");
+        if let Some(pos) = lower.find(&needle) {
+            let at = pos + needle.len();
+            let rest = &tag[at..];
+            if let Some(end) = rest.find(quote) {
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Injection points a page offers: query parameters, form fields, and JSON properties,
@@ -163,14 +182,14 @@ pub fn injection_points(url: &str, body: &str) -> Vec<InjectionPoint> {
         }
     }
 
-    for fields in forms(body, url) {
+    for (action_url, fields) in forms_with_actions(body, url) {
         for (index, (name, _)) in fields.iter().enumerate() {
             if super::active::is_ignored_insertion_point(name) {
                 continue;
             }
             let mut siblings = fields.clone();
             siblings.remove(index);
-            let mut point = InjectionPoint::query(url, name);
+            let mut point = InjectionPoint::query(&action_url, name);
             point.method = super::active::InjectionMethod::Form;
             point.siblings = siblings;
             points.push(point);
@@ -251,10 +270,11 @@ pub async fn crawl(
         return coverage;
     }
 
-    let mut queue: Vec<(String, usize)> = vec![(seed.to_string(), 0)];
+    let mut queue: std::collections::VecDeque<(String, usize)> =
+        std::collections::VecDeque::from([(seed.to_string(), 0)]);
     let mut seen: HashSet<String> = HashSet::new();
 
-    while let Some((url, depth)) = queue.pop() {
+    while let Some((url, depth)) = queue.pop_front() {
         if seen.len() >= scope.max_pages {
             break;
         }
@@ -293,13 +313,22 @@ pub async fn crawl(
         if depth >= scope.max_depth {
             continue;
         }
+        if (300..400).contains(&response.status) {
+            if let Some(loc) = response.header("location") {
+                if let Some(next_url) = resolve(&url, loc) {
+                    if !seen.contains(&super::http::path_of(&next_url)) && scope.allows(&next_url) {
+                        queue.push_back((next_url, depth + 1));
+                    }
+                }
+            }
+        }
         if response.status < 200 || response.status >= 400 {
             continue;
         }
         if url.ends_with("/robots.txt") {
             for link in parse_robots_txt(&response.body, &url) {
                 if !seen.contains(&super::http::path_of(&link)) && scope.allows(&link) {
-                    queue.push((link, depth + 1));
+                    queue.push_back((link, depth + 1));
                 }
             }
             continue;
@@ -307,7 +336,7 @@ pub async fn crawl(
         if url.ends_with("/sitemap.xml") {
             for link in parse_sitemap_xml(&response.body, &url) {
                 if !seen.contains(&super::http::path_of(&link)) && scope.allows(&link) {
-                    queue.push((link, depth + 1));
+                    queue.push_back((link, depth + 1));
                 }
             }
             continue;
@@ -319,7 +348,7 @@ pub async fn crawl(
 
         for link in links(&response.body, &url) {
             if !seen.contains(&super::http::path_of(&link)) && scope.allows(&link) {
-                queue.push((link, depth + 1));
+                queue.push_back((link, depth + 1));
             }
         }
     }

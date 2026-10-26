@@ -234,7 +234,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         }
                     });
                     columns[1].add_space(4.0);
-                    super::burp_message_formatter_bar(
+                    super::gulp_message_formatter_bar(
                         &mut columns[1],
                         &theme,
                         "org-req-fmt",
@@ -244,7 +244,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.organizer.req_wrap,
                         &mut app.panels.organizer.req_np,
                     );
-                    let r_req = super::burp_numbered_message_view_wrapped(
+                    let r_req = super::gulp_numbered_message_view_wrapped(
                         &mut columns[1],
                         &theme,
                         "org-req",
@@ -261,7 +261,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &item.request,
                         &item.response,
                     );
-                    super::burp_message_formatter_bar(
+                    super::gulp_message_formatter_bar(
                         &mut columns[1],
                         &theme,
                         "org-resp-fmt",
@@ -271,7 +271,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.organizer.resp_wrap,
                         &mut app.panels.organizer.resp_np,
                     );
-                    let r_resp = super::burp_numbered_message_view_wrapped(
+                    let r_resp = super::gulp_numbered_message_view_wrapped(
                         &mut columns[1],
                         &theme,
                         "org-resp",

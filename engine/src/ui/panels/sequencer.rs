@@ -14,7 +14,7 @@ pub struct SequencerPanel {
     pub automaton: Vec<String>,
 }
 
-/// Burp's Automaton view: run the statistical suite across a whole set of samples and detect the
+/// Gulp's Automaton view: run the statistical suite across a whole set of samples and detect the
 /// character set they came from.
 fn automaton(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();

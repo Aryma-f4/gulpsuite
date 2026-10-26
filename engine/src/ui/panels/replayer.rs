@@ -1,4 +1,4 @@
-//! Recorded login replayer. The last of Burp's non-AI tools.
+//! Recorded login replayer. The last of Gulp's non-AI tools.
 //!
 //! Capture the exchange for one host from the proxy history, then send it again and report where
 //! the replay diverged. Session handling lives in the proxy's cookie jar, so a replayed login

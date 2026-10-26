@@ -1,6 +1,6 @@
 [package]
 name = "gulpsuite"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Aryma-f4/gulpsuite"

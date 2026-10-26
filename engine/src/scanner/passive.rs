@@ -406,7 +406,7 @@ pub fn parse_semver(ver: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
-/// Burp Suite Pro's Retire.js Vulnerable JavaScript Dependency CVE Engine
+/// Gulpsuite Pro's Retire.js Vulnerable JavaScript Dependency CVE Engine
 /// (`resources/RetireJS/retirejs_repository.json`, `005009a0_VulnerableJsDependency`).
 /// Evaluates all 477 embedded Retire.js + modern npm vulnerability ranges with zero heap allocation
 /// for the rule table, consolidating all matching CVE/GHSA/CWE identifiers per `(library, version)`.

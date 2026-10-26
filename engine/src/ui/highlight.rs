@@ -1,9 +1,9 @@
 //! HTTP message syntax colouring.
 //!
-//! Burp ships the palette this uses: `ui.editor.message.*` names every token class it recognises
+//! Gulp ships the palette this uses: `ui.editor.message.*` names every token class it recognises
 //! (first line, header name, header value, parameter name and value, strings, numbers, tags,
 //! comments, CDATA, entities, annotations, operators). Colouring from those keys rather than
-//! inventing colours is what makes the editor look like Burp's instead of merely being dark.
+//! inventing colours is what makes the editor look like Gulp's instead of merely being dark.
 
 use eframe::epaint::text::{LayoutJob, TextFormat};
 use eframe::egui::{Color32, FontFamily, FontId, Stroke};
@@ -106,7 +106,7 @@ fn head_spans(head: &str, theme: &Theme) -> Vec<Span> {
             || name_part.trim().eq_ignore_ascii_case("set-cookie");
         out.push(Span::new(format!("{name_part}:"), name));
         if is_cookie {
-            // A cookie header is name=value pairs, and Burp colours the halves differently.
+            // A cookie header is name=value pairs, and Gulp colours the halves differently.
             out.extend(cookie_spans(value_part, cookie_name, cookie_value));
         } else {
             out.push(Span::new(value_part.to_string(), value));
@@ -297,11 +297,11 @@ fn json_spans(body: &str, theme: &Theme) -> Vec<Span> {
 /// HTML and XML: comments, CDATA, processing instructions, tags, attributes, entities.
 fn markup_spans(body: &str, theme: &Theme) -> Vec<Span> {
     let tag = theme.color("ui.editor.message.tagName");
-    // `tagDelimiter` exists in Burp's theme for exactly `<`, `>` and `/`. Painting those with
+    // `tagDelimiter` exists in Gulp's theme for exactly `<`, `>` and `/`. Painting those with
     // tagName made every angle bracket the same yellow as the tag itself.
     let tag_delimiter = theme.color("ui.editor.message.tagDelimiter");
     let attribute = theme.color("ui.editor.message.paramName");
-    // Attribute values pair with paramName, matching the form-encoded path and Burp's own scheme.
+    // Attribute values pair with paramName, matching the form-encoded path and Gulp's own scheme.
     let value = theme.color("ui.editor.message.paramValue");
     let comment = theme.color("ui.editor.message.comment");
     let cdata = theme.color("ui.editor.message.cdata");
@@ -368,7 +368,7 @@ fn markup_spans(body: &str, theme: &Theme) -> Vec<Span> {
     out
 }
 
-/// Splits one XML/HTML tag into Burp's four token classes: delimiters, the tag name, attribute
+/// Splits one XML/HTML tag into Gulp's four token classes: delimiters, the tag name, attribute
 /// names and attribute values. These were previously two colours with the name and delimiter
 /// swapped, so `<p id="x">` painted `p` as an attribute and `<`/`>` as the tag name.
 fn attribute_spans(
@@ -759,7 +759,7 @@ mod tests {
         let spans = spans(message, &theme);
         let first_line = &spans[0];
         assert_eq!(first_line.colour, theme.color("ui.editor.message.httpFirstLine"));
-        assert!(first_line.bold, "the request line is emphasised in Burp");
+        assert!(first_line.bold, "the request line is emphasised in Gulp");
     }
 
     #[test]
@@ -815,7 +815,7 @@ mod tests {
         assert!(seen.contains(&theme.color("ui.editor.message.comment")));
         assert!(seen.contains(&theme.color("ui.editor.message.tagName")));
         assert!(seen.contains(&theme.color("ui.editor.message.paramName")));
-        // Attribute values pair with paramName; the delimiter gets its own Burp key.
+        // Attribute values pair with paramName; the delimiter gets its own Gulp key.
         assert!(seen.contains(&theme.color("ui.editor.message.paramValue")));
         assert!(seen.contains(&theme.color("ui.editor.message.tagDelimiter")));
         assert!(seen.contains(&theme.color("ui.editor.message.entityReference")));
@@ -935,7 +935,7 @@ pub fn show_message_in(
 /// Renders an editable message, coloured by highlighting the text around the caret.
 ///
 /// egui's text edit cannot colour per character, so the editor stays plain and the coloured view
-/// sits beside it. Burp has the same pairing: a raw editor over a highlighted view.
+/// sits beside it. Gulp has the same pairing: a raw editor over a highlighted view.
 pub fn show_editable(
     ui: &mut eframe::egui::Ui,
     text: &mut String,
@@ -1027,7 +1027,7 @@ pub fn show_editable_in(
 }
 
 #[cfg(test)]
-mod burp_key_tests {
+mod gulp_key_tests {
     use super::*;
     use crate::ui::theme::Theme;
 
@@ -1042,10 +1042,10 @@ mod burp_key_tests {
         seen
     }
 
-    /// Every token colour the highlighter uses must exist in Burp's own theme. A key that resolves to
+    /// Every token colour the highlighter uses must exist in Gulp's own theme. A key that resolves to
     /// the grey fallback is invisible at runtime, so this is checked rather than assumed.
     #[test]
-    fn every_highlighter_colour_is_a_real_burp_key() {
+    fn every_highlighter_colour_is_a_real_gulp_key() {
         for dark in [true, false] {
             let theme = Theme::load(dark);
             let keys = [
@@ -1075,16 +1075,16 @@ mod burp_key_tests {
             for key in keys {
                 assert!(
                     theme.has(key),
-                    "{key} does not exist in Burp's theme (dark={dark})"
+                    "{key} does not exist in Gulp's theme (dark={dark})"
                 );
             }
         }
     }
 
-    /// Burp distinguishes tag delimiters from tag names, and attribute values from plain strings.
+    /// Gulp distinguishes tag delimiters from tag names, and attribute values from plain strings.
     /// Getting these wrong is invisible in a unit test but obvious on screen.
     #[test]
-    fn markup_delimiters_and_values_use_burp_distinct_keys() {
+    fn markup_delimiters_and_values_use_gulp_distinct_keys() {
         let theme = Theme::load(true);
         assert_ne!(
             theme.color("ui.editor.message.tagDelimiter"),
@@ -1113,7 +1113,7 @@ mod burp_key_tests {
         );
     }
 
-    /// Both of Burp's bundled themes must resolve, since Burp ships a light mode too.
+    /// Both of Gulp's bundled themes must resolve, since Gulp ships a light mode too.
     #[test]
     fn both_bundled_themes_resolve() {
         for dark in [true, false] {

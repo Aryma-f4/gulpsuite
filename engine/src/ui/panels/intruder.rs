@@ -1,4 +1,4 @@
-//! Native Burp Suite Professional v2026.3.3 Intruder panel:
+//! Native Gulpsuite Professional Intruder panel:
 //! Attack tabs (`1 × | +`), 50/50 Getting Started Rocket view, Attack Type selector with
 //! descriptions, orange `▶ Start attack` button, `Positions` request editor with visual `§...§`
 //! highlight markers, 8-column `Results` table (`Request`, `Payload`, `Status code`,
@@ -513,8 +513,81 @@ impl PayloadSet {
                     }
                 })
                 .collect(),
-            "Simple list" | "Custom modification" | "Custom iterator" | "Recursive grep"
-            | "Illegal Unicode" | "ECB block shuffler" | "Copy other payload" => {
+            "Custom iterator" => {
+                let rows: Vec<Vec<String>> = self
+                    .values
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.split(',').map(|s| s.trim().to_string()).collect())
+                    .collect();
+                if rows.is_empty() {
+                    Vec::new()
+                } else if rows.iter().all(|r| r.len() <= 1) {
+                    rows.into_iter().flatten().take(limit).collect()
+                } else {
+                    let mut current = vec![String::new()];
+                    for (idx, row) in rows.iter().enumerate() {
+                        let mut next = Vec::new();
+                        for prefix in &current {
+                            for item in row {
+                                if next.len() >= limit {
+                                    break;
+                                }
+                                if idx == 0 {
+                                    next.push(item.clone());
+                                } else {
+                                    next.push(format!("{prefix}{}{item}", self.custom_iterator_sep));
+                                }
+                            }
+                        }
+                        current = next;
+                    }
+                    current
+                }
+            }
+            "Illegal Unicode" => {
+                let mut out = Vec::new();
+                for line in self.values.lines().filter(|l| !l.is_empty()) {
+                    let candidates = [
+                        line.replace('/', "%c0%af").replace('.', "%c0%ae"),
+                        line.replace('/', "%e0%80%af").replace('.', "%e0%80%ae"),
+                        line.replace('/', "%u002f").replace('.', "%u002e"),
+                        line.replace('<', "%c0%bc").replace('>', "%c0%be").replace('\'', "%c0%a7"),
+                    ];
+                    for cand in candidates {
+                        if !out.contains(&cand) && out.len() < limit {
+                            out.push(cand);
+                        }
+                    }
+                }
+                if out.is_empty() {
+                    out.push("%c0%af".into());
+                }
+                out
+            }
+            "ECB block shuffler" => {
+                let block_len = self.ecb_block_size.max(4);
+                let mut out = Vec::new();
+                for line in self.values.lines().filter(|l| !l.is_empty()) {
+                    out.push(line.to_string());
+                    let bytes = line.as_bytes();
+                    if bytes.len() >= block_len * 2 {
+                        let chunks: Vec<&[u8]> = bytes.chunks(block_len).collect();
+                        for i in 0..chunks.len() {
+                            for j in (i + 1)..chunks.len() {
+                                let mut swapped = chunks.clone();
+                                swapped.swap(i, j);
+                                let candidate = String::from_utf8_lossy(&swapped.concat()).into_owned();
+                                if !out.contains(&candidate) && out.len() < limit {
+                                    out.push(candidate);
+                                }
+                            }
+                        }
+                    }
+                }
+                out
+            }
+            "Simple list" | "Custom modification" | "Recursive grep" | "Copy other payload" => {
                 let values: Vec<_> = self.values.lines().map(str::to_owned).collect();
                 if values.len() > limit {
                     return Err(format!("Payload set exceeds {limit} values"));
@@ -594,7 +667,7 @@ pub struct IntruderPanel {
     pub results_height: f32,
     pub detail_height: f32,
     pub split_ratio: f32,
-    // Burp v2026.3.3 multi-tab, Getting Started, Side Panel, Resource Pool, and Attack Settings
+    // Gulpsuite multi-tab, Getting Started, Side Panel, Resource Pool, and Attack Settings
     pub tabs: Vec<String>,
     pub active_tab: usize,
     pub show_getting_started: bool,
@@ -763,7 +836,72 @@ impl IntruderPanel {
         });
     }
 
-    pub fn record_exchange(&mut self, result: Result) {
+    pub fn record_exchange(&mut self, mut result: Result) {
+        if !result.response.is_empty() {
+            let search_target = if self.grep_match_exclude_headers {
+                crate::analysis::split_message(&result.response).1
+            } else {
+                result.response.as_str()
+            };
+            if self.grep_match_enabled {
+                let hay = if self.grep_match_case_sensitive {
+                    search_target.to_string()
+                } else {
+                    search_target.to_lowercase()
+                };
+                for expr in self
+                    .grep_match_expressions
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                {
+                    let matched_expr = if self.grep_match_regex {
+                        regex::RegexBuilder::new(expr)
+                            .case_insensitive(!self.grep_match_case_sensitive)
+                            .build()
+                            .is_ok_and(|re| re.is_match(search_target))
+                    } else {
+                        let needle = if self.grep_match_case_sensitive {
+                            expr.to_string()
+                        } else {
+                            expr.to_lowercase()
+                        };
+                        hay.contains(&needle)
+                    };
+                    if matched_expr {
+                        result.matched = true;
+                        let tag = format!("[Grep: {expr}]");
+                        if !result.comment.contains(&tag) {
+                            if !result.comment.is_empty() {
+                                result.comment.push(' ');
+                            }
+                            result.comment.push_str(&tag);
+                        }
+                        break;
+                    }
+                }
+            }
+            if self.grep_extract_enabled && !self.grep_extract_pattern.trim().is_empty() {
+                if let Ok(re) = regex::Regex::new(self.grep_extract_pattern.trim()) {
+                    if let Some(caps) = re.captures(&result.response) {
+                        let val = caps
+                            .get(1)
+                            .or_else(|| caps.get(0))
+                            .map(|m| m.as_str())
+                            .unwrap_or_default();
+                        let truncated: String =
+                            val.chars().take(self.grep_extract_max_len.max(1)).collect();
+                        let tag = format!("[Extract: {truncated}]");
+                        if !result.comment.contains(&tag) {
+                            if !result.comment.is_empty() {
+                                result.comment.push(' ');
+                            }
+                            result.comment.push_str(&tag);
+                        }
+                    }
+                }
+            }
+        }
         if self.auto_pause_enabled && !result.response.is_empty() {
             let check_text = if self.auto_pause_case_sensitive {
                 result.response.clone()
@@ -870,7 +1008,7 @@ fn draw_getting_started(app: &mut App, ui: &mut Ui) {
 
     ui.spacing_mut().item_spacing.x = 0.0;
     ui.columns(2, |cols| {
-        // LEFT 50%: "To get started, send a request to Intruder from anywhere in Burp." + `intruder-illustration.svg`
+        // LEFT 50%: "To get started, send a request to Intruder from anywhere in Gulp." + `intruder-illustration.svg`
         egui::Frame::new()
             .fill(left_bg)
             .inner_margin(egui::Margin::same(0))
@@ -1556,7 +1694,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
     let mode = app.panels.intruder.template_view_mode;
     let resp = if mode == 2 {
         let tmpl_clone = app.panels.intruder.template.clone();
-        super::burp_numbered_message_view(
+        super::gulp_numbered_message_view(
             ui,
             &theme,
             "intruder-template-hex",
@@ -1566,7 +1704,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             false,
         )
     } else {
-        let (r, _) = super::burp_numbered_message_editor_wrapped(
+        let (r, _) = super::gulp_numbered_message_editor_wrapped(
             ui,
             &theme,
             "intruder-positions-edit",
@@ -1727,7 +1865,7 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
         app.panels.intruder.selected = rows.first().map(|r| r.index);
     }
 
-    // 8 Burp Suite Pro v2026.3.3 columns (`Request`, `Payload`, `Status`, `Length`, `Time (ms)`, `Error`, `Timeout`, `Result`)
+    // 8 Gulpsuite Professional columns (`Request`, `Payload`, `Status`, `Length`, `Time (ms)`, `Error`, `Timeout`, `Result`)
     let results_h = app.panels.intruder.results_height;
     egui::ScrollArea::both()
         .id_salt("intruder-results")
@@ -3243,4 +3381,82 @@ pub(crate) fn start(app: &mut App) {
         tx,
     ));
     app.status = format!("Intruder: running {total} requests");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_requests_recalculates_content_length_for_variable_length_payloads() {
+        let template = "POST /login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10\r\n\r\nuser=§bob§";
+        let reqs = intruder::generate_requests(
+            template,
+            AttackType::Sniper,
+            &[vec!["administrator".into(), "x".into()]],
+            10,
+        )
+        .unwrap();
+        assert!(
+            reqs[0].request.contains("Content-Length: 18\r\n"),
+            "got: {}",
+            reqs[0].request
+        );
+        assert!(
+            reqs[1].request.contains("Content-Length: 6\r\n"),
+            "got: {}",
+            reqs[1].request
+        );
+    }
+
+    #[test]
+    fn illegal_unicode_ecb_shuffler_and_custom_iterator_generate_distinct_payloads() {
+        let mut set = PayloadSet {
+            kind: "Illegal Unicode".into(),
+            values: "../admin".into(),
+            ..Default::default()
+        };
+        let unicode = set.generate(20).unwrap();
+        assert!(unicode.iter().any(|p| p.contains("%c0%af")));
+        assert!(unicode.iter().any(|p| p.contains("%e0%80%af")));
+
+        set.kind = "ECB block shuffler".into();
+        set.ecb_block_size = 4;
+        set.values = "AAAABBBBCCCC".into();
+        let shuffled = set.generate(20).unwrap();
+        assert!(shuffled.contains(&"BBBBAAAACCCC".to_string()));
+        assert!(shuffled.contains(&"CCCCBBBBAAAA".to_string()));
+
+        set.kind = "Custom iterator".into();
+        set.custom_iterator_sep = ":".into();
+        set.values = "admin, root\n1234, toor".into();
+        let iter_out = set.generate(20).unwrap();
+        assert_eq!(
+            iter_out,
+            vec!["admin:1234", "admin:toor", "root:1234", "root:toor"]
+        );
+    }
+
+    #[test]
+    fn record_exchange_evaluates_grep_match_and_grep_extract() {
+        let mut panel = IntruderPanel::default();
+        panel.grep_match_enabled = true;
+        panel.grep_match_expressions = "sql syntax\nfatal error".into();
+        panel.grep_extract_enabled = true;
+        panel.grep_extract_pattern = "<title>(.*?)</title>".into();
+
+        panel.record_exchange(Result {
+            index: 0,
+            status: 500,
+            length: 64,
+            matched: false,
+            response: "HTTP/1.1 500 Internal Server Error\r\n\r\n<title>DB Error</title>You have an error in your SQL syntax".into(),
+            ..Default::default()
+        });
+        assert_eq!(panel.results.len(), 1);
+        assert!(panel.results[0].matched);
+        assert_eq!(panel.matches, 1);
+        assert!(panel.results[0].comment.contains("[Grep: sql syntax]"));
+        assert!(panel.results[0].comment.contains("[Extract: DB Error]"));
+    }
 }

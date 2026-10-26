@@ -1,6 +1,6 @@
 //! How much memory this process is using.
 //!
-//! Burp shows a memory readout in its status bar. This is the same idea for a native build, read
+//! Gulp shows a memory readout in its status bar. This is the same idea for a native build, read
 //! from the operating system rather than from a JVM heap counter.
 
 use std::sync::LazyLock;
@@ -73,7 +73,7 @@ fn rss_linux() -> Option<u64> {
     Some(pages * 4096)
 }
 
-/// A short human-readable size, the way Burp writes it: `36.2MB`.
+/// A short human-readable size, the way Gulp writes it: `36.2MB`.
 pub fn format_size(bytes: u64) -> String {
     const MB: f64 = 1_048_576.0;
     let mb = bytes as f64 / MB;
@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn sizes_are_written_the_way_burp_writes_them() {
+    fn sizes_are_written_the_way_gulp_writes_them() {
         assert_eq!(format_size(36 * 1_048_576 + 200_000), "36.2MB");
         assert_eq!(format_size(2 * 1_048_576 * 1024), "2.00GB");
         assert_eq!(format_size(512 * 1024), "512KB");

@@ -1,4 +1,4 @@
-//! Decoder: Burp v2026.3.3 stacked transformation stages with right-hand control column.
+//! Decoder: Gulpsuite stacked transformation stages with right-hand control column.
 
 use eframe::egui::Ui;
 

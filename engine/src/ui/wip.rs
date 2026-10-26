@@ -5,14 +5,14 @@ use crate::ui::theme::Theme;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WipFeature {
     Ai,
-    BappStore,
+    GappStore,
 }
 
 impl WipFeature {
     pub fn title(self) -> &'static str {
         match self {
             Self::Ai => "AI — Work in progress",
-            Self::BappStore => "BApp Store — Work in progress",
+            Self::GappStore => "GApp Store — Work in progress",
         }
     }
 
@@ -21,7 +21,7 @@ impl WipFeature {
             Self::Ai => {
                 "AI-assisted investigation, explanation, and workflow automation will live here."
             }
-            Self::BappStore => {
+            Self::GappStore => {
                 "Browse, install, update, and manage community extensions from one catalog."
             }
         }
@@ -30,7 +30,7 @@ impl WipFeature {
     pub fn status(self) -> &'static str {
         match self {
             Self::Ai => "The interface route is complete. Model integration is intentionally deferred.",
-            Self::BappStore => {
+            Self::GappStore => {
                 "The interface route is complete. Remote catalog and package installation are intentionally deferred."
             }
         }
@@ -88,7 +88,7 @@ pub fn draw_panel(ui: &mut Ui, feature: WipFeature, theme: &Theme) -> bool {
 pub fn public_labels() -> Vec<&'static str> {
     let mut labels: Vec<_> = crate::ui::app::TOOLS.to_vec();
     labels.extend(crate::ui::app::TOOL_VIEWS.into_iter().flatten());
-    labels.extend([WipFeature::Ai.title(), WipFeature::BappStore.title()]);
+    labels.extend([WipFeature::Ai.title(), WipFeature::GappStore.title()]);
     labels
 }
 
@@ -97,14 +97,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ai_and_bapp_store_have_explicit_labeled_routes() {
+    fn ai_and_gapp_store_have_explicit_labeled_routes() {
         let mut state = WipState::default();
         state.open(WipFeature::Ai);
         assert_eq!(state.active(), Some(WipFeature::Ai));
         assert!(WipFeature::Ai.title().contains("AI"));
-        state.open(WipFeature::BappStore);
-        assert_eq!(state.active(), Some(WipFeature::BappStore));
-        assert!(WipFeature::BappStore.title().contains("BApp Store"));
+        state.open(WipFeature::GappStore);
+        assert_eq!(state.active(), Some(WipFeature::GappStore));
+        assert!(WipFeature::GappStore.title().contains("GApp Store"));
     }
 
     #[test]

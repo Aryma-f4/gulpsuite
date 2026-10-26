@@ -37,11 +37,11 @@ pub struct EvidenceReference {
     pub feature_classes: String,
 }
 
-pub fn burp_2026_3_3() -> &'static ReferenceSpec {
+pub fn gulp_reference() -> &'static ReferenceSpec {
     static REFERENCE: OnceLock<ReferenceSpec> = OnceLock::new();
     REFERENCE.get_or_init(|| {
-        serde_json::from_str(include_str!("../../assets/reference/burp-v2026.3.3.json"))
-            .expect("Burp v2026.3.3 reference specification must be valid JSON")
+        serde_json::from_str(include_str!("../../assets/reference/gulp-layout.json"))
+            .expect("Gulp layout reference specification must be valid JSON")
     })
 }
 
@@ -51,8 +51,8 @@ mod tests {
 
     #[test]
     fn reference_identifies_exact_version_and_evidence() {
-        let reference = burp_2026_3_3();
-        assert_eq!(reference.version, "2026.3.3");
+        let reference = gulp_reference();
+        assert_eq!(reference.version, "0.0.9");
         assert_eq!(
             reference.evidence.archive_inventory,
             "ev_cd380653b98d0d56dd3f20aaf03de9812c408900b14c1f25ce97d65c94c8686e"
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn reference_preserves_observed_tool_order() {
         assert_eq!(
-            burp_2026_3_3().shell.tools,
+            gulp_reference().shell.tools,
             [
                 "Dashboard",
                 "Target",
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn reference_dashboard_geometry_matches_capture() {
-        let reference = burp_2026_3_3();
+        let reference = gulp_reference();
         assert_eq!(reference.shell.tool_row_height, 31.0);
         assert_eq!(reference.shell.sub_row_height, 30.0);
         assert_eq!(reference.shell.status_height, 36.0);

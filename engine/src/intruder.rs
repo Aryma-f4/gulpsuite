@@ -213,6 +213,7 @@ pub fn generate_requests(
             start = range.end;
         }
         request.push_str(&template[start..]);
+        let request = sync_content_length(&request);
         Ok(AttackRequest { request, payloads })
     };
     let mut requests = Vec::with_capacity(count);
@@ -476,8 +477,46 @@ async fn cancelled(state: &mut watch::Receiver<AttackState>) {
     }
 }
 
+/// Updates any existing `Content-Length` header in `raw` to match the byte length of its body.
+pub fn sync_content_length(raw: &str) -> String {
+    let sep = if let Some(idx) = raw.find("\r\n\r\n") {
+        Some((idx, "\r\n\r\n", "\r\n"))
+    } else {
+        raw.find("\n\n").map(|idx| (idx, "\n\n", "\n"))
+    };
+    let Some((sep_idx, sep_str, line_sep)) = sep else {
+        return raw.to_string();
+    };
+    let head = &raw[..sep_idx];
+    let body = &raw[sep_idx + sep_str.len()..];
+    let has_cl = head.lines().skip(1).any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+    });
+    if !has_cl {
+        return raw.to_string();
+    }
+    let mut updated = String::with_capacity(raw.len() + 16);
+    for (i, line) in head.lines().enumerate() {
+        if i > 0
+            && line
+                .split_once(':')
+                .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        {
+            updated.push_str(&format!("Content-Length: {}{line_sep}", body.len()));
+        } else {
+            updated.push_str(line);
+            updated.push_str(line_sep);
+        }
+    }
+    updated.push_str(line_sep);
+    updated.push_str(body);
+    updated
+}
+
 pub fn update_host_header(raw: &str, authority: &str) -> String {
-    let (head, body) = crate::analysis::split_message(raw);
+    let raw_synced = sync_content_length(raw);
+    let (head, body) = crate::analysis::split_message(&raw_synced);
     let mut updated = String::new();
     let mut found = false;
     for line in head.lines() {

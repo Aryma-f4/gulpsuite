@@ -1,4 +1,4 @@
-//! Burp Suite Professional v2026.3.3 Repeater (`quick-start-pro-repeater.png`,
+//! Gulpsuite Professional Repeater (`quick-start-pro-repeater.png`,
 //! `quick-start-pro-repeater-history.png`, `send-group.html`, `tab-settings.html`, `groups.html`):
 //! - Multi-tab strip with 3px orange `#FF6633` underline, tab groups & colors, right-click
 //!   tab management (`Rename`, `Duplicate`, `Add to group`, `Close other/left/right`, `Reopen closed tab`),
@@ -25,7 +25,7 @@ pub struct RepeaterExchange {
     pub elapsed_ms: u128,
 }
 
-/// One request in the Repeater. Burp keeps several open at once, each in its own tab.
+/// One request in the Repeater. Gulp keeps several open at once, each in its own tab.
 #[derive(Clone)]
 pub struct RepeaterTab {
     /// The name on the tab, taken from the target.
@@ -226,7 +226,7 @@ impl RepeaterPanel {
         &mut self.tabs[index]
     }
 
-    /// Opens a request in a new tab, the way Burp does when something is sent to the Repeater.
+    /// Opens a request in a new tab, the way Gulp does when something is sent to the Repeater.
     pub fn open(&mut self, host: &str, raw: &str) {
         self.show_getting_started = false;
         self.force_getting_started = false;
@@ -454,7 +454,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         }
     }
 
-    // Single-row Burp Repeater Action Toolbar (`quick-start-pro-repeater.png` & `quick-start-pro-repeater-history.png`)
+    // Single-row Gulp Repeater Action Toolbar (`quick-start-pro-repeater.png` & `quick-start-pro-repeater-history.png`)
     let bar_bg = theme.color("ui.background.0");
     let border_col = theme.color("ui.border.1");
     egui::Frame::new()
@@ -1236,7 +1236,7 @@ fn draw_request_pane(
         repeater_actions_menu(app, ui);
     });
     let resp = if mode == 2 {
-        super::burp_numbered_message_view_wrapped(
+        super::gulp_numbered_message_view_wrapped(
             ui,
             theme,
             "repeater-req-hex",
@@ -1247,7 +1247,7 @@ fn draw_request_pane(
             wrap,
         )
     } else {
-        let (r, _) = super::burp_numbered_message_editor_wrapped(
+        let (r, _) = super::gulp_numbered_message_editor_wrapped(
             ui,
             theme,
             "repeater-req-edit",
@@ -1323,7 +1323,7 @@ fn draw_response_pane(
     super::show_persistent_context_menu(&header_resp, |ui| {
         repeater_actions_menu(app, ui);
     });
-    let resp = super::burp_numbered_message_view_wrapped(
+    let resp = super::gulp_numbered_message_view_wrapped(
         ui,
         theme,
         "repeater-resp-pretty",
@@ -1509,7 +1509,7 @@ fn draw_repeater_getting_started(app: &mut App, ui: &mut Ui, theme: &crate::ui::
 
     ui.spacing_mut().item_spacing.x = 0.0;
     ui.columns(2, |cols| {
-        // LEFT 50%: "To get started, send a request to Repeater from anywhere in Burp." + `repeater-illustration.svg`
+        // LEFT 50%: "To get started, send a request to Repeater from anywhere in Gulp." + `repeater-illustration.svg`
         egui::Frame::new()
             .fill(left_bg)
             .inner_margin(egui::Margin::same(0))
@@ -2111,7 +2111,7 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
     }
 }
 
-/// Burp's response analyzers. Backed by `http/message/responses/analysis/*` in the shipped API:
+/// Gulp's response analyzers. Backed by `http/message/responses/analysis/*` in the shipped API:
 /// a keywords analyser, a variations analyser and attribute extraction.
 fn analyzers(app: &mut App, ui: &mut Ui, response: &str) {
     let theme = app.theme.clone();
@@ -2296,9 +2296,120 @@ pub(crate) fn follow_redirect(app: &mut App, next_host: &str, next_path: &str) {
         .unwrap_or("localhost")
         .to_string();
     let tab = app.panels.repeater.active_mut();
+    let preserve_method = matches!(tab.status, Some(307 | 308));
+    let (old_head, old_body) = crate::analysis::split_message(&tab.raw);
+    let mut old_lines = old_head.lines();
+    let first_line = old_lines.next().unwrap_or("GET / HTTP/1.1");
+    let orig_method = first_line.split_whitespace().next().unwrap_or("GET");
+    let proto = first_line.split_whitespace().nth(2).unwrap_or("HTTP/1.1");
+    let new_method = if preserve_method { orig_method } else { "GET" };
+
+    // Extract any `Set-Cookie` from the redirect response
+    let (resp_head, _) = crate::analysis::split_message(&tab.response);
+    let mut new_cookies: Vec<String> = Vec::new();
+    for rline in resp_head.lines() {
+        if let Some((k, v)) = rline.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("set-cookie") {
+                if let Some(pair) = v.split(';').next() {
+                    let trimmed = pair.trim();
+                    if !trimmed.is_empty() {
+                        new_cookies.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut headers_out = vec![
+        format!("{new_method} {next_path} {proto}"),
+        format!("Host: {authority}"),
+    ];
+    let mut had_cookie = false;
+    for line in old_lines {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        let kt = k.trim();
+        if kt.eq_ignore_ascii_case("host") {
+            continue;
+        }
+        if !preserve_method
+            && (kt.eq_ignore_ascii_case("content-length")
+                || kt.eq_ignore_ascii_case("content-type"))
+        {
+            continue;
+        }
+        if kt.eq_ignore_ascii_case("cookie") {
+            had_cookie = true;
+            if new_cookies.is_empty() {
+                headers_out.push(format!("Cookie: {}", v.trim()));
+            } else {
+                headers_out.push(format!("Cookie: {}; {}", v.trim(), new_cookies.join("; ")));
+            }
+        } else {
+            headers_out.push(format!("{kt}: {}", v.trim()));
+        }
+    }
+    if !had_cookie && !new_cookies.is_empty() {
+        headers_out.push(format!("Cookie: {}", new_cookies.join("; ")));
+    }
+    if !headers_out
+        .iter()
+        .any(|h| h.to_ascii_lowercase().starts_with("connection:"))
+    {
+        headers_out.push("Connection: close".into());
+    }
     tab.host = next_host.to_string();
-    tab.raw = format!("GET {next_path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
+    if preserve_method && !old_body.is_empty() {
+        tab.raw = format!("{}\r\n\r\n{old_body}", headers_out.join("\r\n"));
+    } else {
+        tab.raw = format!("{}\r\n\r\n", headers_out.join("\r\n"));
+    }
     send(app);
+}
+
+/// Normalizes HTTP/1.1 header line endings (`\r\n`) and optionally recalculates `Content-Length`
+/// to match the current request body byte length.
+pub fn normalize_http_request(
+    raw: &str,
+    normalize_newlines: bool,
+    update_content_length: bool,
+) -> String {
+    let (head, body) = crate::analysis::split_message(raw);
+    if !normalize_newlines && !update_content_length {
+        return raw.to_string();
+    }
+    let mut lines: Vec<String> = head.lines().map(|l| l.trim_end_matches('\r').to_string()).collect();
+    if lines.is_empty() {
+        return raw.to_string();
+    }
+    if update_content_length {
+        let first_method = lines[0]
+            .split_whitespace()
+            .next()
+            .unwrap_or("GET")
+            .to_ascii_uppercase();
+        let has_body_or_cl = !body.is_empty()
+            || matches!(first_method.as_str(), "POST" | "PUT" | "PATCH")
+            || lines
+                .iter()
+                .skip(1)
+                .any(|l| l.to_ascii_lowercase().starts_with("content-length:"));
+        if has_body_or_cl {
+            let body_len = body.len();
+            let mut updated = false;
+            for line in lines.iter_mut().skip(1) {
+                if line.to_ascii_lowercase().starts_with("content-length:") {
+                    *line = format!("Content-Length: {body_len}");
+                    updated = true;
+                }
+            }
+            if !updated && !body.is_empty() {
+                lines.push(format!("Content-Length: {body_len}"));
+            }
+        }
+    }
+    format!("{}\r\n\r\n{body}", lines.join("\r\n"))
 }
 
 /// Sends all tabs in the active group (or all tabs when ungrouped) in sequence or parallel (`send-group.html`).
@@ -2330,11 +2441,14 @@ pub(crate) fn send(app: &mut App) {
             return;
         }
     };
-    let raw = match app
-        .panels
-        .extender
-        .apply_live(&app.panels.repeater.active().raw)
-    {
+    let norm_nl = app.panels.repeater.active().normalize_line_endings;
+    let upd_cl = app.panels.repeater.active().update_content_length;
+    let normalized_raw = normalize_http_request(
+        &app.panels.repeater.active().raw,
+        norm_nl,
+        upd_cl,
+    );
+    let raw = match app.panels.extender.apply_live(&normalized_raw) {
         Ok(raw) => raw,
         Err(why) => {
             app.status = format!("Bambda rejected the request: {why}");

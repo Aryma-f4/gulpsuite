@@ -1,6 +1,6 @@
 //! Sequencer's Automaton: automatic statistical analysis of a set of samples.
 //!
-//! Burp's Automaton view runs the same statistical tests as the manual Sequencer across a whole set
+//! Gulp's Automaton view runs the same statistical tests as the manual Sequencer across a whole set
 //! of requests, and additionally detects the character set those samples are drawn from.
 
 use std::collections::BTreeMap;
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verdict {
     pub test: &'static str,
-    /// Burp labels each test Pass, Interest or Fail.
+    /// Gulp labels each test Pass, Interest or Fail.
     pub outcome: Outcome,
     pub observed: f64,
     pub p_value: f64,
@@ -192,7 +192,7 @@ pub fn analyse(samples: &[Vec<u8>]) -> Vec<Verdict> {
 
 /// The character set the samples are drawn from, as a readable string.
 ///
-/// Burp reports a detected set such as "Hexadecimal" or "Base64"; this returns the printable
+/// Gulp reports a detected set such as "Hexadecimal" or "Base64"; this returns the printable
 /// characters actually observed, plus a guess at the encoding family.
 pub fn detect_charset(samples: &[Vec<u8>]) -> (String, &'static str) {
     let joined: Vec<u8> = samples.iter().flat_map(|s| s.iter().copied()).collect();

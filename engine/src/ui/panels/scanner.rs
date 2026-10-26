@@ -1,4 +1,4 @@
-//! Burp Suite Professional v2026.3.3 Scanner & "New scan" Scan Launcher:
+//! Gulpsuite Professional Scanner & "New scan" Scan Launcher:
 //! - Matches `Pro-QSG-2-scan-details.png` and `Pro-QSG-3-scan-configuration.png` 100% pixel-for-pixel:
 //!   - 100px-wide flush left vertical tile rail (`Scan details`, `Scan configuration`,
 //!     `Application login`, `Resource pool`) with `#26649D` solid blue active tile fill,
@@ -8,7 +8,7 @@
 //!     `Detailed scope configuration`, and `Run isolated scan`
 //!   - `Scan configuration` with `Use a preset scan mode` vs `Use a custom configuration`,
 //!     2×2 preset card grid (`Lightweight`, `Fast`, `Balanced`, `Deep`) with left radio circle,
-//!     SVG icon + bold title + exact Burp description, and `Remember my choice for future scans`
+//!     SVG icon + bold title + exact Gulp description, and `Remember my choice for future scans`
 //!   - Full-width 44px bottom footer bar with `?` (`help.svg`) on the far left and
 //!     bordered `OK` + `Cancel` buttons on the far right.
 
@@ -21,8 +21,8 @@ use eframe::egui::{
 use super::{heading, muted};
 use crate::ui::app::App;
 
-/// Complete Burp Suite Professional v2026.3.3 Scanner & Scan Launcher vector icon set,
-/// traced directly from `resources/Media/svg/*.svg` in `burpsuite_pro_v2025.jar`.
+/// Complete Gulpsuite Professional Scanner & Scan Launcher vector icon set,
+/// rendered from the native `resources/Media/svg/*.svg` vector geometry.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LauncherIcon {
     /// `resources/Media/svg/light/scanner.svg` (90x63 isometric purple diamond with lightning bolt & 4 brackets)
@@ -449,9 +449,9 @@ pub fn paint_launcher_icon(ui: &mut Ui, size: Vec2, color: Color32, icon: Launch
     paint_launcher_icon_in_rect(&painter, rect, color, icon);
 }
 
-/// Paints Burp Suite Pro's animated rotating loading spinner (`resources/Media/svg/spinner.svg`)
+/// Paints Gulpsuite Pro's animated rotating loading spinner (`resources/Media/svg/spinner.svg`)
 /// and schedules a 20 FPS repaint while active.
-pub fn paint_burp_spinner(ui: &mut Ui, size: Vec2, color: Color32) {
+pub fn paint_gulp_spinner(ui: &mut Ui, size: Vec2, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
     let c = rect.center();
@@ -473,19 +473,19 @@ pub fn paint_burp_spinner(ui: &mut Ui, size: Vec2, color: Color32) {
     }
 }
 
-/// Paints Burp Suite Pro's purple `#5B4FFF` scan progress bar (`Pro-QSG-4-crawl-and-audit.png`).
-pub fn paint_burp_progress_bar(
+/// Paints Gulpsuite Pro's purple `#5B4FFF` scan progress bar (`Pro-QSG-4-crawl-and-audit.png`).
+pub fn paint_gulp_progress_bar(
     ui: &mut Ui,
     width: f32,
     ratio: f32,
     theme: &crate::ui::theme::Theme,
 ) {
-    paint_burp_progress_bar_animated(ui, width, ratio, false, theme);
+    paint_gulp_progress_bar_animated(ui, width, ratio, false, theme);
 }
 
-/// Paints Burp Suite Pro's `#5B4FFF` pill-shaped progress bar (`ProgressBar.arc = 999` in `BurpLaf.properties`
+/// Paints Gulpsuite Pro's `#5B4FFF` pill-shaped progress bar (`ProgressBar.arc = 999` in `GulpLaf.properties`
 /// and `Pro-QSG-4-crawl-and-audit.png`), with an animated sweeping shimmer band when `active` is true.
-pub fn paint_burp_progress_bar_animated(
+pub fn paint_gulp_progress_bar_animated(
     ui: &mut Ui,
     width: f32,
     ratio: f32,
@@ -527,7 +527,7 @@ pub fn paint_burp_progress_bar_animated(
     }
 }
 
-/// Renders Burp Suite Pro's Scanner loading bar banner (`Pro-QSG-4-crawl-and-audit.png` & `Pro-QSG-6-view-issues.png`)
+/// Renders Gulpsuite Pro's Scanner loading bar banner (`Pro-QSG-4-crawl-and-audit.png` & `Pro-QSG-6-view-issues.png`)
 /// with the `scanning.svg` radar-pulse icon, `#5B4FFF` pill progress bar, live phase/probe counter,
 /// and High/Medium/Low/Info issue count pills.
 pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
@@ -587,7 +587,7 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 if is_running {
-                    paint_burp_spinner(ui, Vec2::new(14.0, 14.0), Color32::from_rgb(0x5B, 0x4F, 0xFF));
+                    paint_gulp_spinner(ui, Vec2::new(14.0, 14.0), Color32::from_rgb(0x5B, 0x4F, 0xFF));
                 }
                 paint_launcher_icon(
                     ui,
@@ -641,7 +641,7 @@ pub fn draw_scanner_loading_banner(app: &mut App, ui: &mut Ui) {
                     },
                 );
                 ui.add_space(4.0);
-                paint_burp_progress_bar_animated(ui, bar_w, ratio, is_running, &theme);
+                paint_gulp_progress_bar_animated(ui, bar_w, ratio, is_running, &theme);
                 let pct = (ratio * 100.0).round() as u32;
                 ui.allocate_ui_with_layout(
                     Vec2::new(38.0, 20.0),
@@ -822,7 +822,7 @@ pub struct ScannerPanel {
     pub findings: Vec<crate::scanner::Finding>,
     pub pages: Vec<(String, u16)>,
     pub only_high: bool,
-    // Burp Suite Pro v2026.3.3 "New scan" Scan Launcher state
+    // Gulpsuite Professional "New scan" Scan Launcher state
     pub show_launcher: bool,
     pub launcher_tab: usize,
     /// 0 = Crawl and audit, 1 = Crawl, 2 = Audit selected items, 3 = API-only scan
@@ -876,7 +876,7 @@ pub struct ScannerPanel {
     pub new_bcheck_type: String,
     pub new_bcheck_runs: String,
     pub new_bcheck_script: String,
-    // Burp Scanner Reporting Wizard (`Pro-QSG-8-configure-report.png` & `reporting/report-settings.html`)
+    // Gulp Scanner Reporting Wizard (`Pro-QSG-8-configure-report.png` & `reporting/report-settings.html`)
     pub show_report_wizard: bool,
     /// 0 = HTML, 1 = XML
     pub report_format: usize,
@@ -1073,7 +1073,7 @@ impl ScannerPanel {
     }
 }
 
-/// Renders Burp Suite Professional v2026.3.3's "New scan" Scan Launcher, matching
+/// Renders Gulpsuite Professional's "New scan" Scan Launcher, matching
 /// `Pro-QSG-2-scan-details.png` and `Pro-QSG-3-scan-configuration.png` 100%.
 pub fn draw_scan_launcher(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
@@ -1334,8 +1334,8 @@ pub fn draw_scan_launcher(app: &mut App, ui: &mut Ui) {
     );
 }
 
-/// Paints a 16x16 Burp radio circle (`resources/Media/svg/light/radio-selected.svg` / `radio.svg`).
-fn paint_burp_radio_circle(ui: &mut Ui, selected: bool, hovered: bool, theme: &crate::ui::theme::Theme) {
+/// Paints a 16x16 Gulp radio circle (`resources/Media/svg/light/radio-selected.svg` / `radio.svg`).
+fn paint_gulp_radio_circle(ui: &mut Ui, selected: bool, hovered: bool, theme: &crate::ui::theme::Theme) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
     let painter = ui.painter_at(rect);
     let c = rect.center();
@@ -1393,7 +1393,7 @@ fn draw_scan_type_option_card(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                paint_burp_radio_circle(ui, selected, hovered, theme);
+                paint_gulp_radio_circle(ui, selected, hovered, theme);
                 ui.add_space(6.0);
                 paint_launcher_icon(
                     ui,
@@ -1955,7 +1955,7 @@ fn draw_launcher_step_configuration(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Renders Burp Suite Pro's Custom Scan Checks (`BChecks`) table & editor (`running-scans/custom-checks.html`).
+/// Renders Gulpsuite Pro's Custom Scan Checks (`BChecks`) table & editor (`running-scans/custom-checks.html`).
 fn draw_bchecks_section(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     ui.horizontal_wrapped(|ui| {
@@ -2189,13 +2189,13 @@ fn draw_preset_mode_card(
             ui.set_width(ui.available_width());
             ui.set_min_height(110.0);
             ui.horizontal(|ui| {
-                // Left vertically-centered Burp radio circle (`radio-selected.svg` / `radio.svg`)
+                // Left vertically-centered Gulp radio circle (`radio-selected.svg` / `radio.svg`)
                 ui.vertical(|ui| {
                     ui.add_space(36.0);
-                    paint_burp_radio_circle(ui, selected, hovered, theme);
+                    paint_gulp_radio_circle(ui, selected, hovered, theme);
                 });
                 ui.add_space(10.0);
-                // Right column: 20x20 Burp SVG icon + bold title on top, description paragraph below
+                // Right column: 20x20 Gulp SVG icon + bold title on top, description paragraph below
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         paint_launcher_icon(
@@ -2559,7 +2559,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     if app.panels.scanner.running || !app.panels.scanner.progress.is_empty() {
         ui.horizontal(|ui| {
             if app.panels.scanner.running {
-                paint_burp_spinner(
+                paint_gulp_spinner(
                     ui,
                     Vec2::new(16.0, 16.0),
                     Color32::from_rgb(0x5B, 0x4F, 0xFF),
@@ -2576,7 +2576,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 } else {
                     0.18
                 };
-                paint_burp_progress_bar(ui, 180.0, ratio, &theme);
+                paint_gulp_progress_bar(ui, 180.0, ratio, &theme);
             } else {
                 paint_launcher_icon(
                     ui,
@@ -2878,7 +2878,7 @@ fn severity_colour(
     }
 }
 
-/// Renders the `Burp Scanner reporting wizard` (`Pro-QSG-8-configure-report.png` & `reporting/report-settings.html`)
+/// Renders the `Gulp Scanner reporting wizard` (`Pro-QSG-8-configure-report.png` & `reporting/report-settings.html`)
 /// and the `Create an issue` manual issue dialog (`reporting/manual-issues.html`).
 pub fn draw_scanner_modals(app: &mut App, ctx: &egui::Context) {
     let theme = app.theme.clone();
@@ -3192,7 +3192,7 @@ pub fn draw_scanner_modals(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Generates an HTML or XML report matching Burp Suite Pro's reporting wizard (`reporting/report-settings.html`).
+/// Generates an HTML or XML report matching Gulpsuite Pro's reporting wizard (`reporting/report-settings.html`).
 pub fn generate_scan_report(app: &App) -> String {
     let p = &app.panels.scanner;
     let host_filter = p.report_host_filter.trim().to_lowercase();
@@ -3205,7 +3205,7 @@ pub fn generate_scan_report(app: &App) -> String {
 
     if p.report_format == 1 {
         let mut xml = String::from(
-            "<?xml version=\"1.0\"?>\n<!DOCTYPE issues [\n  <!ELEMENT issues (issue*)>\n  <!ELEMENT issue (serialNumber,type,name,host,path,location,severity,confidence,issueDetail)>\n]>\n<issues burpVersion=\"2026.3.3\">\n",
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE issues [\n  <!ELEMENT issues (issue*)>\n  <!ELEMENT issue (serialNumber,type,name,host,path,location,severity,confidence,issueDetail)>\n]>\n<issues gulpVersion=\"0.0.9\">\n",
         );
         for (idx, iss) in issues.iter().enumerate() {
             xml.push_str(&format!(
@@ -3676,7 +3676,7 @@ pub(crate) fn start(app: &mut App) {
             }
 
             if run_active {
-                // Sort discovered pages by Burp's 80/20 Audit Prioritization score (`auditing.html#audit-prioritization`)
+                // Sort discovered pages by Gulp's 80/20 Audit Prioritization score (`auditing.html#audit-prioritization`)
                 let has_auth = login_creds.is_some();
                 pages.sort_by_key(|(u, _)| {
                     let param_cnt = u.matches('=').count();
@@ -3744,7 +3744,7 @@ pub(crate) fn start(app: &mut App) {
                 let audit_pages: Vec<(String, u16)> = pages.iter().take(40).cloned().collect();
                 let audit_page_total = audit_pages.len().max(1);
                 for (page_idx, (url, status)) in audit_pages.iter().enumerate() {
-                    if *status < 200 || *status >= 400 {
+                    if *status == 0 || (*status >= 400 && !url.contains('?')) {
                         continue;
                     }
                     let Some((host, port, tls, raw)) =

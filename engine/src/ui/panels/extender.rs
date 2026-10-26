@@ -52,9 +52,9 @@ impl ExtenderPanel {
 pub fn draw(app: &mut App, ui: &mut Ui) {
     if app.view != 0 {
         ui.horizontal(|ui| {
-            ui.label("BApp Store catalog and updates are work in progress.");
-            if ui.button("Open BApp Store (WIP)").clicked() {
-                app.wip.open(crate::ui::wip::WipFeature::BappStore);
+            ui.label("GApp Store catalog and updates are work in progress.");
+            if ui.button("Open GApp Store (WIP)").clicked() {
+                app.wip.open(crate::ui::wip::WipFeature::GappStore);
             }
         });
         ui.separator();
@@ -68,9 +68,8 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
 /// The script store: the scripts on disk this build can load, and the ability to save one.
 ///
-/// Burp's Updates tab talks to PortSwigger's extension repository, which needs a network endpoint
-/// and credentials. Rather than fake that, this lists the scripts in the local extension folder and
-/// lets a script be saved, loaded, or removed, which is the part that works offline.
+/// Rather than require a remote extension repository and credentials, this lists the scripts in the
+/// local extension folder and lets a script be saved, loaded, or removed offline.
 fn updates(app: &mut App, ui: &mut Ui) {
     app.draw_update_ui(ui);
     ui.add_space(8.0);
@@ -196,7 +195,7 @@ pub fn save_script(folder: &str, name: &str, source: &str) -> Result<String, Str
 
 /// The transform editor, with a live preview.
 ///
-/// Burp's Bambda runs on messages passing through the proxy; this runs on demand so a script can be
+/// Gulp's Bambda runs on messages passing through the proxy; this runs on demand so a script can be
 /// checked against a real message before it is trusted with live traffic.
 fn bambda(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
@@ -292,7 +291,7 @@ fn bambda(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Burp's Installed extensions view.
+/// Installed extensions view.
 fn installed(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
 
@@ -372,7 +371,7 @@ fn installed(app: &mut App, ui: &mut Ui) {
     muted(
         ui,
         &theme,
-        "Gulp loads third-party code through its extension API (Montoya, Python and Bambda). This \
+        "Gulp loads third-party code through its extension API (Rust, Python and Bambda). This \
          build ships the Bambda transform language only; there is no loader for compiled extensions.",
     );
 }

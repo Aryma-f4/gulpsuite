@@ -33,9 +33,9 @@ pub struct ProxyPanel {
     pub sort_ascending: bool,
     /// Filter query for HTTP history.
     pub filter: String,
-    /// Master switch for HTTP history filters (`Filter on` / `Filter off` in Burp).
+    /// Master switch for HTTP history filters (`Filter on` / `Filter off` in Gulp).
     pub filter_enabled: bool,
-    /// Opens Burp's detailed `HTTP history filter` modal window.
+    /// Opens Gulp's detailed `HTTP history filter` modal window.
     pub show_filter_window: bool,
     /// Restrict HTTP history to Target Scope rules.
     pub in_scope_only: bool,
@@ -63,7 +63,7 @@ pub struct ProxyPanel {
     pub notes: std::collections::HashMap<usize, String>,
     /// User highlight colour code (`1..=5`) keyed by history row index.
     pub highlights: std::collections::HashMap<usize, u8>,
-    // ---- Burp Proxy settings (all 9 sections from settings/tools/proxy.html) ----
+    // ---- Gulp Proxy settings (all 9 sections from settings/tools/proxy.html) ----
     pub bind_address_mode: usize,
     pub redirect_host: String,
     pub redirect_port: String,
@@ -278,7 +278,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Burp's match-and-replace view: the rules that rewrite traffic on its way out.
+/// Gulp's match-and-replace view: the rules that rewrite traffic on its way out.
 ///
 /// The rules use the same Bambda language as the Extensions tab, so one script serves both: here
 /// it is a set of live rules, there it is a script being written.
@@ -356,7 +356,7 @@ fn match_and_replace(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Complete Burp Suite Pro v2026.3.3 `Proxy settings` view (`settings/tools/proxy.html`),
+/// Complete Gulpsuite Professional `Proxy settings` view (`settings/tools/proxy.html`),
 /// shared by both `Proxy -> Proxy settings` and `Settings -> Tools -> Proxy`.
 pub fn settings(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
@@ -1392,7 +1392,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
         });
 }
 
-/// Burp's Intercept view (`quick-start-pro-intercept-on.png` & `quick-start-pro-intercepted-request.png`):
+/// Gulp's Intercept view (`quick-start-pro-intercept-on.png` & `quick-start-pro-intercepted-request.png`):
 /// - Blue `#1858A8` `Intercept is on` toggle button, Orange `#FF6633` `→ Forward` button, `Drop` button
 /// - Held queue table (`Time | Type | Direction | Host | Method | URL`)
 /// - `Request` / `Response` header + `Pretty | Raw | Hex` formatter bar (with 3px orange `#FF6633` underline,
@@ -1461,7 +1461,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
             ui,
             &theme,
             title,
-            "If you turn Intercept on, messages between Burp's browser and your target servers \
+            "If you turn Intercept on, messages between Gulp's browser and your target servers \
              are held here. This enables you to analyze and modify these messages, before you \
              forward them.",
             true,
@@ -1642,8 +1642,8 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         intercept_h + 36.0,
         |pane, ui| {
             if pane == 0 {
-                // Burp Message Formatter Bar (`Request` / `Response` + `Pretty | Raw | Hex` with 3px orange `#FF6633` underline + right icons)
-                super::burp_message_formatter_bar(
+                // Gulp Message Formatter Bar (`Request` / `Response` + `Pretty | Raw | Hex` with 3px orange `#FF6633` underline + right icons)
+                super::gulp_message_formatter_bar(
                     ui,
                     &theme,
                     "proxy-intercept-fmt",
@@ -1653,7 +1653,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
                     &mut app.panels.proxy_panel.intercept_wrap,
                     &mut app.panels.proxy_panel.intercept_non_printable,
                 );
-                let (response, changed) = super::burp_numbered_message_editor_wrapped(
+                let (response, changed) = super::gulp_numbered_message_editor_wrapped(
                     ui,
                     &theme,
                     "proxy-intercept-editor",
@@ -1726,7 +1726,7 @@ fn truncate(text: &str, limit: usize) -> String {
     out
 }
 
-/// The session cookie jar. Burp keeps this under its session settings rather than a tool tab, so
+/// The session cookie jar. Gulp keeps this under its session settings rather than a tool tab, so
 /// it sits at the end of the HTTP history view.
 fn cookie_jar(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
@@ -1910,7 +1910,7 @@ fn history_cell(
     response
 }
 
-/// Burp's History view: everything the proxy has forwarded.
+/// Gulp's History view: everything the proxy has forwarded.
 fn history(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     if app.log.is_empty() {
@@ -1918,8 +1918,8 @@ fn history(app: &mut App, ui: &mut Ui) {
             ui,
             &theme,
             "HTTP history is empty",
-            "The HTTP history displays all HTTP traffic passed through Burp's proxy. Browse \
-             using Burp's browser to populate the history.",
+            "The HTTP history displays all HTTP traffic passed through Gulp's proxy. Browse \
+             using Gulp's browser to populate the history.",
             true,
             Some("Open browser"),
         );
@@ -2754,7 +2754,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                 detail_h,
                 |side, ui| {
                     if side == 0 {
-                        super::burp_message_formatter_bar(
+                        super::gulp_message_formatter_bar(
                             ui,
                             &theme,
                             "proxy-hist-req-fmt",
@@ -2766,7 +2766,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                         );
                         app.panels.proxy_panel.hex_view =
                             app.panels.proxy_panel.history_req_fmt_mode == 2;
-                        let r = super::burp_numbered_message_view_wrapped(
+                        let r = super::gulp_numbered_message_view_wrapped(
                             ui,
                             &theme,
                             "proxy-hist-req-view",
@@ -2784,7 +2784,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                             &response,
                         );
                     } else {
-                        super::burp_message_formatter_bar(
+                        super::gulp_message_formatter_bar(
                             ui,
                             &theme,
                             "proxy-hist-resp-fmt",
@@ -2794,7 +2794,7 @@ fn history(app: &mut App, ui: &mut Ui) {
                             &mut app.panels.proxy_panel.history_resp_wrap,
                             &mut app.panels.proxy_panel.history_resp_np,
                         );
-                        let r = super::burp_numbered_message_view_wrapped(
+                        let r = super::gulp_numbered_message_view_wrapped(
                             ui,
                             &theme,
                             "proxy-hist-resp-view",

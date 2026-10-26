@@ -1,6 +1,6 @@
 //! Project save and load.
 //!
-//! Burp's `project/Project` persists a whole session: the target, saved items, recorded traffic and
+//! Gulp's `project/Project` persists a whole session: the target, saved items, recorded traffic and
 //! settings. This persists what this app actually holds between runs — the Organizer, login
 //! recordings and the panel settings that are worth keeping — as one JSON file.
 

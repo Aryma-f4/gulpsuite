@@ -1,6 +1,6 @@
 //! Response analysis.
 //!
-//! Burp models this as `http/message/responses/analysis/*`: a keywords analyser, a variations
+//! Gulp models this as `http/message/responses/analysis/*`: a keywords analyser, a variations
 //! analyser and attribute extraction. The variations analyser is the useful one for testing — it
 //! shows which parts of a response are shared across a group and which are unique, which is where an
 //! injected value can land.
@@ -43,7 +43,7 @@ pub fn is_markup(content_type: &str, body: &str) -> bool {
 
 /// Interesting tokens in a body: words, numbers, and quoted strings, ranked by how notable they are.
 ///
-/// Burp surfaces these so an operator can see identifiers, prices and codes without reading the whole
+/// Gulp surfaces these so an operator can see identifiers, prices and codes without reading the whole
 /// response. Very common words are dropped because they drown out everything else.
 pub fn keywords(body: &str, limit: usize) -> Vec<Keyword> {
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -224,7 +224,7 @@ pub enum Variation {
     Unique,
 }
 
-/// Burp's variations analyser, simplified: compare one body against a group of others by splitting
+/// Gulp's variations analyser, simplified: compare one body against a group of others by splitting
 /// both into lines and reporting which lines are shared.
 ///
 /// `baseline` is the body to analyse; `others` are its siblings.

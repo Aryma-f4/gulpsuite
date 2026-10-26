@@ -1,6 +1,6 @@
 //! DNS message codec (RFC 1035) for the Logger's DNS view.
 //!
-//! Burp's Logger records DNS alongside HTTP, because an out-of-band lookup is often where a target
+//! The Logger records DNS alongside HTTP, because an out-of-band lookup is often where a target
 //! leaks data. This decodes the wire format far enough to report the question and the answers.
 
 /// Largest message accepted. DNS over UDP is capped at 4096 bytes; anything larger is either TCP or
@@ -258,14 +258,14 @@ mod tests {
 
     #[test]
     fn a_response_answers_with_the_address() {
-        let bytes = response(7, "x.burpcollaborator.test", kind::A, 1, 60, [127, 0, 0, 1]);
+        let bytes = response(7, "x.gulpcollaborator.test", kind::A, 1, 60, [127, 0, 0, 1]);
         let message = decode(&bytes).expect("decodes");
         assert!(message.is_response);
         assert_eq!(message.id, 7);
         assert_eq!(message.questions.len(), 1);
-        assert_eq!(message.questions[0].name, "x.burpcollaborator.test");
+        assert_eq!(message.questions[0].name, "x.gulpcollaborator.test");
         assert_eq!(message.answers.len(), 1);
-        assert_eq!(message.answers[0].name, "x.burpcollaborator.test");
+        assert_eq!(message.answers[0].name, "x.gulpcollaborator.test");
         assert_eq!(message.answers[0].kind, kind::A);
         assert_eq!(message.answers[0].ttl, 60);
         assert_eq!(message.answers[0].data_len, 4);
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn an_empty_response_answers_with_nothing() {
-        let bytes = empty_response(8, "x.burpcollaborator.test", kind::TXT, 1);
+        let bytes = empty_response(8, "x.gulpcollaborator.test", kind::TXT, 1);
         let message = decode(&bytes).expect("decodes");
         assert!(message.is_response);
         assert_eq!(message.questions.len(), 1);

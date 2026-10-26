@@ -1,6 +1,6 @@
 //! Recorded login replayer.
 //!
-//! Burp's `RECORDED_LOGIN_REPLAYER` tool records a login exchange and replays it later, optionally
+//! Gulp's `RECORDED_LOGIN_REPLAYER` tool records a login exchange and replays it later, optionally
 //! with the captured session state. That is what this does: capture the request/response pairs for
 //! one host from the proxy history, then send them again through the proxy and report where the
 //! replay diverged from the recording.
@@ -170,7 +170,7 @@ pub fn cookie_from(response: &str, name: &str) -> Option<String> {
     None
 }
 
-/// How long to wait between replayed steps. Burp exposes this; a default keeps a flow from tripping
+/// How long to wait between replayed steps. Gulp exposes this; a default keeps a flow from tripping
 /// rate limiting while still being fast.
 pub fn default_pace() -> Duration {
     Duration::from_millis(250)

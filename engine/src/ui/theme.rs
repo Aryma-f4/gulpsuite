@@ -1,8 +1,8 @@
-//! The Burp theme, resolved from the JSON Burp itself ships.
+//! The Gulp theme, resolved from the JSON Gulp itself ships.
 //!
 //! Colour values are references, not literals: `@black[2]` is shade 2 of the black swatch, and
 //! `$mono[1]` is shade 1 of whatever swatch the `mono` palette alias points at. Resolving those
-//! references here means the UI inherits Burp's palette exactly instead of approximating it.
+//! references here means the UI inherits Gulp's palette exactly instead of approximating it.
 
 use std::collections::HashMap;
 
@@ -43,12 +43,12 @@ pub struct Theme {
     values: HashMap<String, Color32>,
 }
 
-/// `Button.arc` from burp/theme/BurpLaf.properties.
-pub const BURP_BUTTON_ARC: u8 = 8;
+/// `Button.arc` from gulp/theme/GulpLaf.properties.
+pub const GULP_BUTTON_ARC: u8 = 8;
 /// FlatLaf passes arcWidth/arcHeight to Java2D; egui expects a corner radius.
-pub const BURP_BUTTON_RADIUS: u8 = BURP_BUTTON_ARC / 2;
-/// `Button.margin=2,20,2,20` from BurpLaf, expressed as egui button padding (horizontal, vertical).
-pub const BURP_BUTTON_PADDING: eframe::egui::Vec2 = eframe::egui::Vec2::new(20.0, 2.0);
+pub const GULP_BUTTON_RADIUS: u8 = GULP_BUTTON_ARC / 2;
+/// `Button.margin=2,20,2,20` from GulpLaf, expressed as egui button padding (horizontal, vertical).
+pub const GULP_BUTTON_PADDING: eframe::egui::Vec2 = eframe::egui::Vec2::new(20.0, 2.0);
 
 impl Theme {
     pub fn load(dark: bool) -> Self {
@@ -62,13 +62,13 @@ impl Theme {
             values.insert(key.clone(), resolve(&reference, &raw.colors, 0));
         }
 
-        // BurpLaf names its colours the way Burp does, e.g. `$Colors.palette.mono.3` and
+        // GulpLaf names its colours the way Gulp does, e.g. `$Colors.palette.mono.3` and
         // `$Colors.palette.secondary.core`. Only `colors.ui` is collected above, so the palette and
-        // swatch namespaces are exposed here too. Panels can then quote Burp's own key names instead
+        // swatch namespaces are exposed here too. Panels can then quote Gulp's own key names instead
         // of guessing which `ui.background.N` happens to equal `palette.mono.N`.
         for (name, target) in &raw.colors.palette {
             values.insert(format!("palette.{name}"), resolve(target, &raw.colors, 0));
-            // BurpLaf also names the core colour of a palette entry, e.g.
+            // GulpLaf also names the core colour of a palette entry, e.g.
             // `$Colors.palette.secondary.core`, so that key has to resolve too.
             let core = target.trim().trim_start_matches('@');
             let core = core.split('[').next().unwrap_or(core);
@@ -94,21 +94,21 @@ impl Theme {
             }
         }
 
-        // Burp's JSON has no `ui.border` group, but BurpLaf draws every border with
-        // `$Colors.palette.mono.4` (Button.borderColor). Measured from Burp: the rule under the
+        // Gulp's JSON has no `ui.border` group, but GulpLaf draws every border with
+        // `$Colors.palette.mono.4` (Button.borderColor). Measured from Gulp: the rule under the
         // tool tabs is #DFDFDF in the light theme, which is mono.4 there.
         values.insert("border.1".into(), resolve("$mono[4]", &raw.colors, 0));
         // Alias `background.0` to `$mono[1]` (#FFFFFF in Light, #2B2B2B in Dark) and
         // `icon.accent` to `@orange` (#FF6633) so panels using 0-indexed background or accent keys
-        // always get Burp's true surface and primary orange colours.
+        // always get Gulp's true surface and primary orange colours.
         values.insert("background.0".into(), resolve("$mono[1]", &raw.colors, 0));
         values.insert("icon.accent".into(), resolve("@orange", &raw.colors, 0));
         if let Some(&header_col) = values.get("text.header") {
             values.insert("text.heading".into(), header_col);
         }
 
-        // Burp paints its accent with a tone the palette does not express. The light theme's
-        // selected-tab underline and primary button are #CC683D in a running Burp, and the
+        // Gulp paints its accent with a tone the palette does not express. The light theme's
+        // selected-tab underline and primary button are #CC683D in a running Gulp, and the
         // palette's nearest shade is #DB612F.
         if !raw.dark {
             values.insert("icon.link".into(), Color32::from_rgb(0xCC, 0x68, 0x3D));
@@ -186,8 +186,8 @@ fn resolve(reference: &str, colors: &RawColors, depth: usize) -> Color32 {
         None => GREY,
         Some(swatch) => {
             let core = parse_hex(swatch.core.trim_start_matches('#'));
-            // Burp numbers shades from one: `$palette.mono.4` is the fourth shade of the mono
-            // swatch and the swatch core is the zeroth. Measured against Burp itself: its light
+            // Gulp numbers shades from one: `$palette.mono.4` is the fourth shade of the mono
+            // swatch and the swatch core is the zeroth. Measured against Gulp itself: its light
             // theme divider is #DFDFDF, which is mono.4, and its body text is #2B2B2B, which is
             // mono.8. Reading the array as zero-based would put both one shade off and drop
             // mono.8 off the end, rendering body text white on white.
@@ -224,7 +224,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn burp_palette_resolves() {
+    fn gulp_palette_resolves() {
         let theme = Theme::load(true);
         assert!(theme.dark);
         // $mono[1] is one step off pure black: a real dark grey, not black and not missing.
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn every_burp_ui_key_resolves_to_a_real_colour() {
+    fn every_gulp_ui_key_resolves_to_a_real_colour() {
         let theme = Theme::load(true);
         for key in theme.keys() {
             let value = theme.color(key);
@@ -276,14 +276,14 @@ mod tests {
 }
 
 #[cfg(test)]
-mod burp_laf_tests {
+mod gulp_laf_tests {
     use super::*;
 
-    /// The shipped Burp theme maps `ui.background.N` onto `$mono[N]` for N = 1..=4. Button styling in
-    /// BurpLaf is written in palette terms (`palette.mono.3` and friends), so this identity is what
-    /// makes those values translatable. If it stops holding, button colours drift from Burp's.
+    /// The shipped Gulp theme maps `ui.background.N` onto `$mono[N]` for N = 1..=4. Button styling in
+    /// GulpLaf is written in palette terms (`palette.mono.3` and friends), so this identity is what
+    /// makes those values translatable. If it stops holding, button colours drift from Gulp's.
     #[test]
-    fn background_keys_are_the_mono_shades_burp_button_colours_name() {
+    fn background_keys_are_the_mono_shades_gulp_button_colours_name() {
         let theme = Theme::load(true);
         for shade in 1..=4u8 {
             assert_eq!(
@@ -294,9 +294,9 @@ mod burp_laf_tests {
         }
     }
 
-    /// The desktop, control, menu and text surfaces are all the same value in BurpLaf.
+    /// The desktop, control, menu and text surfaces are all the same value in GulpLaf.
     #[test]
-    fn the_surface_colours_burp_uses_are_resolved_and_distinct_from_background_1() {
+    fn the_surface_colours_gulp_uses_are_resolved_and_distinct_from_background_1() {
         let theme = Theme::load(true);
         let background_2 = theme.color("ui.background.2");
         for key in ["ui.background.2", "ui.background.3", "ui.background.4", "ui.background.5"] {
@@ -309,14 +309,14 @@ mod burp_laf_tests {
         );
     }
 
-    /// Button metrics come from BurpLaf: arc = 8 and margin = 2,20,2,20.
+    /// Button metrics come from GulpLaf: arc = 8 and margin = 2,20,2,20.
     #[test]
-    fn the_button_metrics_match_burp_laf() {
-        assert_eq!(BURP_BUTTON_ARC, 8, "BurpLaf Button.arc");
+    fn the_button_metrics_match_gulp_laf() {
+        assert_eq!(GULP_BUTTON_ARC, 8, "GulpLaf Button.arc");
         assert_eq!(
-            BURP_BUTTON_PADDING,
+            GULP_BUTTON_PADDING,
             eframe::egui::Vec2::new(20.0, 2.0),
-            "BurpLaf Button.margin"
+            "GulpLaf Button.margin"
         );
     }
 }

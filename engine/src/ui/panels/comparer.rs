@@ -1,4 +1,4 @@
-//! Comparer: Burp v2026.3.3 two-table layout with right-hand action buttons and Words/Bytes diff.
+//! Comparer: Gulpsuite two-table layout with right-hand action buttons and Words/Bytes diff.
 
 use eframe::egui::Ui;
 

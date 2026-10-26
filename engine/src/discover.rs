@@ -1,6 +1,6 @@
 //! Content discovery: probe a bounded path list against hosts the proxy has already seen.
 //!
-//! Burp's Discover crawls a starting URL and reports what answers. This takes the hosts already in
+//! Gulp's Discover crawls a starting URL and reports what answers. This takes the hosts already in
 //! the proxy history and requests a small fixed set of paths against each, through the same
 //! `one_shot` path the scanner uses, so probes show up in the history like any other traffic.
 

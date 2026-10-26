@@ -1,4 +1,4 @@
-//! Logger: every transaction and every other protocol the listeners see, split the way Burp splits it.
+//! Logger: every transaction and every other protocol the listeners see, split the way Gulp splits it.
 
 use eframe::egui::Ui;
 
@@ -94,7 +94,7 @@ pub fn draw_http_log(app: &mut App, ui: &mut Ui) {
 
 fn http(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
-    // Burp names the tool in its tab and the sub-tab below it, so a panel heading would repeat
+    // Gulp names the tool in its tab and the sub-tab below it, so a panel heading would repeat
     // it; the sub-tab row already says which log this is.
 
     ui.horizontal(|ui| {
@@ -304,7 +304,7 @@ fn http(app: &mut App, ui: &mut Ui) {
             detail_h,
             |side, ui| {
                 if side == 0 {
-                    super::burp_message_formatter_bar(
+                    super::gulp_message_formatter_bar(
                         ui,
                         &theme,
                         "logger-req-fmt",
@@ -314,7 +314,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.logger.req_wrap,
                         &mut app.panels.logger.req_np,
                     );
-                    let r = super::burp_numbered_message_view_wrapped(
+                    let r = super::gulp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "logger-req",
@@ -332,7 +332,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &tx.response,
                     );
                 } else {
-                    super::burp_message_formatter_bar(
+                    super::gulp_message_formatter_bar(
                         ui,
                         &theme,
                         "logger-resp-fmt",
@@ -342,7 +342,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.logger.resp_wrap,
                         &mut app.panels.logger.resp_np,
                     );
-                    let r = super::burp_numbered_message_view_wrapped(
+                    let r = super::gulp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "logger-resp",

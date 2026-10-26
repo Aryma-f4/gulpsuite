@@ -10,7 +10,7 @@ use std::sync::Mutex;
 pub const DOMAIN: &str = "oastify.com";
 
 /// Legacy alias domain also accepted by the DNS resolver.
-pub const LEGACY_DOMAIN: &str = "burpcollaborator.test";
+pub const LEGACY_DOMAIN: &str = "gulpcollaborator.test";
 
 /// How long an interaction is kept. Bounded so a long session does not accumulate without limit.
 pub const MAX_HITS: usize = 1_000;
@@ -63,7 +63,7 @@ pub fn extract_payload_id(host: &str, path: &str) -> String {
     let trimmed_path = path.trim_start_matches('/');
     if !trimmed_path.is_empty()
         && (trimmed_path.contains(".oastify.")
-            || trimmed_path.contains(".burpcollaborator."))
+            || trimmed_path.contains(".gulpcollaborator."))
     {
         return trimmed_path
             .split(['/', '?', '.'])
@@ -698,7 +698,7 @@ mod tests {
         let port = start().expect("server starts");
         let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
         stream
-            .write_all(b"GET /ping HTTP/1.1\r\nHost: abc123.burpcollaborator.test\r\n\r\n")
+            .write_all(b"GET /ping HTTP/1.1\r\nHost: abc123.gulpcollaborator.test\r\n\r\n")
             .expect("write");
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read");
@@ -707,7 +707,7 @@ mod tests {
         let hits = take_hits();
         assert!(
             hits.iter()
-                .any(|h| h.host == "abc123.burpcollaborator.test" && h.path == "/ping"),
+                .any(|h| h.host == "abc123.gulpcollaborator.test" && h.path == "/ping"),
             "hit not recorded: {hits:?}"
         );
         stop();

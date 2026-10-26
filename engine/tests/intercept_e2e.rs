@@ -420,7 +420,7 @@ fn an_edited_response_is_what_the_client_gets() {
 }
 
 #[test]
-fn burp_portal_serves_welcome_and_ca_certificate_without_blocking_on_intercept() {
+fn gulp_portal_serves_welcome_and_ca_certificate_without_blocking_on_intercept() {
     let runtime = runtime();
     let (proxy, _events) = Proxy::new();
     proxy.set_intercept(true);
@@ -428,15 +428,15 @@ fn burp_portal_serves_welcome_and_ca_certificate_without_blocking_on_intercept()
 
     for (request, expected_fragment) in [
         (
-            "GET http://burp/ HTTP/1.1\r\nHost: burp\r\nConnection: close\r\n\r\n",
+            "GET http://gulp/ HTTP/1.1\r\nHost: gulp\r\nConnection: close\r\n\r\n",
             "Gulpsuite Professional Proxy",
         ),
         (
-            "GET http://burp/cert HTTP/1.1\r\nHost: burp\r\nConnection: close\r\n\r\n",
+            "GET http://gulp/cert HTTP/1.1\r\nHost: gulp\r\nConnection: close\r\n\r\n",
             "Content-Type: application/x-x509-ca-cert",
         ),
         (
-            "GET http://burpsuite/cert.pem HTTP/1.1\r\nHost: burpsuite\r\nConnection: close\r\n\r\n",
+            "GET http://gulpsuite/cert.pem HTTP/1.1\r\nHost: gulpsuite\r\nConnection: close\r\n\r\n",
             "BEGIN CERTIFICATE",
         ),
     ] {

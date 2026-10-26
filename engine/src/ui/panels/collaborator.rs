@@ -1,5 +1,5 @@
 //! Collaborator: multi-tab out-of-band (OOB) interaction client & local DNS/HTTP/SMTP server
-//! matching `burp-collaborator-tut-4-polling-for-interactions.png`, `collaborator/index.html`,
+//! matching `gulp-collaborator-tut-4-polling-for-interactions.png`, `collaborator/index.html`,
 //! `settings/project/collaborator.html`, and `resources/Media/svg/light/collaborator.svg`.
 
 use eframe::egui::{self, pos2, Color32, FontId, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -236,7 +236,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         Color32::from_rgb(0x57, 0x60, 0x6A)
     };
 
-    // Row 0: Collaborator Result Tabs Bar (`1 × | 2 × | +` from `burp-collaborator-tut-4-polling-for-interactions.png`)
+    // Row 0: Collaborator Result Tabs Bar (`1 × | 2 × | +` from `gulp-collaborator-tut-4-polling-for-interactions.png`)
     if app.panels.collaborator_panel.tabs.is_empty() {
         let tok = if app.panels.collaborator_token.trim().is_empty() {
             crate::collaborator::new_token()
@@ -419,7 +419,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     ui.painter().rect_filled(sep1, 0.0, border_col);
     ui.add_space(1.0);
 
-    // Row 1: Collaborator Control Bar (`burp-collaborator-tut-4-polling-for-interactions.png`)
+    // Row 1: Collaborator Control Bar (`gulp-collaborator-tut-4-polling-for-interactions.png`)
     // `Payloads to generate: [ 1 ]  [ Copy to clipboard ]  [✓] Include Collaborator server location  |  [ Poll now ]  Polling automatically every 60 seconds`
     egui::Frame::new()
         .fill(card_bg)
@@ -787,7 +787,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                 if theme.dark {
                                     Color32::from_rgb(0x4A, 0x35, 0x25)
                                 } else {
-                                    Color32::from_rgb(0xF6, 0xC6, 0x9F) // Exact peach/orange selection from `burp-collaborator-tut-4-polling-for-interactions.png`
+                                    Color32::from_rgb(0xF6, 0xC6, 0x9F) // Exact peach/orange selection from `gulp-collaborator-tut-4-polling-for-interactions.png`
                                 }
                             } else if let Some(hl) = hit_snapshot.highlight {
                                 match hl {
@@ -1157,7 +1157,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         hit.raw_request.clone()
                     };
                     let url = format!("http://{}{}", hit.host, hit.path);
-                    let r = super::burp_numbered_message_view_wrapped(
+                    let r = super::gulp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "collab-detail-req",
@@ -1182,7 +1182,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         hit.raw_response.clone()
                     };
                     let url = format!("http://{}{}", hit.host, hit.path);
-                    let r = super::burp_numbered_message_view_wrapped(
+                    let r = super::gulp_numbered_message_view_wrapped(
                         ui,
                         &theme,
                         "collab-detail-resp",

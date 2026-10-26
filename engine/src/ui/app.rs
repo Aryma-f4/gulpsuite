@@ -13,13 +13,13 @@ use crate::proxy::{Event, HeldInfo, Proxy};
 use crate::ui::panels;
 use crate::ui::theme::Theme;
 
-/// The sub-views each tool shows, in Burp's order.
+/// The sub-views each tool shows, in Gulp's order.
 ///
-/// The list is Burp's structure, and each entry is backed by a type REA confirmed in the shipped
+/// The list is Gulp's structure, and each entry is backed by a type REA confirmed in the shipped
 /// jar: Proxy's WebSockets by `proxy/ProxyWebSocketMessage` and `ProxyWebSocketHistoryFilter`;
 /// Logger's split by `logger/LoggerCaptureHttpRequestResponse` against `LoggerHttpRequestResponse`;
 /// Target's two views by `sitemap/SiteMap`+`SiteMapFilter` against `scope/Scope`; the Dashboard's
-/// three by `logging/Logging`, `scanner/audit/AuditResult` and `core/Task`. Burp's UI classes are
+/// three by `logging/Logging`, `scanner/audit/AuditResult` and `core/Task`. Gulp's UI classes are
 /// obfuscated, so the literal sidebar strings are not recoverable; the shape is.
 impl App {
     /// Findings recorded by the most recent scan.
@@ -28,7 +28,7 @@ impl App {
     }
 }
 
-/// Tool indices, in Burp's own `ToolType` order. These are named because the dispatch, the menu bar
+/// Tool indices, in Gulp's own `ToolType` order. These are named because the dispatch, the menu bar
 /// and the hotkeys all key off them; bare numbers let the order drift between the three.
 pub const SUITE: usize = 0;
 pub const TARGET: usize = 1;
@@ -49,11 +49,11 @@ pub const PROXY_INTERCEPT: usize = 0;
 pub const PROXY_HISTORY: usize = 1;
 
 pub const TOOL_VIEWS: [&[&str]; 13] = [
-    // Observed in Burp v2026.3.3: the Dashboard detail pane tabs, left to right.
+    // Observed in Gulpsuite: the Dashboard detail pane tabs, left to right.
     &["Summary", "Audit items", "Issues", "Event log", "Logger", "Audit log"],
     // Target
     &["Site map", "Scope", "Issues"],
-    // Proxy, with the sub-view names Burp's own documentation uses.
+    // Proxy, with the sub-view names Gulp's own documentation uses.
     &["Intercept", "HTTP history", "WebSockets history", "Match and replace", "Proxy settings"],
     // Intruder: single top-level view; attack tabs and side panels (Payloads, Resource pool, Settings) live inside Intruder.
     &["Intruder"],
@@ -78,7 +78,7 @@ pub const TOOL_VIEWS: [&[&str]; 13] = [
 ];
 
 /// Width of the tool strip, and of the narrower view strip beside it.
-/// Height of the horizontal tool tab row, from a 1440x790 capture of Burp v2026.3.3.
+/// Height of the horizontal tool tab row, from a 1440x790 capture of Gulpsuite.
 const TOOL_TAB_HEIGHT: f32 = 31.0;
 /// Height of a tool's own sub-tab row.
 const SUB_TAB_HEIGHT: f32 = 30.0;
@@ -86,13 +86,13 @@ const SUB_TAB_HEIGHT: f32 = 30.0;
 const TAB_UNDERLINE: f32 = 3.0;
 /// Inset between a panel and the window edge.
 const PANEL_INSET: f32 = 12.0;
-/// Tab label size. Slightly under 12px because egui's face sets wider than the platform font Burp
-/// inherits, and matching Burp's tab pitch matters more than matching nominal point size.
+/// Tab label size. Slightly under 12px because egui's face sets wider than the platform font Gulp
+/// inherits, and matching Gulp's tab pitch matters more than matching nominal point size.
 const TAB_FONT: FontId = FontId::new(11.5, eframe::egui::FontFamily::Proportional);
-/// Height of the bottom status bar, measured from a 1440x790 Burp v2026.3.3 capture.
+/// Height of the bottom status bar, measured from a 1440x790 Gulpsuite capture.
 const STATUS_BAR_HEIGHT: f32 = 36.0;
 
-/// Burp calls its first tool `Suite`; this app shows it as "Dashboard", which is the same view.
+/// Gulp calls its first tool `Suite`; this app shows it as "Dashboard", which is the same view.
 pub const TOOLS: [&str; 13] = [
     "Dashboard",
     "Target",
@@ -324,7 +324,7 @@ impl Transaction {
             .collect()
     }
 
-    /// Generates a Burp-style `curl` command reproducing the HTTP request.
+    /// Generates a Gulp-style `curl` command reproducing the HTTP request.
     pub fn to_curl_command(target: &str, raw_request: &str) -> String {
         let (head, body) = crate::analysis::split_message(raw_request);
         let mut lines = head.lines();
@@ -411,7 +411,7 @@ impl Transaction {
         }
     }
 
-    /// Generates a Burp Suite Professional HTML CSRF PoC form for `target` and `raw_request`.
+    /// Generates a Gulpsuite Professional HTML CSRF PoC form for `target` and `raw_request`.
     pub fn generate_csrf_poc(target: &str, raw_request: &str, auto_submit: bool) -> String {
         let (head, body) = crate::analysis::split_message(raw_request);
         let first = head.lines().next().unwrap_or("GET / HTTP/1.1");
@@ -482,7 +482,7 @@ pub struct App {
     request_tasks: HashMap<u64, tokio::task::JoinHandle<()>>,
     /// Everything the proxy has reported, newest last.
     pub log: VecDeque<Transaction>,
-    /// The links the responses point at, per host. Burp's site map shows them even when they were
+    /// The links the responses point at, per host. Gulp's site map shows them even when they were
     /// never visited, because a link is a path the target has.
     pub discovered: BTreeMap<String, BTreeSet<String>>,
     /// Saved request/response collections.
@@ -550,7 +550,7 @@ pub struct App {
     pub use_native_macos_menu: bool,
     /// Opens the Save As / Open Project file dialog.
     pub show_project_dialog: bool,
-    /// Selected category in the multi-section Burp Settings dialog.
+    /// Selected category in the multi-section Gulp Settings dialog.
     pub settings_category: usize,
     /// Search query in the Settings navigation tree.
     pub settings_search: String,
@@ -622,9 +622,9 @@ impl App {
     pub fn with_context(ctx: &Context) -> Self {
         install_fonts(ctx);
 
-        // Burp's own light and dark themes ship with Burp, so the shell loads the file instead of
+        // Gulp's own light and dark themes ship with Gulp, so the shell loads the file instead of
         // tinting one. `GULP_THEME=light` picks the light theme at startup, which is how the two
-        // themes get compared against a running Burp.
+        // themes get compared against a running Gulp.
         let dark = std::env::var("GULP_THEME")
             .map(|value| !value.eq_ignore_ascii_case("light"))
             .unwrap_or(true);
@@ -927,7 +927,11 @@ impl App {
     pub fn forward_edited(&mut self, id: u64, raw: &str) {
         let proxy = self.proxy.clone();
         let runtime = self.runtime.handle().clone();
-        let raw = raw.to_string();
+        let raw = panels::repeater::normalize_http_request(
+            raw,
+            self.panels.proxy_panel.auto_fix_newlines,
+            self.panels.proxy_panel.auto_update_content_length,
+        );
         std::thread::spawn(move || {
             runtime.block_on(async {
                 proxy.forward_edited(id, &raw).await
@@ -956,8 +960,8 @@ impl App {
         self
     }
 
-    /// Switches between Burp's two bundled themes. `DarkTheme.json` and `LightTheme.json` both ship
-    /// with Burp, so both are loaded from the same source rather than being approximated.
+    /// Switches between Gulp's two bundled themes. `DarkTheme.json` and `LightTheme.json` both ship
+    /// with Gulp, so both are loaded from the same source rather than being approximated.
     pub fn set_dark(&mut self, dark: bool) {
         if self.theme.dark == dark {
             return;
@@ -1511,10 +1515,10 @@ fn host_of(target: &str) -> String {
     rest.split(['/', '?', '#']).next().unwrap_or(rest).to_string()
 }
 
-/// Burp draws its UI with the platform font, so the shell uses the same one instead of egui's
-/// bundled face. On macOS that is SF Pro, and at 11.5px its tab labels land on Burp's measured
+/// Gulp draws its UI with the platform font, so the shell uses the same one instead of egui's
+/// bundled face. On macOS that is SF Pro, and at 11.5px its tab labels land on Gulp's measured
 /// widths: "Dashboard" 53px, "Target" 30px, "Proxy" 27px, "Intruder" 37px, "Repeater" 44px and
-/// "Collaborator" 59px, all within half a pixel of the running Burp. The font file is only
+/// "Collaborator" 59px, all within half a pixel of the running Gulp. The font file is only
 /// borrowed from the system, never copied into the app.
 fn load_font_bytes(candidates: &[&str], fc_pattern: Option<&str>) -> Option<Vec<u8>> {
     for path in candidates {
@@ -1825,7 +1829,7 @@ impl eframe::App for App {
                         });
                 }
 
-                let status_height = crate::ui::reference::burp_2026_3_3().shell.status_height;
+                let status_height = crate::ui::reference::gulp_reference().shell.status_height;
                 let drawer_height = self.shell.drawer_height();
                 let panel_height =
                     (ui.available_height() - status_height - drawer_height).max(0.0);
@@ -1900,10 +1904,10 @@ impl eframe::App for App {
     }
 }
 
-/// Maps the widget style onto Burp's own look-and-feel.
+/// Maps the widget style onto Gulp's own look-and-feel.
 ///
-/// Every value here comes from `burp/theme/BurpLaf.properties` in the shipped Burp jar, so the
-/// numbers are Burp's rather than taste:
+/// Every value here comes from `gulp/theme/GulpLaf.properties` in the shipped Gulp jar, so the
+/// numbers are Gulp's rather than taste:
 ///   desktop/control/text/menu = ui.background.2
 ///   Button.background         = palette.mono.3   -> ui.background.3
 ///   Button.borderColor        = palette.mono.4   -> ui.background.4
@@ -1915,12 +1919,12 @@ impl eframe::App for App {
 ///
 /// egui has no bold weight of its own, and SF Pro ships as a single variable face with no bold
 /// file to load, so the second pass is what makes the text read bold. Doing it this way keeps
-/// Burp's own metrics: a real bold face is about a quarter wider and would break the layout.
+/// Gulp's own metrics: a real bold face is about a quarter wider and would break the layout.
 pub fn bold_text(ui: &mut Ui, text: &str, size: f32, color: eframe::egui::Color32) -> eframe::egui::Response {
     bold_label_sense(ui, text, size, color, Sense::hover())
 }
 
-/// A bold label that can be clicked, for the places Burp makes a title act as a control.
+/// A bold label that can be clicked, for the places Gulp makes a title act as a control.
 pub fn bold_click_label(
     ui: &mut Ui,
     text: &str,
@@ -1952,11 +1956,11 @@ fn bold_label_sense(
     response
 }
 
-/// Burp's primary button: a filled accent button with white text.
+/// Gulp's primary button: a filled accent button with white text.
 ///
-/// Measured from Burp's light theme, where "New scan" is 23 logical pixels tall with an 8 pixel
+/// Measured from Gulp's light theme, where "New scan" is 23 logical pixels tall with an 8 pixel
 /// arc, 20 pixels of horizontal padding and white text. The arc and the padding come from
-/// `Button.arc=8` and `Button.margin=2,20,2,20` in `burp/theme/BurpLaf.properties`.
+/// `Button.arc=8` and `Button.margin=2,20,2,20` in `gulp/theme/GulpLaf.properties`.
 pub(crate) fn primary_button(
     ui: &mut Ui,
     theme: &crate::ui::theme::Theme,
@@ -1971,8 +1975,8 @@ pub(crate) fn primary_button(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
         let background = if response.hovered() { fill.linear_multiply(1.1) } else { fill };
-        painter.rect_filled(rect, crate::ui::theme::BURP_BUTTON_RADIUS as f32, background);
-        // Two passes, so the button label reads bold the way Burp's does. The galley is placed by
+        painter.rect_filled(rect, crate::ui::theme::GULP_BUTTON_RADIUS as f32, background);
+        // Two passes, so the button label reads bold the way Gulp's does. The galley is placed by
         // its top left corner, so it is centred first.
         let galley = ui
             .painter()
@@ -2032,18 +2036,18 @@ impl CheckboxPalette {
     }
 }
 
-/// Burp gives checkboxes their own square geometry and selected colours.
+/// Gulp gives checkboxes their own square geometry and selected colours.
 /// Scoped overrides keep button corners and radio-button appearance independent.
-pub trait BurpUiExt {
-    fn burp_checkbox(
+pub trait GulpUiExt {
+    fn gulp_checkbox(
         &mut self,
         checked: &mut bool,
         text: impl Into<eframe::egui::WidgetText>,
     ) -> Response;
 }
 
-impl BurpUiExt for Ui {
-    fn burp_checkbox(
+impl GulpUiExt for Ui {
+    fn gulp_checkbox(
         &mut self,
         checked: &mut bool,
         text: impl Into<eframe::egui::WidgetText>,
@@ -2051,7 +2055,7 @@ impl BurpUiExt for Ui {
         let palette = self
             .ctx()
             .data(|data| {
-                data.get_temp::<CheckboxPalette>(eframe::egui::Id::new("burp-checkbox-palette"))
+                data.get_temp::<CheckboxPalette>(eframe::egui::Id::new("gulp-checkbox-palette"))
             })
             .unwrap_or_else(|| CheckboxPalette::from_visuals(self.visuals()));
         let selected = *checked;
@@ -2119,17 +2123,17 @@ impl BurpUiExt for Ui {
     }
 }
 
-/// Width of a tool tab, from its label. Burp sizes each tab to its text plus a fixed inset.
+/// Width of a tool tab, from its label. Gulp sizes each tab to its text plus a fixed inset.
 fn label_width(ui: &Ui, text: &str) -> f32 {
     let font = TAB_FONT;
     ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font, eframe::egui::Color32::TRANSPARENT).rect.width())
 }
 
 fn apply_visuals(ctx: &Context, theme: &Theme) {
-    ctx.data_mut(|data| data.insert_temp(eframe::egui::Id::new("burp-checkbox-palette"), CheckboxPalette::from_theme(theme)));
+    ctx.data_mut(|data| data.insert_temp(eframe::egui::Id::new("gulp-checkbox-palette"), CheckboxPalette::from_theme(theme)));
     let mut style = (*ctx.style()).clone();
 
-    // Quoted from BurpLaf under its own names now that `palette.*` resolves.
+    // Quoted from GulpLaf under its own names now that `palette.*` resolves.
     let desktop = theme.color("ui.background.2");
     let control = theme.color("ui.background.2");
     let button_bg = theme.color("palette.mono.3");
@@ -2158,7 +2162,7 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
     style.visuals.widgets.inactive.weak_bg_fill = button_bg;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, body);
     style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, button_border);
-    let radius = crate::ui::theme::BURP_BUTTON_RADIUS;
+    let radius = crate::ui::theme::GULP_BUTTON_RADIUS;
     style.visuals.widgets.inactive.corner_radius = CornerRadius::same(radius);
 
     style.visuals.widgets.hovered.bg_fill = button_hover_bg;
@@ -2187,8 +2191,8 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
 
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);
     // Button.margin = 2,20,2,20 is (top, left, bottom, right) in FlatLaf, so the horizontal
-    // padding Burp uses is 20 rather than the 8 egui defaults to.
-    style.spacing.button_padding = crate::ui::theme::BURP_BUTTON_PADDING;
+    // padding Gulp uses is 20 rather than the 8 egui defaults to.
+    style.spacing.button_padding = crate::ui::theme::GULP_BUTTON_PADDING;
 
     // Button.font = bold is not reachable here: epaint 0.33's FontId is { size, family } with an
     // explicit "TODO(emilk): weight (bold)". Button labels go through `bold_label` instead, which
@@ -2211,13 +2215,13 @@ pub fn bold_label(text: impl Into<String>) -> RichText {
     RichText::new(text.into()).strong()
 }
 
-/// A Burp-styled button: rounded, bordered, bold label.
-pub fn burp_button(ui: &mut Ui, text: impl Into<String>) -> Response {
+/// A Gulp-styled button: rounded, bordered, bold label.
+pub fn gulp_button(ui: &mut Ui, text: impl Into<String>) -> Response {
     ui.add(Button::new(bold_label(text)))
 }
 
 impl App {
-    /// Runs a menu item. Navigation mirrors how Burp's menus jump between a tool's views; the rest
+    /// Runs a menu item. Navigation mirrors how Gulp's menus jump between a tool's views; the rest
     /// invoke the same action the tool's own button runs, so there is one implementation each.
     /// Writes the current session to `panels.project_path`, defaulting to the working directory.
     fn save_project(&mut self) {
@@ -2353,7 +2357,7 @@ impl App {
             ("Dashboard", "Clear dashboard") | ("Logger", "Clear") => self.clear_log(),
             ("Target", "Site map") => self.go(TARGET, 0),
             ("Target", "Scan") => {
-                // Burp runs scanning from the Suite task list, so "Scan" lands there too.
+                // Gulp runs scanning from the Suite task list, so "Scan" lands there too.
                 self.go(SUITE, 0);
                 panels::scanner::start(self);
             }
@@ -2376,13 +2380,13 @@ impl App {
                 panels::decoder::apply(self);
             }
             ("Extensions", "Installed" | "Updates") => {
-                self.wip.open(crate::ui::wip::WipFeature::BappStore);
+                self.wip.open(crate::ui::wip::WipFeature::GappStore);
             }
             _ => self.status = format!("{menu} > {item} is not available"),
         }
     }
 
-    /// Opens the Burp Engagement tools -> Generate CSRF PoC window for `(url, raw_request)`.
+    /// Opens the Gulp Engagement tools -> Generate CSRF PoC window for `(url, raw_request)`.
     pub fn open_csrf_poc(&mut self, url: &str, raw_request: &str) {
         let html = Transaction::generate_csrf_poc(url, raw_request, true);
         self.csrf_poc = Some((url.to_string(), raw_request.to_string(), html, true));
@@ -2526,7 +2530,7 @@ impl App {
         count
     }
 
-    /// The right-click actions offered on a captured transaction. Burp exposes these through
+    /// The right-click actions offered on a captured transaction. Gulp exposes these through
     /// `ui/contextmenu/*`; each one here either already exists or is honest about being absent.
     pub fn context_menu(&mut self, trigger: &eframe::egui::Response, index: usize) {
         if index >= self.log.len() {
@@ -2850,7 +2854,7 @@ impl App {
         });
     }
 
-    /// Global shortcuts. Burp registers these through `ui/hotkey/*`; these cover the actions an
+    /// Global shortcuts. Gulp registers these through `ui/hotkey/*`; these cover the actions an
     /// operator reaches for most, and deliberately only ones that already work.
     fn hotkeys(&mut self, ctx: &Context) {
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::R)) {
@@ -2872,7 +2876,7 @@ impl App {
             self.proxy.set_intercept(self.intercepting);
             self.status = format!("Intercept {}", if self.intercepting { "on" } else { "off" });
         }
-        // Burp's Alt+letter shortcuts, keyed by name so the reorder cannot point them at the wrong
+        // Gulp's Alt+letter shortcuts, keyed by name so the reorder cannot point them at the wrong
         // tool. These go through `go` so a tool change also clamps the sub-view like every other path.
         for (key, tool, name) in [
             (Key::D, SUITE, "Dashboard"),
@@ -2907,7 +2911,7 @@ impl App {
         self.status = format!("Cleared {count} captured request(s)");
     }
 
-    /// Switches tool and view together, matching how a Burp menu item behaves.
+    /// Switches tool and view together, matching how a Gulp menu item behaves.
     fn go(&mut self, tool: usize, view: usize) {
         self.wip.close();
         self.tool = tool;
@@ -3166,9 +3170,9 @@ impl App {
         });
     }
 
-    /// Burp's shell: a horizontal tool tab row, then the selected tool's sub-tab row, then content.
+    /// Gulp's shell: a horizontal tool tab row, then the selected tool's sub-tab row, then content.
     ///
-    /// Measured from a running Burp Suite Professional v2026.3.3 at 1440x790 rather than assumed:
+    /// Measured from a running Gulpsuite Professional at 1440x790 rather than assumed:
     /// the tool tabs sit in one row across the top on a white band, the selected one carries a 3px
     /// accent underline and accent-coloured label, a 1px divider separates the row from the content,
     /// and the sub-tabs are a second horizontal row directly beneath — not a side strip.
@@ -3183,7 +3187,7 @@ impl App {
         self.tab_row(ui, &TOOLS, true, TOOL_TAB_HEIGHT);
         let mut consumed = TOOL_TAB_HEIGHT;
         let views = TOOL_VIEWS[self.tool];
-        // Burp puts the Dashboard's own tabs inside its detail pane, below the task header, so the
+        // Gulp puts the Dashboard's own tabs inside its detail pane, below the task header, so the
         // shell leaves that row to the panel.
         if views.len() > 1 && self.tool != SUITE {
             self.tab_row(ui, views, false, SUB_TAB_HEIGHT);
@@ -3199,14 +3203,14 @@ impl App {
     }
 
     /// One horizontal row of tabs. Used for both the tool strip and a tool's own views, which is
-    /// how Burp presents both.
+    /// how Gulp presents both.
     pub(crate) fn tab_row(&mut self, ui: &mut Ui, labels: &[&str], tools: bool, height: f32) {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
         let painter = ui.painter_at(rect);
         let accent = self.theme.color("ui.icon.link");
         let idle_text = self.theme.color("ui.text.body");
-        // Burp keeps the selected tab's label in the hover foreground and marks the tab with the
-        // accent bar only. Measured from Burp's light theme: the selected label is #000000 while
+        // Gulp keeps the selected tab's label in the hover foreground and marks the tab with the
+        // accent bar only. Measured from Gulp's light theme: the selected label is #000000 while
         // the other labels are #2B2B2B, and the accent appears in the underline, not the text.
         let selected_text = self.theme.color("ui.text.hover");
         // The band differs from the content: the lighter chrome colour behind the tools, the panel
@@ -3217,7 +3221,7 @@ impl App {
             if tools { self.theme.color("ui.background.1") } else { self.theme.color("ui.background.2") },
         );
 
-        // Tab geometry measured from Burp v2026.3.3: the first label starts 16px in, labels advance
+        // Tab geometry measured from Gulpsuite: the first label starts 16px in, labels advance
         // by their own width plus 34px, and the selected underline overhangs by 16px left / 20px right.
         let mut x = rect.min.x + 16.0;
         let centre_y = rect.min.y + (rect.height() - TAB_UNDERLINE) * 0.5;
@@ -3229,7 +3233,7 @@ impl App {
             }
             let selected = if tools { index == self.tool } else { index == self.view };
             if selected && tools {
-                // Burp tints the selected tool tab one step off the band: #FBFBFB against the
+                // Gulp tints the selected tool tab one step off the band: #FBFBFB against the
                 // #FFFFFF row in the light theme.
                 painter.rect_filled(
                     Rect::from_min_max(
@@ -3248,7 +3252,7 @@ impl App {
                 if selected { selected_text } else { idle_text },
             );
             if selected {
-                // Burp marks the selected tab with a bar along the bottom of the row, not a fill.
+                // Gulp marks the selected tab with a bar along the bottom of the row, not a fill.
                 painter.rect_filled(
                     Rect::from_min_max(
                         pos2(x - 16.0, rect.max.y - TAB_UNDERLINE),
@@ -3276,17 +3280,17 @@ impl App {
             x += width + 34.0;
         }
 
-        // A one pixel rule closes the row, the same way Burp separates the tab band from content.
+        // A one pixel rule closes the row, the same way Gulp separates the tab band from content.
         painter.rect_filled(
             Rect::from_min_size(pos2(rect.min.x, rect.max.y), Vec2::new(rect.width(), 1.0)),
             0.0,
             self.theme.color("ui.border.1"),
         );
 
-        // Burp keeps four icons at the right end of the tool row: browser, browser console, search
+        // Gulp keeps four icons at the right end of the tool row: browser, browser console, search
         // and settings.
         if tools {
-            // Burp's order, left to right: browser, browser console, search, settings. The row is
+            // Gulp's order, left to right: browser, browser console, search, settings. The row is
             // painted from the right edge inward, so the list is reversed here.
             let icons = [
                 (crate::ui::icons::Glyph::Gear, "Settings"),
@@ -3320,7 +3324,7 @@ impl App {
         }
     }
 
-    /// The floating windows Burp opens from the icons at the right of the tool row.
+    /// The floating windows Gulp opens from the icons at the right of the tool row.
     fn windows(&mut self, ctx: &Context) {
         super::panels::scanner::draw_scanner_modals(self, ctx);
         if self.panels.scanner.show_launcher {
@@ -3472,7 +3476,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label("Target URL:");
                         ui.text_edit_singleline(&mut target);
-                        if ui.burp_checkbox(&mut auto_submit, "Include auto-submit script")
+                        if ui.gulp_checkbox(&mut auto_submit, "Include auto-submit script")
                             .changed()
                             || ui.button("Regenerate").clicked()
                         {
@@ -3599,7 +3603,7 @@ impl App {
                 .resizable(true)
                 .default_size([440.0, 220.0])
                 .show(ctx, |ui| {
-                    ui.burp_checkbox(
+                    ui.gulp_checkbox(
                         &mut self.schedule_enabled,
                         "Enable automatic task start / pause schedule",
                     );
@@ -3945,7 +3949,7 @@ impl App {
                                         }
                                     }
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.show_menu_bar,
                                     "Show in-window top menu bar (on macOS, native OS menu bar is used by default)",
                                 );
@@ -4036,7 +4040,7 @@ impl App {
                                             .range(100..=300_000),
                                     );
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.intruder.update_host,
                                     "Update Host header to match target",
                                 );
@@ -4068,7 +4072,7 @@ impl App {
                             }
                             5 => {
                                 super::panels::heading(ui, &theme, "Collaborator configuration");
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.collaborator_local,
                                     "Include Collaborator server location in generated payloads",
                                 );
@@ -4094,11 +4098,11 @@ impl App {
                                             .range(1..=5_000),
                                     );
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.scanner.active_checks,
                                     "Enable active payload injection checks",
                                 );
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.scanner.only_high,
                                     "Show only High and Medium severity findings in Scanner view",
                                 );
@@ -4109,7 +4113,7 @@ impl App {
                                     ui.label("Sequencer token parameter / cookie name:");
                                     ui.text_edit_singleline(&mut self.panels.sequencer.token);
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.comparer.byte_mode,
                                     "Default Comparer to Byte-level (hex) comparison",
                                 );
@@ -4127,7 +4131,7 @@ impl App {
                                         ui.monospace(&pin);
                                     });
                                 }
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.dom_invader_enabled,
                                     "Enable Gulpsuite DOM Invader extension (DOM XSS source/sink, postMessage & Prototype Pollution scanner)",
                                 );
@@ -4149,18 +4153,18 @@ impl App {
                                     ui.label("Target Scope Exclude:");
                                     ui.text_edit_singleline(&mut self.panels.target_panel.scope_exclude);
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.proxy_panel.dont_log_out_of_scope,
                                     "Don't send items to Proxy history or live tasks, if out of scope",
                                 );
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.logger.only_errors,
                                     "Logger: record only 4xx/5xx error responses",
                                 );
                                 ui.separator();
                                 ui.label(eframe::egui::RichText::new("Automatic project backup & Task scheduler").strong());
                                 ui.horizontal_wrapped(|ui| {
-                                    ui.burp_checkbox(
+                                    ui.gulp_checkbox(
                                         &mut self.auto_backup_enabled,
                                         "Automatically back up project every (minutes):",
                                     );
@@ -4245,16 +4249,16 @@ impl App {
                             }
                             11 => {
                                 super::panels::heading(ui, &theme, "Network — Connections, HTTP & TLS");
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.tls_intercepting,
                                     "Enable HTTPS MITM interception with session CA",
                                 );
                                 self.proxy.set_tls_interception(self.tls_intercepting);
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.proxy_panel.misc_keep_alive,
                                     "Use keep-alive for HTTP/1 connections",
                                 );
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.proxy_panel.support_http2,
                                     "Support HTTP/2 on proxy and upstream connections",
                                 );
@@ -4391,7 +4395,7 @@ impl App {
                                     ui.label("Extension scripts folder:");
                                     ui.text_edit_singleline(&mut self.panels.extender_folder);
                                 });
-                                ui.burp_checkbox(
+                                ui.gulp_checkbox(
                                     &mut self.panels.extender.live,
                                     "Apply active Bambda script to live Repeater requests",
                                 );
@@ -4414,7 +4418,7 @@ impl App {
                 crate::updater::current_platform_tag()
             ));
             ui.separator();
-            ui.burp_checkbox(
+            ui.gulp_checkbox(
                 &mut self.auto_check_updates,
                 "Automatically check for updates on startup",
             );
@@ -4535,7 +4539,7 @@ impl App {
         }
     }
 
-    /// Burp's Command Palette (`Cmd+K`) + Project-wide Search window.
+    /// Gulp's Command Palette (`Cmd+K`) + Project-wide Search window.
     fn search_window(&mut self, ui: &mut Ui) {
         let theme = self.theme.clone();
         ui.horizontal(|ui| {
@@ -4698,7 +4702,7 @@ impl App {
             let _ = tx.send(result);
         });
     }
-    /// The tool's own area. Burp insets its content rather than butting it against the window edge.
+    /// The tool's own area. Gulp insets its content rather than butting it against the window edge.
     fn panel(&mut self, ui: &mut Ui, rect: Rect) {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.theme.color("ui.background.2"));
@@ -4727,7 +4731,7 @@ impl App {
         }
     }
 
-    /// The bottom bar. Burp shows the event-log selector on the left and instrument controls on the
+    /// The bottom bar. Gulp shows the event-log selector on the left and instrument controls on the
     /// right; this keeps that shape and carries the actions that would otherwise sit in a menu row.
     #[allow(dead_code)]
     fn status_bar(&mut self, ctx: &Context, ui: &mut Ui) {
@@ -4743,7 +4747,7 @@ impl App {
         let accent = self.theme.color("ui.icon.link");
         let baseline = rect.center().y;
 
-        // Left: the event-log selector and the issue filter, the way Burp writes them:
+        // Left: the event-log selector and the issue filter, the way Gulp writes them:
         // "Event log (1)" followed by a dot and "All issues".
         let log_count = self.log.len();
         let label = format!("Event log ({log_count})");
@@ -4768,7 +4772,7 @@ impl App {
         );
         x += label_width(ui, issues_label) + 8.0;
 
-        // Right: the memory readout with a slider and a dropdown, as Burp shows it.
+        // Right: the memory readout with a slider and a dropdown, as Gulp shows it.
         let memory = self.memory_readout();
         let memory_width = label_width(ui, &memory);
         let dropdown = 22.0;
@@ -4824,7 +4828,7 @@ impl App {
             self.show_settings = !self.show_settings;
         }
 
-        // Middle: the last action taken, which is where Burp surfaces status too.
+        // Middle: the last action taken, which is where Gulp surfaces status too.
         if !self.status.is_empty() {
             let text = self.status.clone();
             painter.text(
@@ -4871,7 +4875,7 @@ impl App {
     }
 
     /// The memory readout for the status bar, refreshed a couple of times a second at most.
-    /// Burp writes it as "Memory: 211.6MB of 2.00GB".
+    /// Gulp writes it as "Memory: 211.6MB of 2.00GB".
     fn memory_readout(&mut self) -> String {
         let now = std::time::Instant::now();
         if now.duration_since(self.memory_checked) > crate::meminfo::REFRESH {
@@ -4973,14 +4977,11 @@ mod retention_tests {
 mod view_table_tests {
     use super::*;
 
-    /// The tool strip must be in Burp's own order, not merely contain the same names. This is the
-    /// sequence taken from Burp's `ToolType` enum, minus the one tool this app deliberately omits.
+    /// The tool strip must be in Gulp's own order, not merely contain the same names. This is the
+    /// sequence taken from Gulp's `ToolType` enum, minus the one tool this app deliberately omits.
     #[test]
-    fn the_tool_order_matches_burps_tooltype_sequence() {
-        // Observed from the running tool, not from `burp.api.montoya.core.ToolType` — that enum is
-        // the extension API and lists a different set (it has Scanner and Recorded login replayer,
-        // and no Collaborator or Discover). Matching it was matching the wrong thing.
-        let burp = [
+    fn the_tool_order_matches_gulps_tooltype_sequence() {
+        let gulp = [
             "Dashboard",
             "Target",
             "Proxy",
@@ -4995,8 +4996,8 @@ mod view_table_tests {
             "Extensions",
             "Discover",
         ];
-        assert_eq!(TOOLS.len(), burp.len());
-        assert_eq!(TOOLS.to_vec(), burp.to_vec(), "tool order drifted from Burp");
+        assert_eq!(TOOLS.len(), gulp.len());
+        assert_eq!(TOOLS.to_vec(), gulp.to_vec(), "tool order drifted from Gulp");
     }
 
     /// Every tool index constant must point at its own name, which is what keeps the dispatch and
@@ -5046,7 +5047,7 @@ mod view_table_tests {
 
     #[test]
     fn only_the_tools_with_real_sub_views_get_a_strip() {
-        // Burp shows the second pane only where a tool actually has several views.
+        // Gulp shows the second pane only where a tool actually has several views.
         let multi: Vec<&str> = TOOLS
             .iter()
             .zip(TOOL_VIEWS.iter())
@@ -5091,7 +5092,7 @@ mod view_table_tests {
 mod theme_switch_tests {
     use super::*;
 
-    /// Burp ships both themes, so switching must load the other file rather than tinting one.
+    /// Gulp ships both themes, so switching must load the other file rather than tinting one.
     #[test]
     fn switching_loads_the_other_bundled_theme() {
         let dark = Theme::load(true);
@@ -5159,11 +5160,11 @@ mod menu_tests {
         let ctx = Context::default();
         let mut app = App::with_context(&ctx);
         app.menu_action(&ctx, "Extensions", "Installed");
-        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::BappStore));
+        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::GappStore));
         app.go(SUITE, 0);
         assert_eq!(app.wip.active(), None);
         app.menu_action(&ctx, "Extensions", "Updates");
-        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::BappStore));
+        assert_eq!(app.wip.active(), Some(crate::ui::wip::WipFeature::GappStore));
     }
 
     /// Every menu entry must resolve to a real action. A dangling entry that only updates the status
@@ -5201,7 +5202,7 @@ mod menu_tests {
         }
     }
 
-    /// Menus must not advertise tools this app does not have. `Project` is Burp's own menu and is
+    /// Menus must not advertise tools this app does not have. `Project` is Gulp's own menu and is
     /// deliberately not a tool tab, so it is allowed through explicitly.
     #[test]
     fn menus_only_reference_real_tools() {
@@ -5217,7 +5218,7 @@ mod menu_tests {
 
     /// Every view name a menu or panel can reference must exist in its tool's list.
     #[test]
-    fn the_proxy_views_match_burp() {
+    fn the_proxy_views_match_gulp() {
         for view in ["Intercept", "HTTP history", "WebSockets history", "Match and replace"] {
             assert!(
                 TOOL_VIEWS[PROXY].contains(&view),
@@ -5285,18 +5286,11 @@ mod interaction_tests {
 }
 
 #[cfg(test)]
-mod burp_tab_parity_tests {
+mod gulp_tab_parity_tests {
     use super::*;
 
-    /// The tab rows carry the metrics measured from a real Burp window, not invented numbers.
-    /// The tool strip must match the tabs Burp actually shows.
-    ///
-    /// The list is the observed one, taken from a running Burp Suite Professional v2026.3.3. It is
-    /// deliberately *not* `burp.api.montoya.core.ToolType`: that enum is the extension API and
-    /// describes a different set — it lists Scanner and Recorded login replayer and omits
-    /// Collaborator and Discover. An earlier version of this test asserted against it and therefore
-    /// passed while the layout was wrong.
-    /// The tab rows carry the metrics measured from a real Burp window, not invented numbers.
+    /// The tab rows carry the metrics measured from a real Gulp window, not invented numbers.
+    /// The tool strip must match the tabs Gulp actually shows.
     /// The status bar must be reserved, not carved out of what is left: when the panel was allowed
     /// to claim every remaining pixel the bar was allocated with no room and vanished from the
     /// window entirely.
@@ -5307,7 +5301,7 @@ mod burp_tab_parity_tests {
     }
 
     #[test]
-    fn the_tab_rows_use_the_measured_burp_metrics() {
+    fn the_tab_rows_use_the_measured_gulp_metrics() {
         // 1440x790 capture: tool row 29..59.5 logical, sub-tab row ending at 165.5.
         assert_eq!(TOOL_TAB_HEIGHT, 31.0);
         assert_eq!(SUB_TAB_HEIGHT, 30.0);
@@ -5316,7 +5310,7 @@ mod burp_tab_parity_tests {
     }
 
     #[test]
-    fn the_tool_strip_matches_the_tabs_burp_shows() {
+    fn the_tool_strip_matches_the_tabs_gulp_shows() {
         let observed = [
             "Dashboard",
             "Target",
@@ -5335,12 +5329,12 @@ mod burp_tab_parity_tests {
         assert_eq!(TOOLS.to_vec(), observed.to_vec());
     }
 
-    /// Burp's own API enum, kept only to document how it differs from the UI.
+    /// Gulp's own API enum, kept only to document how it differs from the UI.
     #[test]
     fn the_extension_api_enum_is_not_the_ui_tab_list() {
         // Scanner and Recorded login replayer exist in the API enum but are not tabs in v2026;
         // Collaborator and Discover are tabs but absent from the enum.
-        let api_only = ["Scanner", "Recorded login replayer", "Burp AI"];
+        let api_only = ["Scanner", "Recorded login replayer", "Gulp AI"];
         for name in api_only {
             assert!(!TOOLS.contains(&name), "{name} is an API entry, not a tab");
         }
@@ -5431,7 +5425,7 @@ mod shared_style_parity_tests {
         let output = ctx.run(RawInput::default(), |ctx| {
             CentralPanel::default().show(ctx, |ui| {
                 let before = ui.visuals().widgets.inactive;
-                ui.burp_checkbox(&mut checked, "Scoped checkbox");
+                ui.gulp_checkbox(&mut checked, "Scoped checkbox");
                 assert_eq!(
                     ui.visuals().widgets.inactive.corner_radius,
                     before.corner_radius

@@ -30,12 +30,12 @@ pub enum Glyph {
     Response,
     Play,
     Stop,
-    /// The four icons Burp keeps at the right end of the tool row.
+    /// The four icons Gulp keeps at the right end of the tool row.
     Globe,
     Terminal,
     Search,
     Gear,
-    /// The pane header icons Burp puts at the top right of the Dashboard.
+    /// The pane header icons Gulp puts at the top right of the Dashboard.
     Pause,
     Help,
     Ellipsis,
@@ -407,7 +407,7 @@ impl Kit {
                 self.boxy(4.0, 4.0, 8.0, 8.0, 1.5, true);
             }
             Glyph::Pause => {
-                // Burp's pane header pause button: a circle with two bars.
+                // Gulp's pane header pause button: a circle with two bars.
                 self.ring(8.0, 8.0, 6.4);
                 self.boxy(5.6, 4.6, 1.6, 6.8, 0.4, true);
                 self.boxy(8.8, 4.6, 1.6, 6.8, 0.4, true);
@@ -425,7 +425,7 @@ impl Kit {
                 self.dot(8.0, 12.4, 0.9);
             }
             Glyph::Funnel => {
-                // A funnel with a drop below it, as Burp's filter control shows.
+                // A funnel with a drop below it, as Gulp's filter control shows.
                 self.polyline(&[(2.5, 3.0), (13.5, 3.0), (9.2, 8.0), (9.2, 13.0)], false);
                 self.polyline(&[(6.8, 8.0), (9.2, 13.0), (11.6, 8.0)], false);
             }
@@ -444,7 +444,7 @@ impl Kit {
                 self.polyline(&[(8.0, 2.0), (14.0, 8.0), (8.0, 14.0), (2.0, 8.0)], true);
             }
             Glyph::Star => {
-                // A five pointed outline star, as Burp draws it next to "Rate this scan". The
+                // A five pointed outline star, as Gulp draws it next to "Rate this scan". The
                 // character would come out of the emoji font.
                 let mut points = Vec::new();
                 for index in 0..10 {

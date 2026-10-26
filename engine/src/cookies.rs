@@ -1,6 +1,6 @@
 //! Cookie jar and session handling.
 //!
-//! Burp models this as `http/sessions/CookieJar` with `SessionHandlingAction`. The proxy needs it
+//! Gulp models this as `http/sessions/CookieJar` with `SessionHandlingAction`. The proxy needs it
 //! to behave like a browser on repeat visits: store `Set-Cookie`, replay `Cookie`, honour
 //! `Expires`/`Max-Age`, and scope by domain and path.
 
@@ -68,7 +68,7 @@ pub fn parse_set_cookie(header: &str) -> Option<Cookie> {
     }
     let mut cookie = Cookie {
         name: name.to_string(),
-        // A quoted value keeps its quotes out; Burp shows the value without them.
+        // A quoted value keeps its quotes out; Gulp shows the value without them.
         value: value.trim().trim_matches('"').to_string(),
         domain: String::new(),
         path: "/".into(),

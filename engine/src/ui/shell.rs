@@ -2,7 +2,7 @@ use eframe::egui::{pos2, Align, FontId, Layout, Rect, Sense, Ui, UiBuilder, Vec2
 
 use crate::project::SavedLayout;
 use crate::ui::drawers::{self, DrawerState};
-use crate::ui::reference::{burp_2026_3_3, ReferenceSpec};
+use crate::ui::reference::{gulp_reference, ReferenceSpec};
 use crate::ui::theme::Theme;
 use crate::workspace::Workspace;
 use crate::workspace::{EventLevel, TaskId};
@@ -150,7 +150,7 @@ impl SuiteShell {
         tools: &[&str],
         views: &[&str],
     ) -> Vec<ShellCommand> {
-        let reference = burp_2026_3_3();
+        let reference = gulp_reference();
         let mut commands = self.draw_tool_row(ui, theme, tools, reference);
         if views.len() > 1 && self.active_tool != crate::ui::app::SUITE {
             commands.extend(self.draw_view_row(ui, theme, views, reference));
@@ -181,7 +181,7 @@ impl SuiteShell {
         memory: &str,
         memory_ratio: f32,
     ) -> Vec<ShellCommand> {
-        let height = burp_2026_3_3().shell.status_height;
+        let height = gulp_reference().shell.status_height;
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
         let painter = ui.painter_at(rect);

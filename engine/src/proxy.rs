@@ -156,8 +156,7 @@ struct Inner {
     events: broadcast::Sender<Event>,
     /// Session handling: cookies learned from `Set-Cookie` and replayed on later requests.
     cookies: crate::cookies::CookieJar,
-    /// The match-and-replace script, applied to requests on their way out. Burp calls this feature
-    /// "Match and replace"; the script language here is the same Bambda one.
+    /// The match-and-replace script, applied to requests on their way out.
     rules: std::sync::RwLock<Option<Vec<crate::bambda::Statement>>>,
     /// The authority that signs the certificates the proxy hands to clients that ask for https.
     authority: Option<Arc<crate::tls::Authority>>,
@@ -1114,7 +1113,7 @@ impl Proxy {
     ///
     /// The client is told to trust the proxy's own authority, which is why a browser has to be
     /// told about that certificate before https works through the proxy.
-    /// Built-in Burp-compatible proxy portal (`http://burp/`, `http://burpsuite/`, `/cert`, `/cert.pem`).
+    /// Built-in Gulpsuite proxy portal (`http://gulp/`, `http://gulpsuite/`, `/cert`, `/cert.pem`).
     /// Served before the hold queue so browser certificate downloads never deadlock on Intercept.
     async fn serve_portal(&self, client: &mut Out, capture_target: &str) -> bool {
         let Ok(url) = url::Url::parse(capture_target) else {
@@ -1125,10 +1124,7 @@ impl Proxy {
         };
         let is_portal_host = host.eq_ignore_ascii_case("gulp")
             || host.eq_ignore_ascii_case("gulpsuite")
-            || host.eq_ignore_ascii_case("gulp.local")
-            || host.eq_ignore_ascii_case("burp")
-            || host.eq_ignore_ascii_case("burpsuite")
-            || host.eq_ignore_ascii_case("burp.local");
+            || host.eq_ignore_ascii_case("gulp.local");
         if !is_portal_host {
             return false;
         }

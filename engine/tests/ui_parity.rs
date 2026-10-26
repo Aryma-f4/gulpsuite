@@ -65,7 +65,7 @@ fn dashboard_actions_change_task_state() {
         .iter()
         .any(|task| task.state == TaskState::Running));
 
-    // Clicking "New scan" opens the Burp Suite Pro v2026.3.3 Scan Launcher modal window
+    // Clicking "New scan" opens the Gulpsuite Professional Scan Launcher modal window
     harness.get_by_label("New scan").click();
     harness.run();
     assert!(harness.state().panels.scanner.show_launcher);
@@ -118,7 +118,7 @@ fn dashboard_actions_change_task_state() {
     assert!(html_rep.contains("SQL injection"));
     harness.state_mut().panels.scanner.report_format = 1;
     let xml_rep = gulpsuite::ui::panels::scanner::generate_scan_report(harness.state());
-    assert!(xml_rep.contains("<issues burpVersion=\"2026.3.3\">"));
+    assert!(xml_rep.contains("<issues gulpVersion=\"0.0.9\">"));
     assert!(xml_rep.contains("<serialNumber>1000</serialNumber>"));
     harness.state_mut().panels.scanner.report_format = 0;
 
@@ -333,7 +333,7 @@ fn dashboard_reference_controls_remain_connected_to_real_task_data() {
 }
 
 #[test]
-fn ai_wip_is_available_from_burp_style_status_control() {
+fn ai_wip_is_available_from_gulp_style_status_control() {
     let mut harness = harness(false, 1440.0);
     harness.get_by_label("AI assistant (WIP)").click();
     harness.run();
@@ -577,7 +577,7 @@ fn target_proxy_organizer_logger_empty_states_and_intruder_subtabs_work() {
     assert!(!harness.state().panels.proxy_panel.sort_ascending);
     assert!(harness.query_by_label("Status code ▼").is_some());
 
-    // Filter settings modal window opens with Burp Configure filter controls
+    // Filter settings modal window opens with Gulp Configure filter controls
     harness.get_by_label("Filter settings").click();
     harness.run();
     assert!(harness.query_by_label("Settings mode").is_some());
@@ -734,7 +734,7 @@ fn native_setup_wizard_steps_through_welcome_and_directory_screens() {
     harness.run();
     assert_eq!(harness.state().step, SetupStep::Welcome);
     assert!(harness
-        .query_by_label("Welcome to the Gulpsuite 0.0.8 Setup Wizard")
+        .query_by_label("Welcome to the Gulpsuite 0.0.9 Setup Wizard")
         .is_some());
     harness.get_by_label("Next >").click();
     harness.run();
@@ -1084,7 +1084,7 @@ fn generate_documentation_screenshots() {
         .save(out_dir.join("09-decoder-smart-decode.png"))
         .expect("save 09-decoder-smart-decode.png");
 
-    // 10. Collaborator (matching `burp-collaborator-tut-4-polling-for-interactions.png`)
+    // 10. Collaborator (matching `gulp-collaborator-tut-4-polling-for-interactions.png`)
     h_light.get_by_label("Collaborator").click();
     h_light.state_mut().panels.collaborator_hits = vec![
         gulpsuite::collaborator::Hit {

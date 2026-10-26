@@ -311,7 +311,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeded_proxy_tasks_have_stable_ids_and_burp_display_order() {
+    fn seeded_proxy_tasks_have_stable_ids_and_gulp_display_order() {
         let tasks = TaskManager::seed_proxy_tasks();
         assert_eq!(tasks.get(TaskId(1)).unwrap().kind, TaskKind::PassiveCrawl);
         assert_eq!(tasks.get(TaskId(2)).unwrap().kind, TaskKind::LiveAudit);
