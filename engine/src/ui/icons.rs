@@ -415,8 +415,9 @@ impl Kit {
             Glyph::Help => {
                 // A circle around a question mark.
                 self.ring(8.0, 8.0, 6.4);
-                self.arc(8.0, 6.2, 2.2, 190.0, 20.0);
-                self.line((8.0, 8.4), (8.0, 10.4));
+                self.arc(8.0, 6.1, 2.0, 200.0, 405.0);
+                self.line((9.4, 7.5), (8.0, 8.7));
+                self.line((8.0, 8.7), (8.0, 10.1));
                 self.dot(8.0, 12.2, 0.9);
             }
             Glyph::Ellipsis => {
@@ -442,6 +443,7 @@ impl Kit {
             }
             Glyph::Diamond => {
                 self.polyline(&[(8.0, 2.0), (14.0, 8.0), (8.0, 14.0), (2.0, 8.0)], true);
+                self.polyline(&[(8.6, 5.2), (6.8, 8.2), (9.2, 8.2), (7.4, 10.8)], false);
             }
             Glyph::Star => {
                 // A five pointed outline star, as Gulp draws it next to "Rate this scan". The

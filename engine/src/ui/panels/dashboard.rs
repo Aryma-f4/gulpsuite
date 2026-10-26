@@ -556,13 +556,6 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
     let theme = app.theme.clone();
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
-            let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-            crate::ui::icons::paint(
-                ui.painter(),
-                icon,
-                theme.color("ui.icon.default"),
-                Glyph::Diamond,
-            );
             heading(ui, &theme, &task.name);
             let (star_rect, star_resp) =
                 ui.allocate_exact_size(Vec2::splat(13.0), Sense::click());
@@ -684,7 +677,7 @@ fn summary(app: &mut App, ui: &mut Ui, task: &Task) {
                     ui.painter(),
                     icon,
                     theme.color("ui.icon.default"),
-                    Glyph::Diamond,
+                    Glyph::Gear,
                 );
                 heading(ui, &theme, "Task configuration");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
