@@ -2934,6 +2934,7 @@ impl App {
             ShellCommand::OpenConsole => self.show_console = true,
             ShellCommand::OpenBrowser => self.open_browser(),
             ShellCommand::OpenAi => self.wip.open(crate::ui::wip::WipFeature::Ai),
+            ShellCommand::OpenUpdate => self.check_for_updates(true),
             ShellCommand::ToggleDrawer(kind) => {
                 self.status = match kind {
                     crate::ui::drawers::DrawerKind::EventLog => "Event log".into(),
@@ -2949,6 +2950,9 @@ impl App {
         match action {
             NativeMenuAction::GulpSettings => {
                 self.show_settings = true;
+            }
+            NativeMenuAction::CheckForUpdates => {
+                self.check_for_updates(true);
             }
             NativeMenuAction::ToggleTheme => {
                 let dark = !self.is_dark();
@@ -3742,6 +3746,9 @@ impl App {
                 if ui.small_button("📖 Configuration library").clicked() {
                     self.settings_category = 0;
                 }
+                if ui.small_button("↻ Check for updates").clicked() {
+                    self.check_for_updates(true);
+                }
             });
 
             ui.separator();
@@ -3790,6 +3797,9 @@ impl App {
                                     ui.close();
                                 }
                             });
+                            if ui.small_button("↻ Check for updates").clicked() {
+                                self.check_for_updates(true);
+                            }
                         },
                     );
                 });
@@ -4443,6 +4453,11 @@ impl App {
             {
                 self.check_for_updates(false);
             }
+            if ui.button("View Releases on GitHub").clicked() {
+                ui.ctx().open_url(eframe::egui::OpenUrl::new_tab(
+                    "https://github.com/Aryma-f4/gulpsuite/releases",
+                ));
+            }
         });
         ui.add_space(4.0);
         ui.label(
@@ -4531,6 +4546,11 @@ impl App {
                                     Err(err) => {
                                         self.update_status_message = err;
                                     }
+                                }
+                            }
+                            if primary_button(ui, &theme, "Relaunch Gulpsuite").clicked() {
+                                if let Err(err) = crate::updater::relaunch_current_executable() {
+                                    self.update_status_message = err;
                                 }
                             }
                         }

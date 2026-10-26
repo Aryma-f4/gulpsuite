@@ -199,13 +199,45 @@ pub fn release_api_url(repo_or_url: &str) -> String {
     }
 }
 
-/// Performs an HTTP/HTTPS `GET` request (following up to 5 redirects) and returns the response body.
+/// Performs an HTTP/HTTPS `GET` request (following up to 8 redirects, with a `curl -fsSL`
+/// fallback if the direct socket/TLS client encounters a proxy or custom CA) and returns the body.
 pub async fn http_get_bytes(
     initial_url: &str,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<u8>, String> {
+    match http_get_bytes_direct(initial_url, progress).await {
+        Ok(bytes) => Ok(bytes),
+        Err(direct_err) => {
+            if let Ok(output) = std::process::Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "--max-time",
+                    "120",
+                    "-A",
+                    &format!("Gulpsuite/{CURRENT_VERSION}"),
+                    initial_url,
+                ])
+                .output()
+            {
+                if output.status.success() && !output.stdout.is_empty() {
+                    if let Some(cb) = progress {
+                        let len = output.stdout.len() as u64;
+                        cb(len, len);
+                    }
+                    return Ok(output.stdout);
+                }
+            }
+            Err(direct_err)
+        }
+    }
+}
+
+async fn http_get_bytes_direct(
+    initial_url: &str,
+    progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<Vec<u8>, String> {
     let mut current_url = initial_url.to_string();
-    for _redirect in 0..=5 {
+    for _redirect in 0..=8 {
         let parsed = url::Url::parse(&current_url)
             .map_err(|e| format!("Invalid update URL '{current_url}': {e}"))?;
         let scheme = parsed.scheme();
@@ -483,8 +515,67 @@ pub async fn download_and_verify_release(
     Ok((out_path, sha256_verified))
 }
 
+/// Atomically replaces `target_exe` with `new_bin` by renaming the running binary to `.old`,
+/// copying `new_bin` into place, setting executable permissions, and removing `.old`.
+pub fn replace_executable_at(target_exe: &Path, new_bin: &Path) -> Result<(), String> {
+    if !new_bin.is_file() {
+        return Err(format!("New binary does not exist: {}", new_bin.display()));
+    }
+    let backup = target_exe.with_extension("old-update");
+    let _ = std::fs::remove_file(&backup);
+    if target_exe.exists() {
+        std::fs::rename(target_exe, &backup).map_err(|e| {
+            format!(
+                "Cannot move existing executable {} for in-place update: {e}",
+                target_exe.display()
+            )
+        })?;
+    }
+    if let Err(e) = std::fs::copy(new_bin, target_exe) {
+        let _ = std::fs::rename(&backup, target_exe);
+        return Err(format!(
+            "Failed copying updated binary to {}: {e}",
+            target_exe.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(target_exe, std::fs::Permissions::from_mode(0o755));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(target_exe)
+            .status();
+    }
+    let _ = std::fs::remove_file(&backup);
+    Ok(())
+}
+
+/// Replaces the currently running executable (`std::env::current_exe()`) with `new_bin`.
+pub fn replace_current_executable(new_bin: &Path) -> Result<PathBuf, String> {
+    let current = std::env::current_exe()
+        .map_err(|e| format!("Cannot resolve current executable path: {e}"))?;
+    replace_executable_at(&current, new_bin)?;
+    Ok(current)
+}
+
+/// Spawns a fresh instance of the currently installed Gulpsuite executable and exits the current process.
+pub fn relaunch_current_executable() -> Result<(), String> {
+    let exe = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .ok_or_else(|| "Cannot determine executable path to relaunch".to_string())?;
+    std::process::Command::new(&exe)
+        .spawn()
+        .map_err(|e| format!("Failed to relaunch {}: {e}", exe.display()))?;
+    std::process::exit(0);
+}
+
 /// Launches the downloaded native installer (`-setup.pkg` / `.dmg` on macOS, `-setup.exe` on Windows,
-/// `-setup.run` / `.deb` on Linux).
+/// `-setup.run` / `.AppImage` / `.deb` on Linux) and performs an in-place binary update when writable.
 pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
     if !installer_path.is_file() {
         return Err(format!(
@@ -500,10 +591,49 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
+        let mut updated_in_place = None;
+        if name.ends_with(".pkg") {
+            let expand_dir = std::env::temp_dir().join(format!(
+                "gulpsuite-pkg-expand-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&expand_dir);
+            if std::process::Command::new("pkgutil")
+                .arg("--expand-full")
+                .arg(installer_path)
+                .arg(&expand_dir)
+                .status()
+                .is_ok_and(|s| s.success())
+            {
+                let extracted_bin = expand_dir
+                    .join("gulpsuite-component.pkg/Payload/Applications/Gulpsuite.app/Contents/MacOS/gulpsuite");
+                if extracted_bin.is_file() {
+                    if let Ok(cur) = replace_current_executable(&extracted_bin) {
+                        updated_in_place = Some(cur);
+                    }
+                    let local_app_bin = Path::new("Gulpsuite.app/Contents/MacOS/gulpsuite");
+                    if local_app_bin.is_file() {
+                        let _ = replace_executable_at(local_app_bin, &extracted_bin);
+                    }
+                    let local_app_bin_cap = Path::new("Gulpsuite.app/Contents/MacOS/Gulpsuite");
+                    if local_app_bin_cap.is_file() {
+                        let _ = replace_executable_at(local_app_bin_cap, &extracted_bin);
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&expand_dir);
+            }
+        }
         std::process::Command::new("open")
             .arg(installer_path)
             .spawn()
             .map_err(|e| format!("Failed to open macOS installer {}: {e}", name))?;
+        if let Some(cur) = updated_in_place {
+            return Ok(format!(
+                "Updated {} in-place and launched macOS installer ({}). Click 'Relaunch Gulpsuite' to restart.",
+                cur.display(),
+                installer_path.display()
+            ));
+        }
         return Ok(format!(
             "Launched macOS installer: {}",
             installer_path.display()
@@ -528,15 +658,9 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
     {
         if name.ends_with(".appimage") {
             if let Some(current_appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
-                let _ = std::fs::copy(installer_path, &current_appimage);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &current_appimage,
-                        std::fs::Permissions::from_mode(0o755),
-                    );
-                }
+                let _ = replace_executable_at(&current_appimage, installer_path);
+            } else {
+                let _ = replace_current_executable(installer_path);
             }
             std::process::Command::new(installer_path)
                 .arg("--appimage-extract-and-run")
@@ -709,6 +833,13 @@ mod tests {
                 .unwrap();
         assert!(verified, "SHA-256 companion digest must be verified");
         assert_eq!(std::fs::read(&downloaded_path).unwrap(), payload);
+
+        let target_exe = tmp.join("gulpsuite-running-bin");
+        std::fs::write(&target_exe, b"old-binary-v0.0.1").unwrap();
+        replace_executable_at(&target_exe, &downloaded_path).unwrap();
+        assert_eq!(std::fs::read(&target_exe).unwrap(), payload);
+        assert!(!target_exe.with_extension("old-update").exists());
+
         let _ = std::fs::remove_dir_all(&tmp);
         server.await.unwrap();
     }

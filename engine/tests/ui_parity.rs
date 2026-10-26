@@ -335,6 +335,11 @@ fn dashboard_reference_controls_remain_connected_to_real_task_data() {
 #[test]
 fn ai_wip_is_available_from_gulp_style_status_control() {
     let mut harness = harness(false, 1440.0);
+    harness.get_by_label("Check for updates").click();
+    harness.run();
+    assert!(harness.state().show_update_modal);
+    harness.state_mut().show_update_modal = false;
+    harness.run();
     harness.get_by_label("AI assistant (WIP)").click();
     harness.run();
     assert_eq!(

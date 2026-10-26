@@ -18,6 +18,7 @@ pub enum ShellCommand {
     OpenConsole,
     OpenBrowser,
     OpenAi,
+    OpenUpdate,
     ToggleDrawer(DrawerKind),
 }
 
@@ -267,6 +268,46 @@ impl SuiteShell {
             2.0,
             accent,
         );
+        let update_rect =
+            Rect::from_center_size(pos2(rect.max.x - 82.0, baseline), Vec2::new(26.0, 24.0));
+        let update_btn = ui.interact(update_rect, ui.id().with("status-update"), Sense::click());
+        update_btn.widget_info(|| {
+            eframe::egui::WidgetInfo::labeled(
+                eframe::egui::WidgetType::Button,
+                true,
+                "Check for updates",
+            )
+        });
+        painter.rect_stroke(
+            update_rect,
+            3.0,
+            eframe::egui::Stroke::new(
+                1.0,
+                if update_btn.hovered() {
+                    accent
+                } else {
+                    theme.color("ui.border.1")
+                },
+            ),
+            eframe::egui::StrokeKind::Inside,
+        );
+        painter.text(
+            update_rect.center(),
+            eframe::egui::Align2::CENTER_CENTER,
+            "↻",
+            FontId::proportional(13.0),
+            if update_btn.hovered() { accent } else { idle },
+        );
+        if update_btn.hovered() {
+            update_btn.clone().on_hover_text(format!(
+                "Check for updates (Gulpsuite v{})",
+                crate::updater::CURRENT_VERSION
+            ));
+        }
+        if update_btn.clicked() {
+            commands.push(ShellCommand::OpenUpdate);
+        }
+
         let ai_rect =
             Rect::from_center_size(pos2(rect.max.x - 52.0, baseline), Vec2::new(26.0, 24.0));
         let ai = ui.interact(ai_rect, ui.id().with("status-ai"), Sense::click());

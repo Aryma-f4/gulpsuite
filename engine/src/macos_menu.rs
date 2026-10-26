@@ -13,6 +13,7 @@ use objc::{class, msg_send, sel, sel_impl};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeMenuAction {
     GulpSettings,
+    CheckForUpdates,
     ToggleTheme,
     Quit,
     NewProject,
@@ -56,6 +57,7 @@ extern "C" fn on_menu_item(_this: &Object, _cmd: Sel, sender: *mut Object) {
     let action = match tag {
         101 => Some(NativeMenuAction::GulpSettings),
         102 => Some(NativeMenuAction::ToggleTheme),
+        103 => Some(NativeMenuAction::CheckForUpdates),
         109 => Some(NativeMenuAction::Quit),
         201 => Some(NativeMenuAction::NewProject),
         202 => Some(NativeMenuAction::OpenProject),
@@ -156,6 +158,7 @@ pub fn install_once() {
         // 1. Application Menu ("Gulpsuite")
         let app_menu = add_submenu(bar, "Gulpsuite");
         add_item(app_menu, target, "Gulp Settings…", ",", 101);
+        add_item(app_menu, target, "Check for Updates…", "u", 103);
         add_item(app_menu, target, "Switch Theme (Dark / Light)", "", 102);
         add_separator(app_menu);
         add_item(app_menu, target, "Quit Gulpsuite", "q", 109);
@@ -204,6 +207,8 @@ pub fn install_once() {
 
         // 6. Help Menu
         let help_menu = add_submenu(bar, "Help");
+        add_item(help_menu, target, "Check for Updates…", "", 103);
+        add_separator(help_menu);
         add_item(help_menu, target, "Command palette & Search…", "k", 601);
         add_item(help_menu, target, "Open integrated Chromium browser", "", 602);
         add_item(help_menu, target, "Browser console", "", 603);
