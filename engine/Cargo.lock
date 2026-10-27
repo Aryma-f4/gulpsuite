@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "gulpsuite"
-version = "0.0.9"
+version = "0.1.0"
 dependencies = [
  "accesskit_macos",
  "base64",

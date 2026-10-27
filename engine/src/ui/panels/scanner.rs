@@ -3205,7 +3205,7 @@ pub fn generate_scan_report(app: &App) -> String {
 
     if p.report_format == 1 {
         let mut xml = String::from(
-            "<?xml version=\"1.0\"?>\n<!DOCTYPE issues [\n  <!ELEMENT issues (issue*)>\n  <!ELEMENT issue (serialNumber,type,name,host,path,location,severity,confidence,issueDetail)>\n]>\n<issues gulpVersion=\"0.0.9\">\n",
+            "<?xml version=\"1.0\"?>\n<!DOCTYPE issues [\n  <!ELEMENT issues (issue*)>\n  <!ELEMENT issue (serialNumber,type,name,host,path,location,severity,confidence,issueDetail)>\n]>\n<issues gulpVersion=\"0.1.0\">\n",
         );
         for (idx, iss) in issues.iter().enumerate() {
             xml.push_str(&format!(

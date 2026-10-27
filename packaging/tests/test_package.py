@@ -105,7 +105,7 @@ class PackageTests(unittest.TestCase):
             layout = root / 'layout'
             layout.mkdir()
             (layout / 'dummy.txt').write_text('hello')
-            artifact = root / 'Gulpsuite-0.0.9-macos-x64.dmg'
+            artifact = root / 'Gulpsuite-0.1.0-macos-x64.dmg'
 
             calls = []
 

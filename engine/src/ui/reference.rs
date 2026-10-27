@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn reference_identifies_exact_version_and_evidence() {
         let reference = gulp_reference();
-        assert_eq!(reference.version, "0.0.9");
+        assert_eq!(reference.version, "0.1.0");
         assert_eq!(
             reference.evidence.archive_inventory,
             "ev_cd380653b98d0d56dd3f20aaf03de9812c408900b14c1f25ce97d65c94c8686e"

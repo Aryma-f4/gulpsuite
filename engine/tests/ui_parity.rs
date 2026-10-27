@@ -118,7 +118,7 @@ fn dashboard_actions_change_task_state() {
     assert!(html_rep.contains("SQL injection"));
     harness.state_mut().panels.scanner.report_format = 1;
     let xml_rep = gulpsuite::ui::panels::scanner::generate_scan_report(harness.state());
-    assert!(xml_rep.contains("<issues gulpVersion=\"0.0.9\">"));
+    assert!(xml_rep.contains("<issues gulpVersion=\"0.1.0\">"));
     assert!(xml_rep.contains("<serialNumber>1000</serialNumber>"));
     harness.state_mut().panels.scanner.report_format = 0;
 
@@ -739,7 +739,7 @@ fn native_setup_wizard_steps_through_welcome_and_directory_screens() {
     harness.run();
     assert_eq!(harness.state().step, SetupStep::Welcome);
     assert!(harness
-        .query_by_label("Welcome to the Gulpsuite 0.0.9 Setup Wizard")
+        .query_by_label("Welcome to the Gulpsuite 0.1.0 Setup Wizard")
         .is_some());
     harness.get_by_label("Next >").click();
     harness.run();
