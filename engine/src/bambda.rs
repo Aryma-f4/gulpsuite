@@ -69,6 +69,30 @@ impl std::fmt::Display for ScriptError {
     }
 }
 
+/// Strips a `#` comment only when `#` occurs outside of single or double quotes.
+fn strip_unquoted_comment(raw: &str) -> &str {
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+    for (idx, ch) in raw.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && in_quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        match in_quote {
+            Some(q) if ch == q => in_quote = None,
+            Some(_) => {}
+            None if ch == '"' || ch == '\'' => in_quote = Some(ch),
+            None if ch == '#' => return &raw[..idx],
+            None => {}
+        }
+    }
+    raw
+}
+
 /// Parses a script into statements.
 pub fn parse(source: &str) -> Result<Vec<Statement>, ScriptError> {
     if source.len() > MAX_SCRIPT {
@@ -80,11 +104,7 @@ pub fn parse(source: &str) -> Result<Vec<Statement>, ScriptError> {
     let mut out = Vec::new();
     for (index, raw) in source.lines().enumerate() {
         let line = index + 1;
-        let text = match raw.find('#') {
-            Some(at) => &raw[..at],
-            None => raw,
-        }
-        .trim();
+        let text = strip_unquoted_comment(raw).trim();
         if text.is_empty() {
             continue;
         }
@@ -162,6 +182,7 @@ fn read_literal(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<(Str
                 Some('n') => value.push('\n'),
                 Some('r') => value.push('\r'),
                 Some('t') => value.push('\t'),
+                Some(c) if c == quote => value.push(quote),
                 // Keep the backslash for every other escape, so regex classes survive.
                 Some(other) => {
                     value.push('\\');
@@ -201,6 +222,7 @@ fn two_literals(rest: &str) -> Result<(String, String), String> {
                     Some('n') => value.push('\n'),
                     Some('r') => value.push('\r'),
                     Some('t') => value.push('\t'),
+                    Some(c) if c == quote => value.push(quote),
                     // Anything else keeps its backslash: regex classes like \w, \d and \b are
                     // meaningless without it, and silently dropping it made patterns match nothing.
                     Some(other) => {
@@ -246,7 +268,9 @@ pub fn run(statements: &[Statement], message: &str) -> String {
                 None => current,
             },
             Statement::ReplaceBody { find, with } => match split_head(&current) {
-                Some((head, body)) => format!("{head}{}", body.replace(find.as_str(), with.as_str())),
+                Some((head, body)) => {
+                    format!("{head}\r\n\r\n{}", body.replace(find.as_str(), with.as_str()))
+                }
                 None => current,
             },
             Statement::Regex { pattern, with } => match Regex::new(pattern) {
@@ -329,8 +353,18 @@ mod tests {
     #[test]
     fn replace_body_leaves_the_head_alone() {
         let out = apply(r#"replace_body "old" "new""#, msg()).expect("parses");
-        assert!(out.contains("User-Agent: old"), "head must be untouched");
-        assert!(out.contains("body new body"));
+        assert!(out.contains("User-Agent: old\r\n\r\nbody new body"), "head and CRLFCRLF separator must be preserved, got: {out}");
+    }
+
+    #[test]
+    fn hash_character_and_escaped_quotes_inside_literals_are_preserved() {
+        let out = apply(
+            "set_header \"X-Color\" \"#ff6633\" # trailing comment\nreplace_body \"body\" \"\\\"quoted\\\"\"",
+            msg(),
+        )
+        .expect("parses");
+        assert!(out.contains("X-Color: #ff6633\r\n"), "got: {out}");
+        assert!(out.ends_with("\r\n\r\n\"quoted\" old \"quoted\""), "got: {out}");
     }
 
     #[test]

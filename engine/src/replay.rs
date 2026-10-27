@@ -115,23 +115,65 @@ pub fn substitute(request: &str, live: &[(String, String)]) -> String {
     for (name, value) in live {
         out = out.replace(&format!("{{{{{name}}}}}"), value);
     }
-    out
+    crate::intruder::sync_content_length(&out)
 }
 
-/// Extracts a token from a response body given a field name, for `{{name}}` substitution.
+/// Extracts a token from a response body given a field name (JSON `"name": "val"` or HTML `<input name="..." value="...">`), for `{{name}}` substitution.
 pub fn token_from(body: &str, name: &str) -> Option<String> {
     let marker = format!("\"{name}\"");
-    let at = body.find(&marker)?;
-    let rest = &body[at + marker.len()..];
-    let colon = rest.find(':')?;
-    let after = rest[colon + 1..].trim_start();
-    let quote = after.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
+    if let Some(at) = body.find(&marker) {
+        let rest = &body[at + marker.len()..];
+        if let Some(colon) = rest.find(':') {
+            let after = rest[colon + 1..].trim_start();
+            if let Some(quote) = after.chars().next().filter(|&q| q == '"' || q == '\'') {
+                let after = &after[1..];
+                if let Some(end) = after.find(quote) {
+                    return Some(after[..end].to_string());
+                }
+            }
+        }
     }
-    let after = &after[1..];
-    let end = after.find(quote)?;
-    Some(after[..end].to_string())
+    // Fallback: HTML `<input ... name="<name>" ... value="<val>">`
+    let lower = body.to_ascii_lowercase();
+    let name_lc = name.to_ascii_lowercase();
+    let mut pos = 0usize;
+    while let Some(rel) = lower[pos..].find("<input") {
+        let start = pos + rel;
+        let Some(end_rel) = lower[start..].find('>') else {
+            break;
+        };
+        let tag = &body[start..start + end_rel + 1];
+        let tag_lc = &lower[start..start + end_rel + 1];
+        let matches_name = [
+            format!("name=\"{name_lc}\""),
+            format!("name='{name_lc}'"),
+            format!("name={name_lc} "),
+            format!("name={name_lc}>"),
+        ]
+        .iter()
+        .any(|pat| tag_lc.contains(pat));
+        if matches_name {
+            if let Some(val_idx) = tag_lc.find("value=") {
+                let after_val = tag[val_idx + 6..].trim_start();
+                if let Some(q) = after_val.chars().next().filter(|&c| c == '"' || c == '\'') {
+                    let inner = &after_val[1..];
+                    if let Some(end_q) = inner.find(q) {
+                        return Some(inner[..end_q].to_string());
+                    }
+                } else {
+                    let token: String = after_val
+                        .chars()
+                        .take_while(|c| !c.is_whitespace() && *c != '>' && *c != '/')
+                        .collect();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+            }
+        }
+        pos = start + end_rel + 1;
+    }
+    None
 }
 
 /// The placeholder names a recording uses, in the order they first appear.
@@ -273,6 +315,16 @@ mod tests {
         let body = r#"{"csrfToken":"abc123","other":"x"}"#;
         assert_eq!(token_from(body, "csrfToken").as_deref(), Some("abc123"));
         assert_eq!(token_from(body, "missing"), None);
+    }
+
+    #[test]
+    fn tokens_are_read_from_html_input_tags_and_substitute_updates_content_length() {
+        let html = r#"<form><input type="hidden" name="csrf" value="tok_9876543210"></form>"#;
+        assert_eq!(token_from(html, "csrf").as_deref(), Some("tok_9876543210"));
+        let req = "POST /login HTTP/1.1\r\nHost: a.test\r\nContent-Length: 13\r\n\r\ncsrf={{csrf}}";
+        let sub = substitute(req, &[("csrf".into(), "tok_9876543210".into())]);
+        assert!(sub.contains("Content-Length: 19\r\n"), "got: {sub}");
+        assert!(sub.ends_with("\r\n\r\ncsrf=tok_9876543210"));
     }
 
     #[test]
