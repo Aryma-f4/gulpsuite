@@ -97,6 +97,42 @@ class PackageTests(unittest.TestCase):
             self.assertFalse((prefix / 'gulpsuite').exists())
             self.assertTrue(sentinel.is_file())
 
+    def test_macos_dmg_retries_or_falls_back_to_makehybrid_on_resource_busy(self):
+        from unittest import mock
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            layout = root / 'layout'
+            layout.mkdir()
+            (layout / 'dummy.txt').write_text('hello')
+            artifact = root / 'Gulpsuite-0.0.9-macos-x64.dmg'
+
+            calls = []
+
+            def fake_run(cmd, *args, **kwargs):
+                calls.append(cmd)
+                if cmd[:2] == ['hdiutil', 'create']:
+                    res = mock.MagicMock()
+                    res.returncode = 1
+                    return res
+                if cmd[:2] == ['hdiutil', 'makehybrid']:
+                    out_idx = cmd.index('-o') + 1
+                    Path(cmd[out_idx]).write_bytes(b'hybrid-dmg')
+                elif cmd[:2] == ['hdiutil', 'convert']:
+                    out_idx = cmd.index('-o') + 1
+                    Path(cmd[out_idx]).write_bytes(b'udzo-dmg')
+                res = mock.MagicMock()
+                res.returncode = 0
+                return res
+
+            with mock.patch.object(module.subprocess, 'run', side_effect=fake_run), \
+                 mock.patch('time.sleep', return_value=None):
+                out = module.build_macos_dmg(layout, artifact)
+            self.assertEqual(out, artifact)
+            self.assertTrue((layout / '.metadata_never_index').is_file())
+            self.assertEqual(artifact.read_bytes(), b'udzo-dmg')
+            self.assertFalse(artifact.with_suffix('.hybrid.dmg').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

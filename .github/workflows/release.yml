@@ -72,7 +72,11 @@ jobs:
           echo 'C:/Program Files (x86)/NSIS' >> "$GITHUB_PATH"
 
       - name: Build native installer packages
-        run: python packaging/package.py --platform '${{ matrix.platform }}' --binary '${{ matrix.binary }}' --stage .build/browser-stage --output dist --development
+        run: |
+          if [ '${{ runner.os }}' = macOS ]; then
+            sudo mdutil -a -i off >/dev/null 2>&1 || true
+          fi
+          python packaging/package.py --platform '${{ matrix.platform }}' --binary '${{ matrix.binary }}' --stage .build/browser-stage --output dist --development
 
       - name: Upload installers to GitHub Release
         env:

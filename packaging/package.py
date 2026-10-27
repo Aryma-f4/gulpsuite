@@ -435,6 +435,69 @@ def build_windows_sfx_setup(setup_bin, resources_dir, artifact):
     return artifact
 
 
+def build_macos_dmg(layout, artifact):
+    """Creates a compressed UDZO macOS disk image (.dmg) from `layout` with full protection
+    against macOS 14/15 `hdiutil: create failed - Resource busy` runner lock races:
+      1. Writes `.metadata_never_index` so Spotlight (`mds`/`mdworker`) never indexes the temp mount.
+      2. Retries `hdiutil create -fs HFS+ -format UDZO` up to 5 times, force-detaching any stale
+         `/Volumes/Gulpsuite*` mount and syncing between attempts.
+      3. Falls back to mountless `hdiutil makehybrid -hfs` + `hdiutil convert -format UDZO` if the
+         kernel diskimages-helper remains busy.
+    """
+    import time
+
+    layout = Path(layout)
+    artifact = Path(artifact)
+    (layout / '.metadata_never_index').write_bytes(b'')
+    volname = 'Gulpsuite'
+
+    for attempt in range(1, 6):
+        if artifact.exists():
+            artifact.unlink()
+        subprocess.run(['sync'], check=False)
+        for vol in Path('/Volumes').glob(f'{volname}*'):
+            subprocess.run(['hdiutil', 'detach', str(vol), '-force'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        res = subprocess.run([
+            'hdiutil', 'create',
+            '-volname', volname,
+            '-srcfolder', str(layout),
+            '-fs', 'HFS+',
+            '-format', 'UDZO',
+            '-ov',
+            str(artifact),
+        ])
+        if res.returncode == 0 and artifact.is_file():
+            return artifact
+        time.sleep(attempt * 3)
+
+    if artifact.exists():
+        artifact.unlink()
+    hybrid_dmg = artifact.with_suffix('.hybrid.dmg')
+    if hybrid_dmg.exists():
+        hybrid_dmg.unlink()
+    try:
+        subprocess.run([
+            'hdiutil', 'makehybrid',
+            '-hfs',
+            '-hfs-volume-name', volname,
+            '-ov',
+            str(layout),
+            '-o', str(hybrid_dmg),
+        ], check=True)
+        subprocess.run([
+            'hdiutil', 'convert',
+            str(hybrid_dmg),
+            '-format', 'UDZO',
+            '-ov',
+            '-o', str(artifact),
+        ], check=True)
+    finally:
+        if hybrid_dmg.exists():
+            hybrid_dmg.unlink()
+    return artifact
+
+
 def create_installer(platform, binary, stage, output, version, development):
     expected_os = 'Darwin' if platform.startswith('macos-') else ('Windows' if platform == 'windows-x64' else 'Linux')
     if host_platform.system() != expected_os:
@@ -458,8 +521,7 @@ def create_installer(platform, binary, stage, output, version, development):
                 if not pkg_artifact.exists():
                     build_macos_pkg(layout, pkg_artifact, version, scratch)
             (layout / 'Applications').symlink_to('/Applications')
-            subprocess.run(['hdiutil', 'create', '-volname', 'Gulpsuite', '-srcfolder', str(layout),
-                            '-format', 'UDZO', str(artifact)], check=True)
+            build_macos_dmg(layout, artifact)
         elif platform == 'linux-x64':
             run_artifact = (output / f'Gulpsuite-{version}-linux-x64-setup.run').resolve()
             if not run_artifact.exists():
