@@ -324,12 +324,50 @@ impl Transaction {
             .collect()
     }
 
+    /// Resolves `target` (origin or full URL) with the request-line `uri` (`path?query`) from `raw_request`.
+    pub fn resolve_request_url(target: &str, uri: &str) -> String {
+        let uri = uri.trim();
+        if uri.starts_with("http://") || uri.starts_with("https://") {
+            return uri.to_string();
+        }
+        let normalized_target = if target.starts_with("http://") || target.starts_with("https://") {
+            target.trim().to_string()
+        } else if !target.trim().is_empty() {
+            format!("http://{}", target.trim())
+        } else {
+            String::new()
+        };
+        if let Ok(parsed) = url::Url::parse(&normalized_target) {
+            let origin = format!(
+                "{}://{}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or("localhost"),
+                parsed.port().map(|p| format!(":{p}")).unwrap_or_default()
+            );
+            if !uri.is_empty() && (uri != "/" || parsed.path() == "/") {
+                if uri.starts_with('/') {
+                    format!("{origin}{uri}")
+                } else {
+                    format!("{origin}/{uri}")
+                }
+            } else {
+                normalized_target
+            }
+        } else if !target.trim().is_empty() {
+            target.trim().to_string()
+        } else {
+            uri.to_string()
+        }
+    }
+
     /// Generates a Gulp-style `curl` command reproducing the HTTP request.
     pub fn to_curl_command(target: &str, raw_request: &str) -> String {
         let (head, body) = crate::analysis::split_message(raw_request);
         let mut lines = head.lines();
         let first = lines.next().unwrap_or("GET / HTTP/1.1");
-        let method = first.split_whitespace().next().unwrap_or("GET");
+        let mut first_parts = first.split_whitespace();
+        let method = first_parts.next().unwrap_or("GET");
+        let uri = first_parts.next().unwrap_or("/");
         let mut cmd = format!("curl -i -s -k -X {method}");
         for line in lines {
             let line = line.trim();
@@ -350,7 +388,8 @@ impl Transaction {
             let escaped = body.replace('\'', "'\\''");
             cmd.push_str(&format!(" --data-raw '{escaped}'"));
         }
-        let escaped_url = target.replace('\'', "'\\''");
+        let full_url = Self::resolve_request_url(target, uri);
+        let escaped_url = full_url.replace('\'', "'\\''");
         cmd.push_str(&format!(" '{escaped_url}'"));
         cmd
     }
@@ -381,10 +420,10 @@ impl Transaction {
 
         if method.eq_ignore_ascii_case("GET") {
             let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
-            let new_body = if !query.is_empty() {
-                query.to_string()
-            } else {
-                body.to_string()
+            let new_body = match (!query.is_empty(), !body.trim().is_empty()) {
+                (true, true) => format!("{query}&{}", body.trim()),
+                (true, false) => query.to_string(),
+                (false, _) => body.to_string(),
             };
             let mut out = format!("POST {path} {version}\r\n");
             for h in headers {
@@ -395,11 +434,12 @@ impl Transaction {
             out.push_str(&format!("Content-Length: {}\r\n\r\n{}", new_body.len(), new_body));
             out
         } else {
-            let base_path = uri.split('?').next().unwrap_or("/");
-            let new_uri = if !body.trim().is_empty() {
-                format!("{base_path}?{}", body.trim())
-            } else {
-                uri.to_string()
+            let (base_path, existing_q) = uri.split_once('?').unwrap_or((uri, ""));
+            let trimmed_body = body.trim();
+            let new_uri = match (!existing_q.is_empty(), !trimmed_body.is_empty()) {
+                (true, true) => format!("{base_path}?{existing_q}&{trimmed_body}"),
+                (false, true) => format!("{base_path}?{trimmed_body}"),
+                _ => uri.to_string(),
             };
             let mut out = format!("GET {new_uri} {version}\r\n");
             for h in headers {
@@ -418,24 +458,15 @@ impl Transaction {
         let mut parts = first.split_whitespace();
         let method = parts.next().unwrap_or("GET").to_ascii_uppercase();
         let uri = parts.next().unwrap_or("/");
-        let ( action_url, query_str ) = if let Ok(parsed) = url::Url::parse(target) {
-            let mut base = format!(
-                "{}://{}{}",
-                parsed.scheme(),
-                parsed.host_str().unwrap_or("localhost"),
-                parsed.port().map(|p| format!(":{p}")).unwrap_or_default()
-            );
-            let (p, q) = uri.split_once('?').unwrap_or((parsed.path(), parsed.query().unwrap_or("")));
-            if p.starts_with('/') {
-                base.push_str(p);
-            } else {
-                base.push('/');
-                base.push_str(p);
-            }
-            (base, q.to_string())
+        let full_url = Self::resolve_request_url(target, uri);
+        let (base_action_url, query_str) = match full_url.split_once('?') {
+            Some((b, q)) => (b.to_string(), q.to_string()),
+            None => (full_url, String::new()),
+        };
+        let action_url = if method != "GET" && !query_str.is_empty() {
+            format!("{base_action_url}?{query_str}")
         } else {
-            let (p, q) = uri.split_once('?').unwrap_or((uri, ""));
-            (p.to_string(), q.to_string())
+            base_action_url
         };
 
         let param_source = if method == "GET" {
@@ -444,11 +475,20 @@ impl Transaction {
             body.trim()
         };
 
+        let form_url_decode = |s: &str| -> String {
+            let plus_replaced = s.replace('+', " ");
+            crate::logic::find_op("URL decode")
+                .and_then(|op| (op.run)(&plus_replaced).ok())
+                .unwrap_or(plus_replaced)
+        };
+
         let mut inputs = String::new();
         for pair in param_source.split('&').filter(|s| !s.is_empty()) {
-            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            let k_esc = k.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
-            let v_esc = v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+            let (raw_k, raw_v) = pair.split_once('=').unwrap_or((pair, ""));
+            let k = form_url_decode(raw_k);
+            let v = form_url_decode(raw_v);
+            let k_esc = k.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
+            let v_esc = v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;");
             inputs.push_str(&format!(
                 "      <input type=\"hidden\" name=\"{k_esc}\" value=\"{v_esc}\" />\n"
             ));
@@ -977,6 +1017,27 @@ impl App {
 
     /// Drains proxy events into the UI state. Called once per frame.
     fn pump(&mut self) {
+        let p = &self.panels.proxy_panel;
+        let passthrough: Vec<String> = p
+            .tls_passthrough_hosts
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        self.proxy
+            .set_tls_passthrough(passthrough, p.tls_auto_passthrough_on_error);
+        self.proxy
+            .set_response_mod_rules(crate::proxy::ResponseModRules {
+                unhide_fields: p.resp_mod_unhide_fields,
+                highlight_unhidden: p.resp_mod_highlight_unhidden,
+                enable_disabled: p.resp_mod_enable_disabled,
+                remove_maxlength: p.resp_mod_remove_maxlength,
+                remove_js_validation: p.resp_mod_remove_js_validation,
+                remove_all_js: p.resp_mod_remove_all_js,
+                https_to_http: p.resp_mod_https_to_http,
+                strip_cookie_secure: p.resp_mod_strip_cookie_secure,
+            });
         loop {
             match self.events.try_recv() {
                 Ok(event) => self.apply(event),
@@ -5479,5 +5540,61 @@ mod shared_style_parity_tests {
                 theme.color("ui.background.6")
             );
         }
+    }
+
+    #[test]
+    fn curl_csrf_poc_toggle_method_and_proxy_mod_rules_preserve_paths_and_decode_params() {
+        let curl = Transaction::to_curl_command(
+            "https://ginandjuice.shop",
+            "POST /api/v1/login?redirect=/home HTTP/1.1\r\nHost: ginandjuice.shop\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\nuser=carlos",
+        );
+        assert!(
+            curl.ends_with("'https://ginandjuice.shop/api/v1/login?redirect=/home'"),
+            "got: {curl}"
+        );
+
+        let poc = Transaction::generate_csrf_poc(
+            "https://ginandjuice.shop/my-account?id=carlos",
+            "POST /api/v1/change-email?token=abc HTTP/1.1\r\nHost: ginandjuice.shop\r\n\r\nemail=attacker%40evil.com&name=John+Doe",
+            true,
+        );
+        assert!(
+            poc.contains("action=\"https://ginandjuice.shop/api/v1/change-email?token=abc\""),
+            "got: {poc}"
+        );
+        assert!(
+            poc.contains("name=\"email\" value=\"attacker@evil.com\""),
+            "got: {poc}"
+        );
+        assert!(
+            poc.contains("name=\"name\" value=\"John Doe\""),
+            "got: {poc}"
+        );
+
+        let toggled = Transaction::toggle_request_method(
+            "POST /search?lang=en HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 6\r\n\r\nq=test",
+        );
+        assert!(
+            toggled.starts_with("GET /search?lang=en&q=test HTTP/1.1\r\n"),
+            "got: {toggled}"
+        );
+
+        let (proxy, _) = crate::proxy::Proxy::new();
+        proxy.set_tls_passthrough(vec!["*.pinned.example.com".into()], true);
+        assert!(proxy.is_tls_passthrough("api.pinned.example.com"));
+        assert!(!proxy.is_tls_passthrough("other.example.com"));
+
+        let rules = crate::proxy::ResponseModRules {
+            unhide_fields: true,
+            enable_disabled: true,
+            strip_cookie_secure: true,
+            ..Default::default()
+        };
+        let modified = rules.apply(
+            "HTTP/1.1 200 OK\r\nSet-Cookie: sid=123; Secure; HttpOnly\r\nContent-Length: 48\r\n\r\n<input type=\"hidden\" name=\"a\" disabled=\"disabled\">",
+        );
+        assert!(!modified.contains("; Secure"), "got: {modified}");
+        assert!(modified.contains("type=\"text\""), "got: {modified}");
+        assert!(!modified.contains("disabled="), "got: {modified}");
     }
 }

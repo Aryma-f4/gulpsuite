@@ -156,6 +156,18 @@ fn percent_decode(s: &str, plus_as_space: bool) -> Result<String, String> {
     while i < bytes.len() {
         match bytes[i] {
             b'%' => {
+                if i + 5 < bytes.len() && (bytes[i + 1] == b'u' || bytes[i + 1] == b'U') {
+                    if let Ok(hex4) = std::str::from_utf8(&bytes[i + 2..i + 6]) {
+                        if let Ok(code) = u32::from_str_radix(hex4, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                let mut buf = [0u8; 4];
+                                out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+                                i += 6;
+                                continue;
+                            }
+                        }
+                    }
+                }
                 if i + 2 >= bytes.len() {
                     return Err("truncated percent escape".into());
                 }
@@ -189,40 +201,30 @@ fn named_entity(body: &str) -> Option<char> {
 }
 
 fn html_decode(s: &str) -> Result<String, String> {
-    let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'&' {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
-        }
-        let semi = s[i + 1..].find(';').map(|p| p + i + 1);
-        let Some(semi) = semi.filter(|p| p - i <= 10) else {
-            out.push('&');
-            i += 1;
-            continue;
-        };
-        let body = &s[i + 1..semi];
-        let decoded = if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X")) {
-            u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
-        } else if let Some(dec) = body.strip_prefix('#') {
-            dec.parse::<u32>().ok().and_then(char::from_u32)
-        } else {
-            named_entity(body)
-        };
-        match decoded {
-            Some(c) => {
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after_amp = &rest[amp + 1..];
+        if let Some(semi) = after_amp.find(';').filter(|&p| p <= 10) {
+            let body = &after_amp[..semi];
+            let decoded = if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X")) {
+                u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+            } else if let Some(dec) = body.strip_prefix('#') {
+                dec.parse::<u32>().ok().and_then(char::from_u32)
+            } else {
+                named_entity(body)
+            };
+            if let Some(c) = decoded {
                 out.push(c);
-                i = semi + 1;
-            }
-            None => {
-                out.push('&');
-                i += 1;
+                rest = &after_amp[semi + 1..];
+                continue;
             }
         }
+        out.push('&');
+        rest = after_amp;
     }
+    out.push_str(rest);
     Ok(out)
 }
 
@@ -330,7 +332,7 @@ pub fn magic_decode(input: &str) -> Option<&'static str> {
 fn looks_like_text(s: &str) -> bool {
     let ok = |c: char| {
         c.is_alphanumeric()
-            || " .,_-/=&?<>\"':;{}\n\r\t".contains(c)
+            || " .,_-/=&?<>\"':;{}[]()@+*#!%$~^|\\\n\r\t".contains(c)
     };
     let total = s.chars().count();
     total == 0 || s.chars().filter(|c| ok(*c)).count() as f64 / total as f64 > 0.9
@@ -1043,5 +1045,23 @@ mod tests {
         let preview: Vec<String> = String::new().lines().map(str::to_string).collect();
         assert!(preview.is_empty());
         assert!(enumerate("GET / HTTP/1.1", &preview, 2000).is_empty());
+    }
+
+    #[test]
+    fn html_decode_preserves_multibyte_utf8_and_magic_decode_accepts_json_arrays() {
+        let html_op = find_op("HTML decode").unwrap();
+        assert_eq!(
+            (html_op.run)("Café &amp; résumé — &#x3c;ok&#x3e;").unwrap(),
+            "Café & résumé — <ok>"
+        );
+        let url_op = find_op("URL decode").unwrap();
+        assert_eq!(
+            (url_op.run)("%u003cscript%u003ealert(1)%u003c/script%u003e").unwrap(),
+            "<script>alert(1)</script>"
+        );
+        assert_eq!(
+            magic_decode("W3sidXNlciI6ImFkbWluQHRlc3QuY29tIn1d"),
+            Some("Base64 decode")
+        );
     }
 }

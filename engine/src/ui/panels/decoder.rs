@@ -184,7 +184,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         ("Decimal", "Decimal decode"),
                         ("Octal", "Octal decode"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.selectable_label(false, label).clicked() {
                             run_named_op(app, op_name);
                             ui.close();
                         }
@@ -207,7 +207,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         ("Lowercase", "Case transform: lower"),
                         ("Uppercase", "Case transform: upper"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.selectable_label(false, label).clicked() {
                             run_named_op(app, op_name);
                             ui.close();
                         }
@@ -223,7 +223,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         ("SHA-1", "Hash: SHA-1"),
                         ("MD5", "Hash: MD5"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.selectable_label(false, label).clicked() {
                             run_named_op(app, op_name);
                             ui.close();
                         }

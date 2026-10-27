@@ -163,6 +163,12 @@ struct Inner {
     /// Authorities the proxy trusts on top of the system roots, for origins that serve a
     /// certificate from their own certificate authority.
     extra_roots: std::sync::Mutex<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    /// Host patterns that bypass TLS MITM interception and tunnel straight through.
+    passthrough_hosts: std::sync::RwLock<Vec<String>>,
+    /// Automatically add hosts to `passthrough_hosts` when client TLS handshake fails.
+    auto_passthrough_on_error: AtomicBool,
+    /// Live HTTP response modification rules (`Proxy -> Proxy settings`).
+    response_mod: std::sync::RwLock<ResponseModRules>,
 }
 
 impl Inner {
@@ -202,6 +208,98 @@ impl Inner {
     }
 }
 
+/// Built-in HTTP response modification rules configured in `Proxy -> Proxy settings`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResponseModRules {
+    pub unhide_fields: bool,
+    pub highlight_unhidden: bool,
+    pub enable_disabled: bool,
+    pub remove_maxlength: bool,
+    pub remove_js_validation: bool,
+    pub remove_all_js: bool,
+    pub https_to_http: bool,
+    pub strip_cookie_secure: bool,
+}
+
+impl ResponseModRules {
+    pub fn is_active(&self) -> bool {
+        self.unhide_fields
+            || self.highlight_unhidden
+            || self.enable_disabled
+            || self.remove_maxlength
+            || self.remove_js_validation
+            || self.remove_all_js
+            || self.https_to_http
+            || self.strip_cookie_secure
+    }
+
+    pub fn apply(&self, response: &str) -> String {
+        if !self.is_active() || response.is_empty() {
+            return response.to_string();
+        }
+        let (head, body) = crate::analysis::split_message(response);
+        let mut new_head = head.to_string();
+        let mut new_body = body.to_string();
+
+        if self.strip_cookie_secure {
+            let mut lines = Vec::new();
+            for line in new_head.lines() {
+                if line
+                    .split_once(':')
+                    .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("set-cookie"))
+                {
+                    let cleaned = line
+                        .replace("; Secure", "")
+                        .replace("; secure", "")
+                        .replace(";Secure", "")
+                        .replace(";secure", "");
+                    lines.push(cleaned);
+                } else {
+                    lines.push(line.to_string());
+                }
+            }
+            new_head = lines.join("\r\n");
+        }
+
+        if self.unhide_fields {
+            let replacement = if self.highlight_unhidden {
+                "type=\"text\" style=\"border:2px solid #ff6633;background:#fff3cd\""
+            } else {
+                "type=\"text\""
+            };
+            new_body = new_body
+                .replace("type=\"hidden\"", replacement)
+                .replace("type='hidden'", replacement)
+                .replace("TYPE=\"HIDDEN\"", replacement);
+        }
+        if self.enable_disabled {
+            new_body = new_body
+                .replace(" disabled=\"disabled\"", "")
+                .replace(" disabled='disabled'", "")
+                .replace(" disabled", "");
+        }
+        if self.remove_maxlength {
+            new_body = new_body
+                .replace("maxlength=", "data-removed-maxlength=")
+                .replace("maxLength=", "data-removed-maxlength=");
+        }
+        if self.remove_js_validation {
+            for attr in ["onsubmit=", "onchange=", "onblur=", "onkeyup=", "onkeydown="] {
+                new_body = new_body.replace(attr, "data-removed-event=");
+            }
+        }
+        if self.remove_all_js {
+            new_body = new_body
+                .replace("<script", "<!-- script removed ")
+                .replace("</script>", " /script -->");
+        }
+        if self.https_to_http {
+            new_body = new_body.replace("https://", "http://");
+        }
+
+        crate::intruder::sync_content_length(&format!("{new_head}\r\n\r\n{new_body}"))
+    }
+}
 /// The running proxy. Cheap to clone; every clone drives the same listener.
 #[derive(Clone)]
 pub struct Proxy {
@@ -224,8 +322,8 @@ impl Proxy {
                     bound: tokio::sync::Mutex::new(None),
                     held: std::sync::Mutex::new(HashMap::new()),
                     intercept: AtomicBool::new(false),
-            intercept_response: AtomicBool::new(false),
-            intercept_tls: AtomicBool::new(true),
+                    intercept_response: AtomicBool::new(false),
+                    intercept_tls: AtomicBool::new(true),
                     next_held: AtomicU64::new(1),
                     next_ws: AtomicU64::new(1),
                     matches: AtomicUsize::new(0),
@@ -234,10 +332,56 @@ impl Proxy {
                     rules: std::sync::RwLock::new(None),
                     authority,
                     extra_roots: std::sync::Mutex::new(Vec::new()),
+                    passthrough_hosts: std::sync::RwLock::new(Vec::new()),
+                    auto_passthrough_on_error: AtomicBool::new(false),
+                    response_mod: std::sync::RwLock::new(ResponseModRules::default()),
                 }),
             },
             rx,
         )
+    }
+
+    pub fn set_tls_passthrough(&self, hosts: Vec<String>, auto_on_error: bool) {
+        if let Ok(mut guard) = self.inner.passthrough_hosts.write() {
+            *guard = hosts;
+        }
+        self.inner
+            .auto_passthrough_on_error
+            .store(auto_on_error, Ordering::SeqCst);
+    }
+
+    pub fn is_tls_passthrough(&self, host: &str) -> bool {
+        let host_lc = host.trim().to_ascii_lowercase();
+        if host_lc.is_empty() {
+            return false;
+        }
+        let Ok(guard) = self.inner.passthrough_hosts.read() else {
+            return false;
+        };
+        guard.iter().any(|pattern| {
+            let pat = pattern.trim().to_ascii_lowercase();
+            if pat.is_empty() {
+                return false;
+            }
+            if let Some(suffix) = pat.strip_prefix("*.") {
+                host_lc == suffix || host_lc.ends_with(&format!(".{suffix}"))
+            } else {
+                host_lc == pat || host_lc.ends_with(&format!(".{pat}"))
+            }
+        })
+    }
+
+    pub fn set_response_mod_rules(&self, rules: ResponseModRules) {
+        if let Ok(mut guard) = self.inner.response_mod.write() {
+            *guard = rules;
+        }
+    }
+
+    pub fn apply_response_mod_rules(&self, response: &str) -> String {
+        let Ok(guard) = self.inner.response_mod.read() else {
+            return response.to_string();
+        };
+        guard.apply(response)
     }
 
     fn emit(&self, event: Event) {
@@ -761,11 +905,13 @@ impl Proxy {
         let target = parts.next().unwrap_or("").to_string();
 
         if method.eq_ignore_ascii_case("CONNECT") {
-            if self.inner.intercept_tls.load(Ordering::SeqCst) {
+            let (connect_host, _) = split_authority(&target);
+            if self.inner.intercept_tls.load(Ordering::SeqCst)
+                && !self.is_tls_passthrough(&connect_host)
+            {
                 self.serve_tls(stream, head).await;
             } else {
-                // Without interception the tunnel is passed through as it is, so nothing inside it
-                // can be seen.
+                // Without interception (or for TLS pass-through hosts) the tunnel is passed through as-is.
                 let (read, write) = stream.into_split();
                 let reader = BufReader::new(Box::new(read) as ReadBox);
                 self.tunnel(reader, Box::new(write) as Out, &method, &target).await;
@@ -1019,6 +1165,7 @@ impl Proxy {
                                 Some(body) => format!("{edited_head}{body}"),
                                 None => edited_head,
                             };
+                            let edited = self.apply_response_mod_rules(&edited);
                             if client.write_all(edited.as_bytes()).await.is_err() {
                                 return;
                             }
@@ -1055,7 +1202,7 @@ impl Proxy {
             };
             let _ = client.flush().await;
             let _ = client.shutdown().await;
-            let response = decode_http_response_for_display(&head_text, &captured, false);
+            let response = self.apply_response_mod_rules(&decode_http_response_for_display(&head_text, &captured, false));
             for cookie in crate::cookies::parse_set_cookie_headers(&response) {
                 self.inner.cookies.store(&host, &cookie);
             }
@@ -1091,7 +1238,7 @@ impl Proxy {
         let _ = client.flush().await;
         let _ = client.shutdown().await;
 
-        let response = decode_http_response_for_display(&response_head, &captured, false);
+        let response = self.apply_response_mod_rules(&decode_http_response_for_display(&response_head, &captured, false));
         for cookie in crate::cookies::parse_set_cookie_headers(&response) {
             self.inner.cookies.store(&host, &cookie);
         }
@@ -1233,6 +1380,13 @@ impl Proxy {
         let tls = match acceptor.accept(stream).await {
             Ok(t) => t,
             Err(e) => {
+                if self.inner.auto_passthrough_on_error.load(Ordering::SeqCst) {
+                    if let Ok(mut guard) = self.inner.passthrough_hosts.write() {
+                        if !guard.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+                            guard.push(host.clone());
+                        }
+                    }
+                }
                 self.emit(Event::Error(format!("tls handshake with {host}: {e}")));
                 return;
             }
