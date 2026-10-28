@@ -3062,7 +3062,7 @@ impl App {
 
     /// Drops the captured history. The site map is tagged with the history version, so it has to be
     /// invalidated too or it would keep showing rows that no longer exist.
-    fn clear_log(&mut self) {
+    pub fn clear_log(&mut self) {
         let count = self.log.len();
         self.log.clear();
         self.held.clear();
