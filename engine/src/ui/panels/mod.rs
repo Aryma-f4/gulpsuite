@@ -956,9 +956,21 @@ pub fn attach_message_context_menu(
             ui.close();
         }
         if has_req && ui.button("Copy as curl command").clicked() {
-            let curl = crate::ui::app::Transaction::to_curl_command(&url, &req);
+            let curl = app::Transaction::to_curl_command(&url, &req);
             ui.ctx().copy_text(curl);
             app.status = "Copied as curl command".into();
+            ui.close();
+        }
+        if has_req && ui.button("Copy as Python requests").clicked() {
+            let py = app::Transaction::to_python_requests(&url, &req);
+            ui.ctx().copy_text(py);
+            app.status = "Copied as Python requests script".into();
+            ui.close();
+        }
+        if has_req && ui.button("Copy as JavaScript fetch()").clicked() {
+            let js = app::Transaction::to_javascript_fetch(&url, &req);
+            ui.ctx().copy_text(js);
+            app.status = "Copied as JavaScript fetch() snippet".into();
             ui.close();
         }
         if has_resp && ui.button("Copy links").clicked() {

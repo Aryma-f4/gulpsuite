@@ -394,6 +394,83 @@ impl Transaction {
         cmd
     }
 
+    /// Generates a standalone Python `requests` script reproducing the HTTP request.
+    pub fn to_python_requests(target: &str, raw_request: &str) -> String {
+        let (head, body) = crate::analysis::split_message(raw_request);
+        let mut lines = head.lines();
+        let first = lines.next().unwrap_or("GET / HTTP/1.1");
+        let mut first_parts = first.split_whitespace();
+        let method = first_parts.next().unwrap_or("GET").to_ascii_uppercase();
+        let uri = first_parts.next().unwrap_or("/");
+        let full_url = Self::resolve_request_url(target, uri);
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"").replace('\r', "").replace('\n', "\\n");
+
+        let mut headers = Vec::new();
+        for line in lines {
+            if let Some((k, v)) = line.split_once(':') {
+                let k = k.trim();
+                let v = v.trim();
+                if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("host") {
+                    continue;
+                }
+                headers.push(format!("    \"{}\": \"{}\",", esc(k), esc(v)));
+            }
+        }
+        let headers_block = if headers.is_empty() {
+            "headers = {}".to_string()
+        } else {
+            format!("headers = {{\n{}\n}}", headers.join("\n"))
+        };
+        let data_arg = if body.is_empty() {
+            String::new()
+        } else {
+            format!(", data=\"{}\"", esc(body))
+        };
+        format!(
+            "import requests\n\nurl = \"{}\"\n{}\nresp = requests.request(\"{}\", url, headers=headers{}, verify=False)\nprint(resp.status_code)\nprint(resp.text)\n",
+            esc(&full_url),
+            headers_block,
+            esc(&method),
+            data_arg
+        )
+    }
+
+    /// Generates a browser/Node.js `fetch()` snippet reproducing the HTTP request.
+    pub fn to_javascript_fetch(target: &str, raw_request: &str) -> String {
+        let (head, body) = crate::analysis::split_message(raw_request);
+        let mut lines = head.lines();
+        let first = lines.next().unwrap_or("GET / HTTP/1.1");
+        let mut first_parts = first.split_whitespace();
+        let method = first_parts.next().unwrap_or("GET").to_ascii_uppercase();
+        let uri = first_parts.next().unwrap_or("/");
+        let full_url = Self::resolve_request_url(target, uri);
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"").replace('\r', "").replace('\n', "\\n");
+
+        let mut headers = Vec::new();
+        for line in lines {
+            if let Some((k, v)) = line.split_once(':') {
+                let k = k.trim();
+                let v = v.trim();
+                if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("host") {
+                    continue;
+                }
+                headers.push(format!("    \"{}\": \"{}\"", esc(k), esc(v)));
+            }
+        }
+        let body_line = if body.is_empty() || method == "GET" || method == "HEAD" {
+            String::new()
+        } else {
+            format!(",\n  body: \"{}\"", esc(body))
+        };
+        format!(
+            "fetch(\"{}\", {{\n  method: \"{}\",\n  headers: {{\n{}\n  }}{},\n  credentials: \"include\"\n}}).then(r => r.text()).then(console.log);\n",
+            esc(&full_url),
+            esc(&method),
+            headers.join(",\n"),
+            body_line
+        )
+    }
+
     /// Switches `GET /path?a=1` <-> `POST /path` with `application/x-www-form-urlencoded` body.
     pub fn toggle_request_method(raw_request: &str) -> String {
         let (head, body) = crate::analysis::split_message(raw_request);
@@ -2876,6 +2953,24 @@ impl App {
                 let curl = Transaction::to_curl_command(&target, &request);
                 ctx.copy_text(curl);
                 self.status = "Copied as curl command".into();
+                ui.close();
+            }
+            if ui
+                .add_enabled(has_request, eframe::egui::Button::new("Copy as Python requests"))
+                .clicked()
+            {
+                let py = Transaction::to_python_requests(&target, &request);
+                ctx.copy_text(py);
+                self.status = "Copied as Python requests script".into();
+                ui.close();
+            }
+            if ui
+                .add_enabled(has_request, eframe::egui::Button::new("Copy as JavaScript fetch()"))
+                .clicked()
+            {
+                let js = Transaction::to_javascript_fetch(&target, &request);
+                ctx.copy_text(js);
+                self.status = "Copied as JavaScript fetch() snippet".into();
                 ui.close();
             }
             if ui
@@ -5552,6 +5647,21 @@ mod shared_style_parity_tests {
             curl.ends_with("'https://ginandjuice.shop/api/v1/login?redirect=/home'"),
             "got: {curl}"
         );
+        let py = Transaction::to_python_requests(
+            "https://ginandjuice.shop",
+            "POST /api/v1/login HTTP/1.1\r\nHost: ginandjuice.shop\r\nX-Api-Key: secret\r\n\r\nuser=carlos",
+        );
+        assert!(py.contains("url = \"https://ginandjuice.shop/api/v1/login\""));
+        assert!(py.contains("\"X-Api-Key\": \"secret\""));
+        assert!(py.contains("data=\"user=carlos\""));
+
+        let js = Transaction::to_javascript_fetch(
+            "https://ginandjuice.shop",
+            "POST /api/v1/login HTTP/1.1\r\nHost: ginandjuice.shop\r\nX-Api-Key: secret\r\n\r\nuser=carlos",
+        );
+        assert!(js.contains("fetch(\"https://ginandjuice.shop/api/v1/login\""));
+        assert!(js.contains("method: \"POST\""));
+        assert!(js.contains("body: \"user=carlos\""));
 
         let poc = Transaction::generate_csrf_poc(
             "https://ginandjuice.shop/my-account?id=carlos",

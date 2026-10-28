@@ -1631,6 +1631,18 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
         app.status = "Copied Repeater request as curl command".into();
         ui.close();
     }
+    if ui.button("Copy as Python requests").clicked() {
+        let py = crate::ui::app::Transaction::to_python_requests(&tab.host, &tab.raw);
+        ui.ctx().copy_text(py);
+        app.status = "Copied Repeater request as Python requests script".into();
+        ui.close();
+    }
+    if ui.button("Copy as JavaScript fetch()").clicked() {
+        let js = crate::ui::app::Transaction::to_javascript_fetch(&tab.host, &tab.raw);
+        ui.ctx().copy_text(js);
+        app.status = "Copied Repeater request as JavaScript fetch()".into();
+        ui.close();
+    }
     if ui.button("Duplicate tab").clicked() {
         app.panels.repeater.duplicate_active();
         app.status = "Duplicated Repeater tab".into();

@@ -2010,6 +2010,10 @@ fn history(app: &mut App, ui: &mut Ui) {
             app.panels.proxy_panel.only_highlighted = false;
             app.panels.proxy_panel.mime_filter = "All".into();
         }
+        if !app.log.is_empty() && ui.button("Clear history").clicked() {
+            app.clear_log();
+            app.status = "Cleared Proxy HTTP history".into();
+        }
         if ui.button("Open browser").clicked() {
             app.open_browser();
         }

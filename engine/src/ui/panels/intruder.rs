@@ -3205,6 +3205,34 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             theme.color("ui.icon.accent"),
                         );
                     }
+                    let mut tab_ctx_resp = cell_out.inner.clone();
+                    tab_ctx_resp.rect = cell_rect;
+                    super::show_persistent_context_menu(&tab_ctx_resp, |ui| {
+                        if ui.button("Send to Repeater").clicked() {
+                            let host = app.panels.intruder.host.clone();
+                            let raw = app.panels.intruder.template.replace('§', "");
+                            app.panels.repeater.open(&host, &raw);
+                            app.tool = crate::ui::app::REPEATER;
+                            app.view = 0;
+                            app.status = "Sent Intruder template to Repeater".into();
+                            ui.close();
+                        }
+                        if ui.button("Duplicate attack tab").clicked() {
+                            let copy_name = format!("{} (copy)", app.panels.intruder.tabs[idx]);
+                            app.panels.intruder.tabs.push(copy_name);
+                            app.panels.intruder.active_tab = app.panels.intruder.tabs.len() - 1;
+                            app.panels.intruder.show_getting_started = false;
+                            ui.close();
+                        }
+                        if ui.button("Clear results").clicked() {
+                            app.panels.intruder.clear_results();
+                            ui.close();
+                        }
+                        if app.panels.intruder.tabs.len() > 1 && ui.button("Close tab").clicked() {
+                            close_tab = Some(idx);
+                            ui.close();
+                        }
+                    });
                     if ui.rect_contains_pointer(cell_rect) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
