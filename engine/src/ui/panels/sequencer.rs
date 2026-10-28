@@ -280,7 +280,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let b1 = ui.button("Start live capture");
+        let b1 = crate::ui::app::primary_button(ui, &theme, "Start live capture");
         let b2 = ui.button("Analyze");
         if b1.clicked() || b2.clicked() {
             analyze(app);
@@ -313,46 +313,111 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         }
     });
 
+    ui.add_space(6.0);
     let report = logic::analyse_token(&app.panels.sequencer.text, &app.panels.sequencer.token);
-    eframe::egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.label("Input");
-        ui.add(
-            eframe::egui::TextEdit::multiline(&mut app.panels.sequencer.text)
-                .font(eframe::egui::TextStyle::Monospace)
-                .desired_width(f32::INFINITY)
-                .desired_rows(6),
-        );
-        ui.add_space(4.0);
-        match report {
-            None => {
+    ui.columns(2, |columns| {
+        eframe::egui::Frame::new()
+            .fill(theme.color("ui.background.1"))
+            .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+            .inner_margin(eframe::egui::Margin::symmetric(10, 8))
+            .show(&mut columns[0], |ui| {
                 ui.label(
-                    eframe::egui::RichText::new("Token not found in the input.")
-                        .color(theme.color("ui.icon.default")),
+                    eframe::egui::RichText::new("Input")
+                        .strong()
+                        .color(theme.color("ui.text.heading")),
                 );
-            }
-            Some(report) => {
-                ui.horizontal(|ui| {
-                    ui.label(format!("length {}", report.length));
-                    ui.label(format!("distinct {}", report.distinct));
-                    ui.label(format!("entropy {:.4}", report.entropy));
-                    ui.label(format!("max {:.4}", report.max_entropy));
-                });
                 ui.add_space(4.0);
-                eframe::egui::Grid::new("seq-chars").num_columns(4).striped(true).show(ui, |ui| {
-                    for name in ["Char", "Code", "Count", "Freq"] {
-                        ui.label(eframe::egui::RichText::new(name).strong().color(theme.color("ui.text.body")));
+                eframe::egui::ScrollArea::vertical()
+                    .id_salt("seq-input-scroll")
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            eframe::egui::TextEdit::multiline(&mut app.panels.sequencer.text)
+                                .font(eframe::egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(10),
+                        );
+                    });
+            });
+
+        eframe::egui::Frame::new()
+            .fill(theme.color("ui.background.1"))
+            .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+            .inner_margin(eframe::egui::Margin::symmetric(10, 8))
+            .show(&mut columns[1], |ui| {
+                ui.label(
+                    eframe::egui::RichText::new("Entropy & Character Distribution")
+                        .strong()
+                        .color(theme.color("ui.text.heading")),
+                );
+                ui.add_space(4.0);
+                match report {
+                    None => {
+                        ui.label(
+                            eframe::egui::RichText::new("Token not found in the input.")
+                                .color(theme.color("ui.icon.default")),
+                        );
                     }
-                    ui.end_row();
-                    for c in &report.chars {
-                        ui.label(eframe::egui::RichText::new(c.ch.to_string()).monospace().color(theme.color("ui.text.body")));
-                        ui.label(eframe::egui::RichText::new(format!("U+{:04X}", c.code)).monospace().color(theme.color("ui.icon.default")));
-                        ui.label(eframe::egui::RichText::new(c.count.to_string()).color(theme.color("ui.icon.default")));
-                        ui.label(eframe::egui::RichText::new(format!("{:.4}", c.freq)).color(theme.color("ui.icon.default")));
-                        ui.end_row();
+                    Some(report) => {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("length {}", report.length));
+                            ui.separator();
+                            ui.label(format!("distinct {}", report.distinct));
+                            ui.separator();
+                            ui.label(format!("entropy {:.4}", report.entropy));
+                            ui.separator();
+                            ui.label(format!("max {:.4}", report.max_entropy));
+                        });
+                        ui.add_space(4.0);
+                        eframe::egui::ScrollArea::vertical()
+                            .id_salt("seq-chars-scroll")
+                            .max_height(190.0)
+                            .show(ui, |ui| {
+                                eframe::egui::Grid::new("seq-chars")
+                                    .num_columns(4)
+                                    .striped(true)
+                                    .spacing([18.0, 3.0])
+                                    .show(ui, |ui| {
+                                        for name in ["Char", "Code", "Count", "Freq"] {
+                                            ui.label(
+                                                eframe::egui::RichText::new(name)
+                                                    .strong()
+                                                    .color(theme.color("ui.text.body")),
+                                            );
+                                        }
+                                        ui.end_row();
+                                        for c in &report.chars {
+                                            ui.label(
+                                                eframe::egui::RichText::new(c.ch.to_string())
+                                                    .monospace()
+                                                    .color(theme.color("ui.text.body")),
+                                            );
+                                            ui.label(
+                                                eframe::egui::RichText::new(format!(
+                                                    "U+{:04X}",
+                                                    c.code
+                                                ))
+                                                .monospace()
+                                                .color(theme.color("ui.icon.default")),
+                                            );
+                                            ui.label(
+                                                eframe::egui::RichText::new(c.count.to_string())
+                                                    .color(theme.color("ui.icon.default")),
+                                            );
+                                            ui.label(
+                                                eframe::egui::RichText::new(format!(
+                                                    "{:.4}",
+                                                    c.freq
+                                                ))
+                                                .color(theme.color("ui.icon.default")),
+                                            );
+                                            ui.end_row();
+                                        }
+                                    });
+                            });
                     }
-                });
-            }
-        }
+                }
+            });
     });
 }
 

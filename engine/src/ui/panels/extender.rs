@@ -241,13 +241,6 @@ fn bambda(app: &mut App, ui: &mut Ui) {
         "Statements: replace, replace_first, replace_body, regex, set_header, remove_header. \
          Values are quoted; backslash escapes are kept so regex classes work.",
     );
-    ui.add(
-        eframe::egui::TextEdit::multiline(&mut app.panels.extender.script)
-            .font(eframe::egui::TextStyle::Monospace)
-            .desired_rows(6)
-            .desired_width(f32::INFINITY),
-    );
-
     let source = match app.panels.extender.apply_to {
         BambdaTarget::RepeaterRequest => app.panels.repeater.active().raw.clone(),
         BambdaTarget::RepeaterResponse => app.panels.repeater.active().response.clone(),
@@ -258,37 +251,65 @@ fn bambda(app: &mut App, ui: &mut Ui) {
             .unwrap_or_default(),
     };
 
-    ui.add_space(4.0);
-    if source.trim().is_empty() {
-        muted(ui, &theme, "No source message selected.");
-        return;
-    }
+    ui.add_space(6.0);
+    let pane_h = (ui.available_height() - 28.0).max(220.0);
+    ui.columns(2, |columns| {
+        eframe::egui::Frame::new()
+            .fill(theme.color("ui.background.1"))
+            .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+            .inner_margin(eframe::egui::Margin::symmetric(10, 8))
+            .show(&mut columns[0], |ui| {
+                label(ui, &theme, "Bambda Script");
+                ui.add_space(4.0);
+                ui.add(
+                    eframe::egui::TextEdit::multiline(&mut app.panels.extender.script)
+                        .font(eframe::egui::TextStyle::Monospace)
+                        .desired_rows(12)
+                        .desired_width(f32::INFINITY),
+                );
+            });
 
-    match crate::bambda::apply(&app.panels.extender.script, &source) {
-        Ok(output) => {
-            label(
-                ui,
-                &theme,
-                if output == source {
-                    "Preview: unchanged"
-                } else {
-                    "Preview"
-                },
-            );
-            crate::ui::highlight::show_message(
-                ui,
-                &output,
-                &theme,
-                theme.color("ui.editor.message.background"),
-            );
-        }
-        Err(error) => {
-            ui.label(
-                eframe::egui::RichText::new(format!("Script error — {error}"))
-                    .color(theme.color("ui.icon.error")),
-            );
-        }
-    }
+        eframe::egui::Frame::new()
+            .fill(theme.color("ui.background.1"))
+            .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+            .inner_margin(eframe::egui::Margin::symmetric(10, 8))
+            .show(&mut columns[1], |ui| {
+                if source.trim().is_empty() {
+                    muted(ui, &theme, "No source message selected.");
+                    return;
+                }
+                match crate::bambda::apply(&app.panels.extender.script, &source) {
+                    Ok(output) => {
+                        label(
+                            ui,
+                            &theme,
+                            if output == source {
+                                "Preview: unchanged"
+                            } else {
+                                "Preview"
+                            },
+                        );
+                        ui.add_space(4.0);
+                        let _ = super::gulp_numbered_message_view_wrapped(
+                            ui,
+                            &theme,
+                            "bambda-preview-msg",
+                            (pane_h - 36.0).max(160.0),
+                            &output,
+                            0,
+                            false,
+                            true,
+                        );
+                    }
+                    Err(error) => {
+                        ui.label(
+                            eframe::egui::RichText::new(format!("Script error — {error}"))
+                                .color(theme.color("ui.icon.error")),
+                        );
+                    }
+                }
+            });
+    });
 }
 
 /// Installed extensions view.

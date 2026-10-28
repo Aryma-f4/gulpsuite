@@ -74,30 +74,81 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
         return;
     }
     let chosen: Vec<(String, u16)> = app.panels.discover_results.clone();
-    eframe::egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-        for (url, status) in chosen.iter() {
-            ui.horizontal(|ui| {
-                ui.label(eframe::egui::RichText::new(format!("{status}  {url}")).monospace());
-                if ui.small_button("To Repeater").clicked() {
-                    if let Ok(parsed) = crate::http_target::HttpTarget::parse(url) {
-                        let path = url::Url::parse(url)
-                            .ok()
-                            .map(|u| u.path().to_string())
-                            .filter(|p| !p.is_empty())
-                            .unwrap_or_else(|| "/".into());
-                        let req = format!(
-                            "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-                            parsed.authority()
-                        );
-                        app.panels.repeater.open(url, &req);
-                        app.tool = crate::ui::app::REPEATER;
-                        app.view = 0;
-                        app.status = format!("Sent {url} to Repeater");
-                    }
-                }
-            });
-        }
-    });
+    eframe::egui::Frame::new()
+        .fill(theme.color("ui.background.1"))
+        .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+        .inner_margin(eframe::egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            eframe::egui::ScrollArea::vertical()
+                .id_salt("discover-results-scroll")
+                .max_height((ui.available_height() - 24.0).max(220.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    eframe::egui::Grid::new("discover-results-grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing([16.0, 4.0])
+                        .show(ui, |ui| {
+                            for hdr in ["#", "Status", "Discovered URL", "Actions"] {
+                                ui.label(
+                                    eframe::egui::RichText::new(hdr)
+                                        .strong()
+                                        .color(theme.color("ui.text.heading")),
+                                );
+                            }
+                            ui.end_row();
+                            for (idx, (url, status)) in chosen.iter().enumerate() {
+                                ui.label((idx + 1).to_string());
+                                let status_col = match *status {
+                                    200..=299 => theme.color("ui.icon.success"),
+                                    300..=399 => theme.color("ui.icon.warning"),
+                                    _ => theme.color("ui.icon.error"),
+                                };
+                                ui.label(
+                                    eframe::egui::RichText::new(status.to_string())
+                                        .monospace()
+                                        .strong()
+                                        .color(status_col),
+                                );
+                                let url_resp = ui.add(
+                                    eframe::egui::Label::new(
+                                        eframe::egui::RichText::new(url).monospace(),
+                                    )
+                                    .sense(eframe::egui::Sense::click()),
+                                );
+                                let req = if let Ok(parsed) = crate::http_target::HttpTarget::parse(url) {
+                                    let path = url::Url::parse(url)
+                                        .ok()
+                                        .map(|u| u.path().to_string())
+                                        .filter(|p| !p.is_empty())
+                                        .unwrap_or_else(|| "/".into());
+                                    format!(
+                                        "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                                        parsed.authority()
+                                    )
+                                } else {
+                                    String::new()
+                                };
+                                super::attach_message_context_menu(app, &url_resp, url, &req, "");
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().button_padding =
+                                        eframe::egui::Vec2::new(6.0, 2.0);
+                                    if ui.small_button("To Repeater").clicked() && !req.is_empty() {
+                                        app.panels.repeater.open(url, &req);
+                                        app.tool = crate::ui::app::REPEATER;
+                                        app.view = 0;
+                                        app.status = format!("Sent {url} to Repeater");
+                                    }
+                                    if ui.small_button("To Intruder").clicked() && !req.is_empty() {
+                                        app.send_to_intruder(url, &req);
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                });
+        });
 }
 
 /// Kicks off a run against the hosts in proxy history.

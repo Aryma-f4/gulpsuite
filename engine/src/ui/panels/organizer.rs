@@ -157,85 +157,186 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 return;
             }
 
-            let selected = app.panels.organizer.selected;
+            let selected = app
+                .panels
+                .organizer
+                .selected
+                .filter(|&i| i < app.organizer.len())
+                .or(Some(0));
+            app.panels.organizer.selected = selected;
             let needle = app.panels.organizer.search.trim().to_lowercase();
-            ui.columns(2, |columns| {
-                columns[0].label(eframe::egui::RichText::new("Items").strong());
-                eframe::egui::ScrollArea::vertical().show(&mut columns[0], |ui| {
-                    for index in 0..app.organizer.len() {
-                        // Only the short summary is copied per frame, not the stored messages.
-                        let summary = app.organizer[index].summary();
-                        let name = app.organizer[index].name.clone();
-                        let host = app.organizer[index].host.clone();
-                        if !needle.is_empty()
-                            && !format!("{name} {host} {summary}")
-                                .to_lowercase()
-                                .contains(&needle)
-                        {
-                            continue;
-                        }
-                        let response = ui.selectable_label(
-                            selected == Some(index),
-                            eframe::egui::RichText::new(format!("{name}\n{summary}"))
-                                .color(theme.color("ui.text.body")),
-                        );
-                        if response.clicked() || response.secondary_clicked() {
-                            app.panels.organizer.selected = Some(index);
-                        }
-                        let (item_req, item_resp) = (
-                            app.organizer[index].request.clone(),
-                            app.organizer[index].response.clone(),
-                        );
-                        super::attach_message_context_menu(
-                            app,
-                            &response,
-                            &host,
-                            &item_req,
-                            &item_resp,
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.small_button("To Repeater").clicked() {
+
+            // 1. Top Bordered Master Table (`# | Name | Host | Request | Response bytes | Notes | Actions`)
+            eframe::egui::Frame::new()
+                .fill(theme.color("ui.background.1"))
+                .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+                .inner_margin(eframe::egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    eframe::egui::ScrollArea::vertical()
+                        .id_salt("organizer-master-table-scroll")
+                        .max_height(180.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            eframe::egui::Grid::new("organizer-master-grid")
+                                .num_columns(7)
+                                .striped(true)
+                                .min_col_width(48.0)
+                                .spacing([14.0, 4.0])
+                                .show(ui, |ui| {
+                                    for hdr in [
+                                        "#",
+                                        "Name",
+                                        "Host",
+                                        "Request",
+                                        "Resp bytes",
+                                        "Notes",
+                                        "Actions",
+                                    ] {
+                                        ui.label(
+                                            eframe::egui::RichText::new(hdr)
+                                                .strong()
+                                                .color(theme.color("ui.text.heading")),
+                                        );
+                                    }
+                                    ui.end_row();
+
+                                    for index in 0..app.organizer.len() {
+                                        let summary = app.organizer[index].summary();
+                                        let name = app.organizer[index].name.clone();
+                                        let host = app.organizer[index].host.clone();
+                                        let notes_preview: String = app.organizer[index]
+                                            .notes
+                                            .lines()
+                                            .next()
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(28)
+                                            .collect();
+                                        let resp_len = app.organizer[index].response.len();
+                                        if !needle.is_empty()
+                                            && !format!("{name} {host} {summary} {notes_preview}")
+                                                .to_lowercase()
+                                                .contains(&needle)
+                                        {
+                                            continue;
+                                        }
+                                        let is_sel = selected == Some(index);
+                                        let c0 = ui.selectable_label(is_sel, (index + 1).to_string());
+                                        let c1 = ui.selectable_label(
+                                            is_sel,
+                                            eframe::egui::RichText::new(&name).strong(),
+                                        );
+                                        let c2 = ui.selectable_label(is_sel, &host);
+                                        let c3 = ui.selectable_label(
+                                            is_sel,
+                                            eframe::egui::RichText::new(&summary).monospace(),
+                                        );
+                                        let c4 = ui.selectable_label(is_sel, resp_len.to_string());
+                                        let c5 = ui.selectable_label(
+                                            is_sel,
+                                            if notes_preview.is_empty() {
+                                                "—"
+                                            } else {
+                                                notes_preview.as_str()
+                                            },
+                                        );
+                                        if c0.clicked()
+                                            || c1.clicked()
+                                            || c2.clicked()
+                                            || c3.clicked()
+                                            || c4.clicked()
+                                            || c5.clicked()
+                                        {
+                                            app.panels.organizer.selected = Some(index);
+                                        }
+                                        let (item_req, item_resp) = (
+                                            app.organizer[index].request.clone(),
+                                            app.organizer[index].response.clone(),
+                                        );
+                                        for cell in [&c0, &c1, &c2, &c3, &c4, &c5] {
+                                            super::attach_message_context_menu(
+                                                app,
+                                                cell,
+                                                &host,
+                                                &item_req,
+                                                &item_resp,
+                                            );
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().button_padding =
+                                                eframe::egui::Vec2::new(6.0, 2.0);
+                                            if ui.small_button("To Repeater").clicked() {
+                                                load_into_repeater(app, index);
+                                            }
+                                            if ui.small_button("To Intruder").clicked() {
+                                                app.send_to_intruder(&host, &item_req);
+                                            }
+                                            if ui.small_button("Delete").clicked() {
+                                                remove = Some(index);
+                                            }
+                                        });
+                                        ui.end_row();
+                                    }
+                                });
+                        });
+                });
+
+            ui.add_space(6.0);
+
+            // 2. Selected Item Properties Bar + Side-by-Side Split Request | Response Panes
+            if let Some(index) = app
+                .panels
+                .organizer
+                .selected
+                .filter(|&i| i < app.organizer.len())
+            {
+                let item = app.organizer[index].clone();
+                let mut name = app.organizer[index].name.clone();
+                let mut host = app.organizer[index].host.clone();
+                let mut notes = app.organizer[index].notes.clone();
+
+                eframe::egui::Frame::new()
+                    .fill(theme.color("ui.background.1"))
+                    .stroke(eframe::egui::Stroke::new(1.0, theme.color("ui.border.1")))
+                    .inner_margin(eframe::egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(eframe::egui::RichText::new("Name:").strong());
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(&mut name).desired_width(130.0),
+                            );
+                            ui.label(eframe::egui::RichText::new("Host:").strong());
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(&mut host).desired_width(210.0),
+                            );
+                            ui.label(eframe::egui::RichText::new("Notes:").strong());
+                            ui.add(
+                                eframe::egui::TextEdit::singleline(&mut notes)
+                                    .hint_text("Add notes for this saved item…")
+                                    .desired_width(240.0),
+                            );
+                            if ui.button("To Repeater").clicked() {
                                 load_into_repeater(app, index);
                             }
-                            if ui.small_button("Delete").clicked() {
+                            if ui.button("To Intruder").clicked() {
+                                app.send_to_intruder(&item.host, &item.request);
+                            }
+                            if ui.button("Delete").clicked() {
                                 remove = Some(index);
                             }
                         });
-                    }
-                });
+                    });
 
-                columns[1].label(eframe::egui::RichText::new("Item").strong());
-                if let Some(index) = selected.filter(|i| *i < app.organizer.len()) {
-                    // Cloning for display keeps the borrow checker happy; only one item is ever copied.
-                    let item = app.organizer[index].clone();
-                    let mut name = app.organizer[index].name.clone();
-                    let mut host = app.organizer[index].host.clone();
-                    let mut notes = app.organizer[index].notes.clone();
-                    columns[1].horizontal(|ui| {
-                        ui.label("Name");
-                        ui.text_edit_singleline(&mut name);
-                    });
-                    columns[1].horizontal(|ui| {
-                        ui.label("Host");
-                        ui.text_edit_singleline(&mut host);
-                    });
-                    columns[1].label("Notes");
-                    columns[1].add(
-                        eframe::egui::TextEdit::multiline(&mut notes)
-                            .desired_rows(3)
-                            .desired_width(f32::INFINITY),
-                    );
-                    columns[1].horizontal(|ui| {
-                        if ui.button("To Repeater").clicked() {
-                            load_into_repeater(app, index);
-                        }
-                        if ui.button("Delete").clicked() {
-                            remove = Some(index);
-                        }
-                    });
-                    columns[1].add_space(4.0);
+                app.organizer[index].name = name;
+                app.organizer[index].host = host;
+                app.organizer[index].notes = notes;
+
+                ui.add_space(6.0);
+                let pane_h = (ui.available_height() - 36.0).max(210.0);
+                ui.columns(2, |columns| {
                     super::gulp_message_formatter_bar(
-                        &mut columns[1],
+                        &mut columns[0],
                         &theme,
                         "org-req-fmt",
                         "Request",
@@ -245,10 +346,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut app.panels.organizer.req_np,
                     );
                     let r_req = super::gulp_numbered_message_view_wrapped(
-                        &mut columns[1],
+                        &mut columns[0],
                         &theme,
                         "org-req",
-                        190.0,
+                        pane_h,
                         &item.request,
                         app.panels.organizer.req_fmt_mode,
                         app.panels.organizer.req_np,
@@ -261,6 +362,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &item.request,
                         &item.response,
                     );
+
                     super::gulp_message_formatter_bar(
                         &mut columns[1],
                         &theme,
@@ -275,7 +377,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &mut columns[1],
                         &theme,
                         "org-resp",
-                        190.0,
+                        pane_h,
                         &item.response,
                         app.panels.organizer.resp_fmt_mode,
                         app.panels.organizer.resp_np,
@@ -288,14 +390,10 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                         &item.request,
                         &item.response,
                     );
-                    // Written back after the closure so the borrow of the item list ends cleanly.
-                    app.organizer[index].name = name;
-                    app.organizer[index].host = host;
-                    app.organizer[index].notes = notes;
-                } else {
-                    muted(&mut columns[1], &theme, "Select an item to view it.");
-                }
-            });
+                });
+            } else {
+                muted(ui, &theme, "Select an item to view it.");
+            }
         });
     });
 
