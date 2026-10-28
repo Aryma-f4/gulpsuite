@@ -149,6 +149,11 @@ impl RepeaterTab {
         self.history_cursor = Some(index);
         true
     }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+        self.history_cursor = None;
+    }
 }
 
 #[derive(Clone)]
@@ -320,6 +325,12 @@ impl RepeaterPanel {
         self.active = 0;
     }
 
+    pub fn clear_all_history(&mut self) {
+        for tab in &mut self.tabs {
+            tab.clear_history();
+        }
+    }
+
     pub fn complete(&mut self, id: u64, status: u16, response: String) -> bool {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.pending == Some(id)) else {
             return false;
@@ -405,6 +416,19 @@ fn group_color_swatch(code: u8) -> Option<Color32> {
     }
 }
 
+fn group_color_name(code: u8) -> &'static str {
+    match code {
+        1 => "Purple",
+        2 => "Red",
+        3 => "Yellow",
+        4 => "Green",
+        5 => "Blue",
+        6 => "Teal",
+        7 => "Magenta",
+        _ => "No group",
+    }
+}
+
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     {
@@ -487,7 +511,91 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     }
                 }
 
-                ui.menu_button("Group", |ui| {
+                let active_grp_color = app.panels.repeater.active().group_color;
+                let active_grp_name = app.panels.repeater.active().group_name.trim().to_string();
+                let grp_member_count = if active_grp_color == 0 {
+                    app.panels.repeater.tabs.len()
+                } else {
+                    app.panels
+                        .repeater
+                        .tabs
+                        .iter()
+                        .filter(|t| t.group_color == active_grp_color)
+                        .count()
+                };
+                let group_btn_label = if active_grp_color > 0 {
+                    let gtitle = if active_grp_name.is_empty() {
+                        group_color_name(active_grp_color)
+                    } else {
+                        active_grp_name.as_str()
+                    };
+                    format!("Group: {gtitle} ({grp_member_count})")
+                } else {
+                    "Group".to_string()
+                };
+                ui.menu_button(group_btn_label, |ui| {
+                    ui.set_min_width(310.0);
+                    ui.label(RichText::new("Tab group assignment").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Group name:");
+                        ui.add(
+                            egui::TextEdit::singleline(
+                                &mut app.panels.repeater.active_mut().group_name,
+                            )
+                            .hint_text("e.g. Auth, Checkout, Admin")
+                            .desired_width(175.0),
+                        );
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().button_padding = Vec2::new(8.0, 3.0);
+                        let cur_code = app.panels.repeater.active().group_color;
+                        if ui.selectable_label(cur_code == 0, "None").clicked() {
+                            app.panels.repeater.active_mut().group_color = 0;
+                        }
+                        for code in 1u8..=7 {
+                            let swatch = group_color_swatch(code).unwrap_or(Color32::GRAY);
+                            let is_sel = cur_code == code;
+                            let btn = egui::Button::new(
+                                RichText::new(group_color_name(code))
+                                    .size(11.0)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(swatch)
+                            .stroke(if is_sel {
+                                egui::Stroke::new(2.0, Color32::WHITE)
+                            } else {
+                                egui::Stroke::NONE
+                            })
+                            .corner_radius(4.0);
+                            if ui.add(btn).clicked() {
+                                app.panels.repeater.active_mut().group_color = code;
+                                if app.panels.repeater.active().group_name.trim().is_empty() {
+                                    app.panels.repeater.active_mut().group_name =
+                                        format!("{} group", group_color_name(code));
+                                }
+                            }
+                        }
+                    });
+                    if active_grp_color > 0 {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(format!(
+                                "Tabs in this group: {grp_member_count}"
+                            ));
+                            if ui.small_button("+ Add tab to this group").clicked() {
+                                let host = app.panels.repeater.active().host.clone();
+                                let raw = app.panels.repeater.active().raw.clone();
+                                let gname = app.panels.repeater.active().group_name.clone();
+                                app.panels.repeater.open(&host, &raw);
+                                app.panels.repeater.active_mut().group_color = active_grp_color;
+                                app.panels.repeater.active_mut().group_name = gname;
+                                ui.close();
+                            }
+                        });
+                    }
+                    ui.separator();
                     ui.label(RichText::new("Group send options").strong());
                     for (idx, lbl) in [
                         (0usize, "Send single tab"),
@@ -502,9 +610,17 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if app.panels.repeater.send_group_mode > 0
-                        && ui.button("Send group now").clicked()
+                    ui.add_space(4.0);
+                    if crate::ui::app::primary_button(
+                        ui,
+                        &theme,
+                        &format!("Send group now ({grp_member_count} tab(s))"),
+                    )
+                    .clicked()
                     {
+                        if app.panels.repeater.send_group_mode == 0 {
+                            app.panels.repeater.send_group_mode = 1;
+                        }
                         send_group(app);
                         ui.close();
                     }
@@ -559,6 +675,11 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 }
                 ui.menu_button("History", |ui| {
                     ui.set_min_width(320.0);
+                    ui.label(
+                        RichText::new(format!("Tab history ({} entries)", hist_items.len()))
+                            .strong(),
+                    );
+                    ui.separator();
                     if hist_items.is_empty() {
                         ui.label("No requests sent in this tab yet.");
                     } else {
@@ -570,6 +691,37 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             }
                         }
                     }
+                    ui.separator();
+                    let any_history = app
+                        .panels
+                        .repeater
+                        .tabs
+                        .iter()
+                        .any(|t| !t.history.is_empty());
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !hist_items.is_empty(),
+                                egui::Button::new("Clear history"),
+                            )
+                            .clicked()
+                        {
+                            app.panels.repeater.active_mut().clear_history();
+                            app.status = "Cleared Repeater tab history".into();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                any_history,
+                                egui::Button::new("Clear all tabs history"),
+                            )
+                            .clicked()
+                        {
+                            app.panels.repeater.clear_all_history();
+                            app.status = "Cleared history across all Repeater tabs".into();
+                            ui.close();
+                        }
+                    });
                 });
                 if ui
                     .add_enabled(can_fwd, egui::Button::new(">").min_size(Vec2::new(24.0, 26.0)))
@@ -1401,6 +1553,11 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
         }
     });
     ui.separator();
+    if ui.button("Send to Repeater").clicked() {
+        app.panels.repeater.open(&tab.host, &tab.raw);
+        app.status = "Sent request to a new Repeater tab".into();
+        ui.close();
+    }
     if ui.button("Send to Intruder").clicked() {
         app.send_to_intruder(&tab.host, &tab.raw);
         ui.close();
@@ -1449,6 +1606,17 @@ fn repeater_actions_menu(app: &mut App, ui: &mut Ui) {
     }
     if ui.button("Insert Collaborator payload").clicked() {
         super::insert_collaborator_payload_in_place(app, ui.ctx(), &tab.raw, &tab.response);
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            !tab.history.is_empty(),
+            eframe::egui::Button::new("Clear history"),
+        )
+        .clicked()
+    {
+        app.panels.repeater.active_mut().clear_history();
+        app.status = "Cleared Repeater tab history".into();
         ui.close();
     }
     ui.separator();
@@ -1885,8 +2053,11 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                     let selected = index == app.panels.repeater.active;
                     let name = app.panels.repeater.tabs[index].name.clone();
                     let grp_color = app.panels.repeater.tabs[index].group_color;
+                    let grp_name = app.panels.repeater.tabs[index].group_name.trim().to_string();
                     let cell_bg = if selected {
                         theme.color("ui.background.0")
+                    } else if let Some(swatch) = group_color_swatch(grp_color) {
+                        swatch.gamma_multiply(0.14)
                     } else {
                         tab_bar_bg
                     };
@@ -1898,9 +2069,23 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 if let Some(swatch) = group_color_swatch(grp_color) {
-                                    let (dot_rect, _) =
-                                        ui.allocate_exact_size(Vec2::new(8.0, 14.0), egui::Sense::hover());
-                                    ui.painter().circle_filled(dot_rect.center(), 3.5, swatch);
+                                    let badge_txt = if grp_name.is_empty() {
+                                        group_color_name(grp_color).to_string()
+                                    } else {
+                                        truncate_host_text(&grp_name, 12)
+                                    };
+                                    egui::Frame::new()
+                                        .fill(swatch)
+                                        .corner_radius(3.0)
+                                        .inner_margin(egui::Margin::symmetric(5, 1))
+                                        .show(ui, |ui| {
+                                            ui.label(
+                                                RichText::new(badge_txt)
+                                                    .size(10.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            );
+                                        });
                                 }
                                 let label = eframe::egui::RichText::new(&name)
                                     .size(12.0)
@@ -1933,6 +2118,16 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                         });
 
                     let cell_rect = cell_out.response.rect;
+                    if let Some(swatch) = group_color_swatch(grp_color) {
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_max(
+                                egui::pos2(cell_rect.min.x, cell_rect.min.y),
+                                egui::pos2(cell_rect.max.x, cell_rect.min.y + 3.0),
+                            ),
+                            0.0,
+                            swatch,
+                        );
+                    }
                     // Right vertical divider line between tab cells (`quick-start-pro-repeater.png`)
                     ui.painter().line_segment(
                         [
@@ -1969,9 +2164,11 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                         app.panels.repeater.rename_draft = name.clone();
                     }
                     super::show_persistent_context_menu(&tab_resp, |ui| {
-                        if ui.button("Rename tab").clicked() {
-                            app.panels.repeater.rename_tab = Some(index);
-                            app.panels.repeater.rename_draft = name.clone();
+                        if ui.button("Send to Repeater").clicked() {
+                            let host = app.panels.repeater.tabs[index].host.clone();
+                            let raw = app.panels.repeater.tabs[index].raw.clone();
+                            app.panels.repeater.open(&host, &raw);
+                            app.status = "Sent request to a new Repeater tab".into();
                             ui.close();
                         }
                         if ui.button("Duplicate tab").clicked() {
@@ -1979,21 +2176,57 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                             app.panels.repeater.duplicate_active();
                             ui.close();
                         }
+                        if ui.button("Rename tab").clicked() {
+                            app.panels.repeater.rename_tab = Some(index);
+                            app.panels.repeater.rename_draft = name.clone();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                !app.panels.repeater.tabs[index].history.is_empty(),
+                                egui::Button::new("Clear tab history"),
+                            )
+                            .clicked()
+                        {
+                            app.panels.repeater.tabs[index].clear_history();
+                            app.status = "Cleared Repeater tab history".into();
+                            ui.close();
+                        }
                         ui.menu_button("Add tab to group / color", |ui| {
-                            for (code, cname) in [
-                                (0u8, "No group"),
-                                (1u8, "Purple group"),
-                                (2u8, "Red group"),
-                                (3u8, "Yellow group"),
-                                (4u8, "Green group"),
-                                (5u8, "Blue group"),
-                                (6u8, "Teal group"),
-                                (7u8, "Magenta group"),
-                            ] {
-                                if ui.button(cname).clicked() {
-                                    app.panels.repeater.tabs[index].group_color = code;
-                                    ui.close();
-                                }
+                            ui.set_min_width(220.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Group name:");
+                                ui.text_edit_singleline(
+                                    &mut app.panels.repeater.tabs[index].group_name,
+                                );
+                            });
+                            ui.separator();
+                            if ui.selectable_label(grp_color == 0, "No group").clicked() {
+                                app.panels.repeater.tabs[index].group_color = 0;
+                                app.panels.repeater.tabs[index].group_name.clear();
+                                ui.close();
+                            }
+                            for code in 1u8..=7 {
+                                let cname = format!("{} group", group_color_name(code));
+                                let swatch = group_color_swatch(code).unwrap_or(Color32::GRAY);
+                                ui.horizontal(|ui| {
+                                    let (dot, _) = ui.allocate_exact_size(
+                                        Vec2::new(10.0, 14.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(dot.center(), 4.5, swatch);
+                                    if ui.selectable_label(grp_color == code, &cname).clicked() {
+                                        app.panels.repeater.tabs[index].group_color = code;
+                                        if app.panels.repeater.tabs[index]
+                                            .group_name
+                                            .trim()
+                                            .is_empty()
+                                        {
+                                            app.panels.repeater.tabs[index].group_name = cname;
+                                        }
+                                        ui.close();
+                                    }
+                                });
                             }
                         });
                         ui.separator();
@@ -2052,12 +2285,85 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                             ui.close();
                         }
                     }
+                    if app
+                        .panels
+                        .repeater
+                        .tabs
+                        .iter()
+                        .any(|t| !t.history.is_empty())
+                    {
+                        ui.separator();
+                        if ui.button("Clear all tabs history").clicked() {
+                            app.panels.repeater.clear_all_history();
+                            app.status = "Cleared history across all Repeater tabs".into();
+                            ui.close();
+                        }
+                    }
                 });
                 ui.add_space(4.0);
                 if ui.button("+").on_hover_text("New tab").clicked() {
                     let host = app.panels.repeater.active().host.clone();
                     app.panels.repeater.open(&host, "");
                 }
+                ui.add_space(4.0);
+                ui.menu_button("Create group", |ui| {
+                    ui.set_min_width(240.0);
+                    ui.label(RichText::new("Create / Assign Tab Group").strong());
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.panels.repeater.new_group_name)
+                                .hint_text("Group name (e.g. Auth)")
+                                .desired_width(155.0),
+                        );
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().button_padding = Vec2::new(7.0, 2.5);
+                        for code in 1u8..=7 {
+                            let swatch = group_color_swatch(code).unwrap_or(Color32::GRAY);
+                            let is_sel = app.panels.repeater.new_group_color == code;
+                            let btn = egui::Button::new(
+                                RichText::new(group_color_name(code))
+                                    .size(11.0)
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(swatch)
+                            .stroke(if is_sel {
+                                egui::Stroke::new(2.0, Color32::WHITE)
+                            } else {
+                                egui::Stroke::NONE
+                            })
+                            .corner_radius(4.0);
+                            if ui.add(btn).clicked() {
+                                app.panels.repeater.new_group_color = code;
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if crate::ui::app::primary_button(ui, theme, "Assign active tab").clicked()
+                        {
+                            let gcolor = app.panels.repeater.new_group_color.max(1);
+                            let gname = app.panels.repeater.new_group_name.trim().to_string();
+                            let tab = app.panels.repeater.active_mut();
+                            tab.group_color = gcolor;
+                            tab.group_name = if gname.is_empty() {
+                                format!("{} group", group_color_name(gcolor))
+                            } else {
+                                gname
+                            };
+                            ui.close();
+                        }
+                        if ui.button("Remove from group").clicked() {
+                            let tab = app.panels.repeater.active_mut();
+                            tab.group_color = 0;
+                            tab.group_name.clear();
+                            ui.close();
+                        }
+                    });
+                });
                 ui.add_space(6.0);
                 if ui
                     .small_button("? Getting started")
@@ -2562,5 +2868,27 @@ mod tests {
             all.contains("/two"),
             "the open request should be in the editor: {all}"
         );
+    }
+
+    #[test]
+    fn repeater_clear_history_and_group_badges_work() {
+        let mut panel = RepeaterPanel::default();
+        panel.active_mut().pending = Some(1);
+        panel.active_mut().sending = true;
+        assert!(panel.complete(1, 200, "HTTP/1.1 200 OK\r\n\r\nok".into()));
+        assert_eq!(panel.active().history.len(), 1);
+        assert_eq!(panel.active().history_cursor, Some(0));
+
+        panel.active_mut().clear_history();
+        assert!(panel.active().history.is_empty());
+        assert_eq!(panel.active().history_cursor, None);
+
+        panel.active_mut().group_color = 1;
+        panel.active_mut().group_name = "Auth".into();
+        let host = panel.active().host.clone();
+        let raw = panel.active().raw.clone();
+        panel.open(&host, &raw);
+        assert_eq!(panel.tabs.len(), 2);
+        assert_eq!(panel.active, 1);
     }
 }
