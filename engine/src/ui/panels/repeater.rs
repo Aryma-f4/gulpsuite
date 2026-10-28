@@ -2364,15 +2364,6 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                         }
                     });
                 });
-                ui.add_space(6.0);
-                if ui
-                    .small_button("? Getting started")
-                    .on_hover_text("Open Repeater Getting Started guide")
-                    .clicked()
-                {
-                    app.panels.repeater.hide_getting_started_forever = false;
-                    app.panels.repeater.force_getting_started = true;
-                }
             });
         });
 
