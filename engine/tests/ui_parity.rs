@@ -491,7 +491,7 @@ fn target_proxy_organizer_logger_empty_states_and_intruder_subtabs_work() {
     assert!(harness.query_by_label("Grep - match").is_some());
     assert!(harness.query_by_label("Grep - extract").is_some());
     assert!(harness.query_by_label("Redirections").is_some());
-    harness.get_by_label("? Getting started").click();
+    harness.state_mut().panels.intruder.show_getting_started = true;
     harness.run();
     assert!(harness.query_by_label("Don't show this again").is_some());
     harness.get_by_label("Don't show this again").click();

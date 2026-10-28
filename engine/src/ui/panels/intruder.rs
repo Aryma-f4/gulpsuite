@@ -1456,7 +1456,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
             .on_hover_text("Attack types help: Sniper, Battering ram, Pitchfork, Cluster bomb")
             .clicked()
         {
-            app.panels.intruder.show_getting_started = true;
+            app.status = "Attack types: 1. Sniper (1 set, 1 position at a time) | 2. Battering ram (1 set, all positions) | 3. Pitchfork (parallel sets) | 4. Cluster bomb (all combinations)".into();
         }
 
         let combo_w = (ui.available_width() - 148.0).max(150.0);
@@ -3268,14 +3268,6 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                     app.panels.intruder.tabs.push(next.to_string());
                     app.panels.intruder.active_tab = app.panels.intruder.tabs.len() - 1;
                     app.panels.intruder.show_getting_started = false;
-                }
-                ui.add_space(6.0);
-                if ui
-                    .selectable_label(app.panels.intruder.show_getting_started, "? Getting started")
-                    .clicked()
-                {
-                    app.panels.intruder.show_getting_started =
-                        !app.panels.intruder.show_getting_started;
                 }
                 ui.add_space(6.0);
                 if ui
