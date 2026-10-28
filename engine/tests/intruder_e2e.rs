@@ -311,14 +311,15 @@ fn native_intruder_runs_pitchfork_and_keeps_results_while_dashboard_is_visible()
             app
         });
     harness.get_by_label("Start attack").click();
-    harness.run();
+    harness.step();
     harness.get_by_label("Dashboard").click();
-    harness.run();
+    harness.step();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while harness.state().panels.intruder.running && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(5));
-        harness.run();
+        harness.step();
     }
+    harness.run();
     let panel = &harness.state().panels.intruder;
     assert!(!panel.running);
     assert_eq!(panel.results.len(), 2);

@@ -931,6 +931,9 @@ impl IntruderPanel {
                 }
             }
         }
+        if self.selected.is_none() {
+            self.selected = Some(result.index);
+        }
         let existing = self
             .result_positions
             .get(&result.index)
@@ -1911,10 +1914,12 @@ fn draw_results_area(app: &mut App, ui: &mut Ui) {
         rows.sort_by_key(|row| row.index);
     }
 
-    if app.panels.intruder.selected.is_none()
-        || !rows
-            .iter()
-            .any(|r| Some(r.index) == app.panels.intruder.selected)
+    if !rows.is_empty()
+        && !app.panels.intruder.running
+        && (app.panels.intruder.selected.is_none()
+            || !rows
+                .iter()
+                .any(|r| Some(r.index) == app.panels.intruder.selected))
     {
         app.panels.intruder.selected = rows.first().map(|r| r.index);
     }
