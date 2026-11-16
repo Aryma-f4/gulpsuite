@@ -10,3 +10,5 @@ pub mod reference;
 pub mod shell;
 pub mod workspace_adapter;
 pub mod wip;
+
+pub mod html_preview;

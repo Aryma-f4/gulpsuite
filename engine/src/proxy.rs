@@ -984,9 +984,17 @@ impl Proxy {
                 Ok(Some(edited)) => {
                     // The operator may have changed the request line, the headers or the body.
                     let (edited_head, edited_body) = split_message(&edited);
-                    head = fix_content_length(&edited_head, edited_body.as_deref());
-                    if let Some(body) = edited_body {
-                        held_body = Some(body.into_bytes());
+                    // An unbuffered upload is still in the client stream. Forwarding
+                    // its header-only interception must not turn it into an empty body.
+                    let streaming_body = held_body.is_none()
+                        && edited_body.as_deref().is_none_or(str::is_empty)
+                        && (content_length(&edited_head).is_some_and(|n| n > 0)
+                            || header_has_token(&edited_head, "transfer-encoding", "chunked"));
+                    if streaming_body {
+                        head = edited_head;
+                    } else {
+                        head = fix_content_length(&edited_head, edited_body.as_deref());
+                        held_body = edited_body.map(String::into_bytes);
                     }
                 }
                 _ => {
@@ -1025,7 +1033,7 @@ impl Proxy {
                     target: target.to_string(),
                     status: 502,
                     bytes: 0,
-                    request: head.clone(),
+                    request: format_logged_request(&head, held_body.as_deref()),
                     response: "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".into(),
                     secure,
                 });
@@ -1101,12 +1109,13 @@ impl Proxy {
 
         // Never wait for client EOF: a keep-alive client does not send one. When the body was
         // read in while intercepting it has already been sent, so there is nothing left to copy.
+        let mut req_body_task = None;
         if held_body.is_none() && (content_length(&head).is_some_and(|length| length > 0) || header_has_token(&head, "transfer-encoding", "chunked")) {
             let mut out: Out = Box::new(up_write);
             let body_head = head.clone();
-            tokio::spawn(async move {
-                let _ = copy_framed_body(&mut reader, &mut out, &body_head, "POST", 200).await;
-            });
+            req_body_task = Some(tokio::spawn(async move {
+                copy_framed_body(&mut reader, &mut out, &body_head, "POST", 200).await
+            }));
         }
 
         let mut up_reader = BufReader::new(Box::new(up_read) as ReadBox);
@@ -1178,7 +1187,7 @@ impl Proxy {
                                 target: target.to_string(),
                                 status: head_status,
                                 bytes: edited.len() as u64,
-                                request: head.clone(),
+                                request: resolve_logged_request(&head, held_body.as_deref(), req_body_task).await,
                                 response: edited,
                                 secure,
                             });
@@ -1212,7 +1221,7 @@ impl Proxy {
                 target: target.to_string(),
                 status: head_status,
                 bytes,
-                request: head.clone(),
+                request: resolve_logged_request(&head, held_body.as_deref(), req_body_task).await,
                 response,
                 secure,
             });
@@ -1248,7 +1257,7 @@ impl Proxy {
             target: target.to_string(),
             status,
             bytes: body,
-            request: head,
+            request: resolve_logged_request(&head, held_body.as_deref(), req_body_task).await,
             response,
             secure,
         });
@@ -2208,6 +2217,34 @@ pub fn host_port(head: &str, target: &str) -> Option<(String, u16)> {
         }
     }
     None
+}
+
+fn format_logged_request(head: &str, body: Option<&[u8]>) -> String {
+    match body {
+        Some(b) if !b.is_empty() => {
+            let cap = &b[..b.len().min(BODY_CAPTURE_LIMIT)];
+            format!("{head}{}", String::from_utf8_lossy(cap))
+        }
+        _ => head.to_string(),
+    }
+}
+
+async fn resolve_logged_request(
+    head: &str,
+    held_body: Option<&[u8]>,
+    req_body_task: Option<tokio::task::JoinHandle<io::Result<(u64, Vec<u8>)>>>,
+) -> String {
+    if held_body.is_some_and(|b| !b.is_empty()) {
+        return format_logged_request(head, held_body);
+    }
+    if let Some(task) = req_body_task {
+        if let Ok(Ok(Ok((_, captured)))) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), task).await
+        {
+            return format_logged_request(head, Some(&captured));
+        }
+    }
+    head.to_string()
 }
 
 #[cfg(test)]

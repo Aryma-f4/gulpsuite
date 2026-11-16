@@ -1378,7 +1378,7 @@ fn draw_request_pane(
             wrap,
         )
     } else {
-        let (r, _) = super::gulp_numbered_message_editor_wrapped(
+        let (r, _) = super::gulp_numbered_message_editor_wrapped_non_printable(
             ui,
             theme,
             "repeater-req-edit",
@@ -1386,6 +1386,7 @@ fn draw_request_pane(
             &mut app.panels.repeater.active_mut().raw,
             mode,
             wrap,
+            np,
         );
         r
     };
@@ -1454,7 +1455,11 @@ fn draw_response_pane(
     super::show_persistent_context_menu(&header_resp, |ui| {
         repeater_actions_menu(app, ui);
     });
-    let resp = super::gulp_numbered_message_view_wrapped(
+    let resp = if mode == 3 {
+        let tab = app.panels.repeater.active();
+        let base = crate::http_target::request_url(&tab.raw, tab.host.starts_with("https:")).unwrap_or_else(|_|tab.host.clone());
+        crate::ui::html_preview::draw_with_base_url(ui,"repeater-resp-pretty",height,response,Some(&base))
+    } else { super::gulp_numbered_message_view_wrapped(
         ui,
         theme,
         "repeater-resp-pretty",
@@ -1463,7 +1468,7 @@ fn draw_response_pane(
         mode,
         np,
         wrap,
-    );
+    ) };
     super::show_persistent_context_menu(&resp, |ui| {
         repeater_actions_menu(app, ui);
     });

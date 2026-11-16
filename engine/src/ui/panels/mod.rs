@@ -2832,8 +2832,18 @@ fn format_gulp_hex_dump(text: &str) -> String {
 }
 
 fn format_non_printable(text: &str) -> String {
-    text.replace("\r\n", "\\r\\n\n")
-        .replace('\t', "\\t")
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' if chars.peek() == Some(&'\n') => { chars.next(); out.push_str("\\r\\n\n"); }
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n\n"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Renders Gulpsuite Professional's Message Editor header & formatter tab bar
@@ -3027,23 +3037,7 @@ pub fn gulp_numbered_message_view_wrapped(
         mouse_wheel: true,
     };
     if mode == 3 {
-        let outer = egui::Frame::new()
-            .fill(theme.color("ui.editor.message.background"))
-            .inner_margin(8.0)
-            .show(ui, |ui| {
-                ui.label("HTML preview — text only; CSS, JavaScript, images and external resources are not rendered.");
-                egui::ScrollArea::both()
-                    .id_salt((id_salt, "html-preview"))
-                    .scroll_source(no_drag_scroll)
-                    .max_height(height.max(60.0))
-                    .show(ui, |ui| {
-                        ui.add(Label::new(html_text_preview(raw_message)).selectable(true))
-                    })
-                    .inner
-            });
-        let mut resp = outer.inner;
-        resp.rect = outer.response.rect;
-        return resp;
+        return crate::ui::html_preview::draw(ui, id_salt, height, raw_message);
     }
     let display_text = message_display_text(raw_message, mode, show_non_printable);
     let width = (ui.available_width() - 48.0).max(40.0);
@@ -3193,36 +3187,27 @@ fn message_display_text(raw: &str, mode: usize, non_printable: bool) -> String {
     out
 }
 
-fn html_text_preview(raw: &str) -> String {
-    let body = raw
-        .split_once("\r\n\r\n")
-        .or_else(|| raw.split_once("\n\n"))
-        .map_or(raw, |(_, body)| body);
-    if !body.trim_start().starts_with('<') {
-        return "HTML preview is unavailable for this non-HTML response.".into();
+// Reserve display-only width after lone CRs (which egui otherwise renders at zero width).
+// Byte ranges and job.text stay unchanged, so editor cursor/selection indices remain valid.
+fn reserve_control_marker_space(job: &mut eframe::egui::text::LayoutJob) {
+    use std::collections::BTreeSet;
+    let cuts: BTreeSet<usize> = job.text.char_indices()
+        .filter(|(i,ch)| *ch == '\r' && job.text.as_bytes().get(i+1) != Some(&b'\n'))
+        .map(|(i,_)|i+1).collect();
+    if cuts.is_empty() { return; }
+    let mut sections = Vec::new();
+    for section in &job.sections {
+        if section.byte_range.is_empty() { sections.push(section.clone()); continue; }
+        let mut start = section.byte_range.start;
+        for end in cuts.range((std::ops::Bound::Excluded(start),std::ops::Bound::Excluded(section.byte_range.end))).copied().chain(std::iter::once(section.byte_range.end)) {
+            let mut part=section.clone();
+            part.byte_range=start..end;
+            part.leading_space=if start==section.byte_range.start {section.leading_space} else {0.0};
+            if cuts.contains(&start) { part.leading_space+=18.0; }
+            sections.push(part);start=end;
+        }
     }
-    // No markup is executed and no URLs are fetched. This deliberately renders only text.
-    use std::sync::LazyLock;
-    static ACTIVE: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?</(?:script|style)\s*>").unwrap()
-    });
-    static BREAKS: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"(?is)<\s*(?:br\b[^>]*|/?(?:p|div|h[1-6]|li|tr)\b[^>]*)>").unwrap()
-    });
-    static TAGS: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"(?s)<[^>]*>").unwrap());
-    let without_active = ACTIVE.replace_all(body, "");
-    let lines = BREAKS.replace_all(&without_active, "\n");
-    let text = TAGS.replace_all(&lines, "");
-    let decoded = crate::logic::find_op("HTML decode")
-        .and_then(|op| (op.run)(&text).ok())
-        .unwrap_or_else(|| text.into_owned());
-    decoded
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    job.sections=sections;
 }
 
 /// Editable message; only the layout changes when wrapping is toggled.
@@ -3245,6 +3230,14 @@ pub fn gulp_numbered_message_editor_wrapped(
     text: &mut String,
     mode: usize,
     wrap: bool,
+) -> (eframe::egui::Response, bool) {
+    gulp_numbered_message_editor_wrapped_non_printable(ui, theme, id_salt, height, text, mode, wrap, false)
+}
+
+/// Paint control-character markers over the editor, without changing its text or cursor indices.
+pub fn gulp_numbered_message_editor_wrapped_non_printable(
+    ui: &mut Ui, theme: &Theme, id_salt: &str, height: f32,
+    text: &mut String, mode: usize, wrap: bool, non_printable: bool,
 ) -> (eframe::egui::Response, bool) {
     use eframe::egui::{self, FontId};
     if mode >= 2 {
@@ -3297,7 +3290,8 @@ pub fn gulp_numbered_message_editor_wrapped(
                                     width,
                                 )
                             };
-                            job.wrap.max_width = if wrap { width.max(40.0) } else { f32::INFINITY };
+                            if non_printable { reserve_control_marker_space(&mut job); }
+                            job.wrap.max_width = if wrap { (width - if non_printable { 28.0 } else { 0.0 }).max(40.0) } else { f32::INFINITY };
                             ui.fonts_mut(|fonts| fonts.layout_job(job))
                         };
                         let mut output = egui::TextEdit::multiline(text)
@@ -3308,6 +3302,23 @@ pub fn gulp_numbered_message_editor_wrapped(
                             .frame(false)
                             .layouter(&mut layouter)
                             .show(ui);
+
+                        if non_printable {
+                            let painter = ui.painter_at(output.response.rect);
+                            let mut chars = text.chars().enumerate().peekable();
+                            while let Some((index, ch)) = chars.next() {
+                                let marker = match ch {
+                                    '\r' if chars.peek().is_some_and(|(_, c)| *c == '\n') => { chars.next(); "\\r\\n" }
+                                    '\r' => "\\r",
+                                    '\n' => "\\n",
+                                    '\t' => "\\t",
+                                    _ => continue,
+                                };
+                                let caret = output.galley.pos_from_cursor(egui::text::CCursor::new(index));
+                                painter.text(output.galley_pos + caret.min.to_vec2(), egui::Align2::LEFT_TOP,
+                                    marker, FontId::monospace(9.0), theme.color("ui.icon.link"));
+                            }
+                        }
 
                         let max_chars = text.chars().count();
                         if let Some(pending) = take_pending_editor_cursor(id_salt) {

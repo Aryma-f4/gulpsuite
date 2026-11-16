@@ -1653,7 +1653,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
                     &mut app.panels.proxy_panel.intercept_wrap,
                     &mut app.panels.proxy_panel.intercept_non_printable,
                 );
-                let (response, changed) = super::gulp_numbered_message_editor_wrapped(
+                let (response, changed) = super::gulp_numbered_message_editor_wrapped_non_printable(
                     ui,
                     &theme,
                     "proxy-intercept-editor",
@@ -1661,6 +1661,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
                     &mut edited,
                     fmt_mode,
                     app.panels.proxy_panel.intercept_wrap,
+                    app.panels.proxy_panel.intercept_non_printable,
                 );
                 if changed {
                     edited_changed = true;

@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="Gulpsuite Logo" width="120" height="120" />
 
-# Gulpsuite (`v0.1.1`)
+# Gulpsuite (`v0.1.2`)
 
 > ***"Gulp it before burp"***
 
@@ -19,7 +19,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
-[**Download v0.1.1 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.1) · [**What's New in v0.1.1**](#-whats-new-in-v011) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
+[**Download v0.1.2 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.2) · [**What's New in v0.1.2**](#-whats-new-in-v012) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
 
 </div>
 
@@ -35,7 +35,16 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## ✨ What's New in `v0.1.1`
+## ✨ What's New in `v0.1.2`
+
+- **Complete POST request history**: Capture form bodies across normal streaming, request interception, held responses and chunked uploads. Chromium login POST → 302 → dashboard flows are covered over HTTP and HTTPS.
+- **Visible control characters**: Repeater and Proxy Intercept show CRLF, LF, standalone CR and tab markers without changing request bytes or breaking editing.
+- **Real Chromium Render preview**: Visual snapshots support CSS, inline JavaScript and embedded images. External HTTP(S) resources require explicit per-response opt-in; relative URLs use the Repeater request URL. Preview uses an isolated profile without original-session cookies.
+- **Logger filtering and sorting**: Search all retained traffic, including records older than 500 entries; distinguish no matches from an empty capture.
+
+See the [v0.1.2 release notes](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.2) and [Repeater preview details](docs/repeater-preview.md). Native installers include Chromium and SHA-256 checksums. macOS packages are development-signed, not notarized.
+
+### Previous release — `v0.1.1`
 
 **macOS layout maintenance release**, addressing [Mac M4 macOS UI Issues (#1)](https://github.com/Aryma-f4/gulpsuite/issues/1).
 
@@ -79,29 +88,29 @@ See the [v0.1.1 release notes](https://github.com/Aryma-f4/gulpsuite/releases/ta
 
 ---
 
-## Cross-Platform Installers (`v0.1.1`)
+## Cross-Platform Installers (`v0.1.2`)
 
-Download pre-built native installers directly from [**GitHub Releases (`v0.1.1`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.1):
+Download pre-built native installers directly from [**GitHub Releases (`v0.1.2`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.2):
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.1.1-macos-arm64.dmg` / `Gulpsuite-0.1.1-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.1.1-macos-x64.dmg` / `Gulpsuite-0.1.1-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.1.1-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
-| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.1.1-x86_64.AppImage` / `gulpsuite-0.1.1-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
-| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.1.1-linux-x64-setup.run` / `gulpsuite_0.1.1_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.1.2-macos-arm64.dmg` / `Gulpsuite-0.1.2-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.1.2-macos-x64.dmg` / `Gulpsuite-0.1.2-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.1.2-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
+| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.1.2-x86_64.AppImage` / `gulpsuite-0.1.2-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
+| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.1.2-linux-x64-setup.run` / `gulpsuite_0.1.2_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ### Quick Start on CachyOS / Arch Linux (`AppImage` or `pacman`)
 ```bash
 # Option 1: Run Portable AppImage directly (FUSE-free — works out of the box on CachyOS)
-chmod +x Gulpsuite-0.1.1-x86_64.AppImage
-./Gulpsuite-0.1.1-x86_64.AppImage
+chmod +x Gulpsuite-0.1.2-x86_64.AppImage
+./Gulpsuite-0.1.2-x86_64.AppImage
 
 # Optional: Integrate AppImage into CachyOS desktop launcher & ~/.local/bin/gulpsuite
-./Gulpsuite-0.1.1-x86_64.AppImage --install
+./Gulpsuite-0.1.2-x86_64.AppImage --install
 
 # Option 2: Install native CachyOS / Arch Linux pacman package
-sudo pacman -U gulpsuite-0.1.1-1-x86_64.pkg.tar.gz
+sudo pacman -U gulpsuite-0.1.2-1-x86_64.pkg.tar.gz
 ```
 
 ---

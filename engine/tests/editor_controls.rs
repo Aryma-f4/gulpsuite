@@ -83,13 +83,14 @@ fn wrapping_changes_message_layout_without_changing_text() {
 }
 
 #[test]
-fn html_preview_shows_text_and_never_executes_or_displays_script_contents() {
+fn html_preview_uses_isolated_chromium_without_displaying_script_source() {
     let mut h = repeater();
     h.state_mut().panels.repeater.active_mut().response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Hello &amp; world</h1><script>SECRET_SCRIPT_MARKER</script></body></html>".into();
     h.run();
     h.get_by_label("Render").click();
     h.run();
-    assert!(h.query_by_label("Hello & world").is_some());
+    assert!(h.query_by_label_contains("Chromium HTML preview").is_some());
+    assert!(h.query_by_label_contains("No session cookies").is_some());
     assert!(h.query_by_label_contains("SECRET_SCRIPT_MARKER").is_none());
 }
 
