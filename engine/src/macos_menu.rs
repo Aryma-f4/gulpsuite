@@ -41,6 +41,64 @@ pub enum NativeMenuAction {
 
 static QUEUE: Mutex<Vec<NativeMenuAction>> = Mutex::new(Vec::new());
 static INIT: Once = Once::new();
+static LAST_CHROME_STATE: Mutex<Option<(usize, bool, [u8; 3])>> = Mutex::new(None);
+
+/// Harmonizes the macOS `NSWindow` titlebar and `NSAppearance` with Gulpsuite's active theme
+/// so the UI blends seamlessly into the window chrome instead of appearing nested inside a mismatched OS frame.
+pub fn sync_window_chrome(dark: bool, bg: [u8; 3]) {
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let windows: *mut Object = msg_send![app, windows];
+        if windows.is_null() {
+            return;
+        }
+        let count: usize = msg_send![windows, count];
+        if count == 0 {
+            return;
+        }
+        if let Ok(mut guard) = LAST_CHROME_STATE.lock() {
+            if *guard == Some((count, dark, bg)) {
+                return;
+            }
+            *guard = Some((count, dark, bg));
+        }
+        let appearance_name = if dark {
+            nsstring("NSAppearanceNameDarkAqua")
+        } else {
+            nsstring("NSAppearanceNameAqua")
+        };
+        let appearance: *mut Object =
+            msg_send![class!(NSAppearance), appearanceNamed: appearance_name];
+        if !appearance.is_null() {
+            let _: () = msg_send![app, setAppearance: appearance];
+        }
+        let r = bg[0] as f64 / 255.0;
+        let g = bg[1] as f64 / 255.0;
+        let b = bg[2] as f64 / 255.0;
+        let ns_color: *mut Object = msg_send![
+            class!(NSColor),
+            colorWithSRGBRed: r
+            green: g
+            blue: b
+            alpha: 1.0f64
+        ];
+        for idx in 0..count {
+            let win: *mut Object = msg_send![windows, objectAtIndex: idx];
+            if !win.is_null() {
+                if !appearance.is_null() {
+                    let _: () = msg_send![win, setAppearance: appearance];
+                }
+                let _: () = msg_send![win, setTitlebarAppearsTransparent: true];
+                if !ns_color.is_null() {
+                    let _: () = msg_send![win, setBackgroundColor: ns_color];
+                }
+            }
+        }
+    }
+}
 
 pub fn take_actions() -> Vec<NativeMenuAction> {
     let Ok(mut guard) = QUEUE.lock() else {

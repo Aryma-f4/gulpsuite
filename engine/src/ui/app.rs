@@ -1878,6 +1878,11 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         if self.use_native_macos_menu {
             crate::macos_menu::install_once();
+            let top_bg = self.theme.color("ui.background.1");
+            crate::macos_menu::sync_window_chrome(
+                self.theme.dark,
+                [top_bg.r(), top_bg.g(), top_bg.b()],
+            );
             for action in crate::macos_menu::take_actions() {
                 self.apply_native_menu_action(ctx, action);
             }

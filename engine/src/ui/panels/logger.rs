@@ -192,95 +192,188 @@ fn http(app: &mut App, ui: &mut Ui) {
     } else {
         (ui.available_height() - 36.0).max(app.panels.logger.table_height)
     };
-    eframe::egui::ScrollArea::vertical()
-        .id_salt("logger-table-scroll")
-        .max_height(table_h)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            eframe::egui::Grid::new("logger-grid")
-                .num_columns(6)
-                .striped(true)
-                .show(ui, |ui| {
-                    for (col_idx, name) in ["#", "Method", "Target", "Status", "Bytes", "Host"].iter().enumerate() {
-                        let active = app.panels.logger.sort_column == Some(col_idx);
-                        let label_text = if active {
-                            if app.panels.logger.sort_ascending {
-                                format!("{name} ▲")
-                            } else {
-                                format!("{name} ▼")
-                            }
+    ui.add_space(4.0);
+    {
+        use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, Vec2, pos2};
+        let total_w = ui.available_width().max(420.0);
+        let c_num = 54.0_f32;
+        let c_method = 74.0_f32;
+        let c_status = 68.0_f32;
+        let c_bytes = 88.0_f32;
+        let rem = (total_w - c_num - c_method - c_status - c_bytes).max(160.0);
+        let c_host = (rem * 0.28).clamp(120.0, 320.0);
+        let c_target = (rem - c_host).max(120.0);
+        let col_widths = [c_num, c_method, c_target, c_status, c_bytes, c_host];
+        let col_names = ["#", "Method", "Target", "Status", "Bytes", "Host"];
+        let border_col = theme.color("ui.border.1");
+
+        egui::Frame::new()
+            .fill(theme.color("ui.background.0"))
+            .stroke(Stroke::new(1.0, border_col))
+            .corner_radius(4.0)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                let (hdr_rect, _) =
+                    ui.allocate_exact_size(Vec2::new(total_w, 26.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(hdr_rect, 0.0, theme.color("ui.background.1"));
+                let mut hx = hdr_rect.left();
+                for (col_idx, name) in col_names.iter().enumerate() {
+                    let cell_r =
+                        Rect::from_min_size(pos2(hx, hdr_rect.top()), Vec2::new(col_widths[col_idx], 26.0));
+                    let resp = ui.interact(
+                        cell_r,
+                        ui.id().with(("logger-hdr-col", col_idx)),
+                        Sense::click(),
+                    );
+                    let active = app.panels.logger.sort_column == Some(col_idx);
+                    let label_text = if active {
+                        if app.panels.logger.sort_ascending {
+                            format!("{name} ▲")
                         } else {
-                            (*name).to_string()
-                        };
-                        if ui
-                            .selectable_label(
-                                active,
-                                eframe::egui::RichText::new(label_text)
-                                    .strong()
-                                    .color(theme.color("ui.text.body")),
-                            )
-                            .clicked()
-                        {
-                            if app.panels.logger.sort_column == Some(col_idx) {
-                                if app.panels.logger.sort_ascending {
-                                    app.panels.logger.sort_ascending = false;
-                                } else {
-                                    app.panels.logger.sort_column = None;
-                                    app.panels.logger.sort_ascending = true;
-                                }
+                            format!("{name} ▼")
+                        }
+                    } else {
+                        (*name).to_string()
+                    };
+                    resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel, true, &label_text)
+                    });
+                    if resp.hovered() {
+                        ui.painter()
+                            .rect_filled(cell_r, 0.0, theme.color("ui.background.3"));
+                    }
+                    ui.painter().text(
+                        pos2(cell_r.left() + 8.0, cell_r.center().y),
+                        Align2::LEFT_CENTER,
+                        &label_text,
+                        FontId::proportional(11.5),
+                        if active {
+                            theme.color("ui.icon.link")
+                        } else {
+                            theme.color("ui.text.header")
+                        },
+                    );
+                    if col_idx + 1 < col_names.len() {
+                        ui.painter().vline(
+                            cell_r.right(),
+                            hdr_rect.y_range(),
+                            Stroke::new(1.0, border_col),
+                        );
+                    }
+                    if resp.clicked() {
+                        if app.panels.logger.sort_column == Some(col_idx) {
+                            if app.panels.logger.sort_ascending {
+                                app.panels.logger.sort_ascending = false;
                             } else {
-                                app.panels.logger.sort_column = Some(col_idx);
+                                app.panels.logger.sort_column = None;
                                 app.panels.logger.sort_ascending = true;
                             }
+                        } else {
+                            app.panels.logger.sort_column = Some(col_idx);
+                            app.panels.logger.sort_ascending = true;
                         }
                     }
-                    ui.end_row();
-                    for (index, tx) in rows.iter() {
-                        ui.push_id(("logger-row", *index), |ui| {
+                    hx = cell_r.right();
+                }
+                ui.painter()
+                    .hline(hdr_rect.x_range(), hdr_rect.bottom(), Stroke::new(1.0, border_col));
+
+                let row_h = 23.0_f32;
+                egui::ScrollArea::vertical()
+                    .id_salt("logger-table-scroll")
+                    .max_height((table_h - 28.0).max(88.0))
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_h, rows.len(), |ui, range| {
+                        ui.spacing_mut().item_spacing = Vec2::ZERO;
+                        for (offset, (index, tx)) in rows[range.clone()].iter().enumerate() {
+                            let row_ord = range.start + offset;
                             let selected = app.panels.logger.selected == Some(*index);
-                            let c_idx = ui.selectable_label(selected, format!("{}", index + 1));
-                            let text = if selected {
-                                eframe::egui::RichText::new(&tx.method)
-                                    .color(theme.color("ui.icon.link"))
-                            } else {
-                                eframe::egui::RichText::new(&tx.method)
-                            };
-                            let short_target = if tx.target.chars().count() > 44 {
-                                let mut s: String = tx.target.chars().take(43).collect();
-                                s.push('…');
-                                s
-                            } else {
-                                tx.target.clone()
-                            };
-                            let host_full = tx.host_url();
-                            let short_host = if host_full.chars().count() > 28 {
-                                let mut s: String = host_full.chars().take(27).collect();
-                                s.push('…');
-                                s
-                            } else {
-                                host_full.clone()
-                            };
-                            let c_method = ui.selectable_label(selected, text);
-                            let c_target = ui
-                                .selectable_label(selected, short_target)
-                                .on_hover_text(&tx.target);
-                            let c_status = ui.selectable_label(selected, tx.status.to_string());
-                            let c_bytes = ui.selectable_label(selected, tx.bytes.to_string());
-                            let c_host = ui
-                                .selectable_label(selected, short_host)
-                                .on_hover_text(&host_full);
-                            for cell in [&c_idx, &c_method, &c_target, &c_status, &c_bytes, &c_host]
-                            {
-                                if cell.clicked() || cell.secondary_clicked() {
+                            ui.push_id(("logger-row", *index), |ui| {
+                                let (row_rect, row_resp) =
+                                    ui.allocate_exact_size(Vec2::new(total_w, row_h), Sense::click());
+                                let hovered = row_resp.hovered();
+                                let row_fill = if selected {
+                                    if theme.dark {
+                                        Color32::from_rgb(0x28, 0x45, 0x66)
+                                    } else {
+                                        Color32::from_rgb(0xCF, 0xE2, 0xF8)
+                                    }
+                                } else if hovered {
+                                    theme.color("ui.background.3")
+                                } else if row_ord % 2 == 1 {
+                                    theme.color("ui.background.1")
+                                } else {
+                                    theme.color("ui.background.0")
+                                };
+                                ui.painter().rect_filled(row_rect, 0.0, row_fill);
+
+                                let host_full = tx.host_url();
+                                let cells = [
+                                    format!("{}", index + 1),
+                                    tx.method.clone(),
+                                    tx.target.clone(),
+                                    if tx.status == 0 {
+                                        String::new()
+                                    } else {
+                                        tx.status.to_string()
+                                    },
+                                    tx.bytes.to_string(),
+                                    host_full.clone(),
+                                ];
+                                let mut cx = row_rect.left();
+                                for (col_idx, text_val) in cells.iter().enumerate() {
+                                    let cell_r = Rect::from_min_size(
+                                        pos2(cx, row_rect.top()),
+                                        Vec2::new(col_widths[col_idx], row_h),
+                                    );
+                                    let clip_r = cell_r.shrink2(Vec2::new(7.0, 0.0)).intersect(ui.clip_rect());
+                                    let fg = if selected && theme.dark {
+                                        Color32::WHITE
+                                    } else if col_idx == 1 && tx.method != "GET" {
+                                        theme.color("ui.icon.link")
+                                    } else if col_idx == 3 {
+                                        match tx.status {
+                                            200..=299 => Color32::from_rgb(0x2E, 0xA0, 0x43),
+                                            300..=399 => Color32::from_rgb(0x38, 0x8B, 0xFD),
+                                            400..=499 => Color32::from_rgb(0xD2, 0x99, 0x22),
+                                            500..=599 => Color32::from_rgb(0xF8, 0x51, 0x49),
+                                            _ => theme.color("ui.text.body"),
+                                        }
+                                    } else {
+                                        theme.color("ui.text.body")
+                                    };
+                                    ui.painter().with_clip_rect(clip_r).text(
+                                        pos2(cell_r.left() + 8.0, cell_r.center().y),
+                                        Align2::LEFT_CENTER,
+                                        text_val,
+                                        FontId::proportional(11.8),
+                                        fg,
+                                    );
+                                    let max_chars = ((col_widths[col_idx] - 16.0) / 6.5).max(8.0) as usize;
+                                    if (col_idx == 2 || col_idx == 5) && text_val.chars().count() > max_chars {
+                                        let cell_hover = ui.interact(
+                                            cell_r,
+                                            ui.id().with(("cell-tip", col_idx)),
+                                            Sense::click(),
+                                        );
+                                        if cell_hover.clicked() || cell_hover.secondary_clicked() {
+                                            app.panels.logger.selected = Some(*index);
+                                        }
+                                        app.context_menu(&cell_hover, *index);
+                                        cell_hover.on_hover_text(text_val);
+                                    }
+                                    cx = cell_r.right();
+                                }
+                                if row_resp.clicked() || row_resp.secondary_clicked() {
                                     app.panels.logger.selected = Some(*index);
                                 }
-                                app.context_menu(cell, *index);
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-        });
+                                app.context_menu(&row_resp, *index);
+                            });
+                        }
+                    });
+            });
+    }
 
     super::horizontal_resize_handle(
         ui,
@@ -294,7 +387,7 @@ fn http(app: &mut App, ui: &mut Ui) {
 
     let selected = app.panels.logger.selected;
     if let Some(tx) = selected.and_then(|index| app.log.get(index).cloned()) {
-        let detail_h = (ui.available_height() - 16.0).max(app.panels.logger.detail_height.min(180.0));
+        let detail_h = (ui.available_height() - 4.0).max(160.0);
         let mut ratio = app.panels.logger.split_ratio;
         super::vertical_split(
             ui,
@@ -318,7 +411,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         ui,
                         &theme,
                         "logger-req",
-                        detail_h - 48.0,
+                        detail_h - 46.0,
                         &tx.request,
                         app.panels.logger.req_fmt_mode,
                         app.panels.logger.req_np,
@@ -346,7 +439,7 @@ fn http(app: &mut App, ui: &mut Ui) {
                         ui,
                         &theme,
                         "logger-resp",
-                        detail_h - 48.0,
+                        detail_h - 46.0,
                         &tx.response,
                         app.panels.logger.resp_fmt_mode,
                         app.panels.logger.resp_np,
@@ -363,15 +456,6 @@ fn http(app: &mut App, ui: &mut Ui) {
             },
         );
         app.panels.logger.split_ratio = ratio;
-        super::horizontal_resize_handle(
-            ui,
-            &theme,
-            "logger-detail-resize",
-            &mut app.panels.logger.detail_height,
-            120.0,
-            600.0,
-            260.0,
-        );
     }
 }
 

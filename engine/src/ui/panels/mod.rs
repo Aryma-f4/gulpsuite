@@ -297,73 +297,83 @@ pub fn horizontal_resize_handle(
 pub fn vertical_split(
     ui: &mut Ui,
     theme: &Theme,
-    _id: &str,
+    id: &str,
     ratio: &mut f32,
     height: f32,
     mut pane: impl FnMut(usize, &mut Ui),
 ) {
-    let total_width = ui.available_width().max(200.0);
-    let handle_w = 10.0;
+    use eframe::egui::{pos2, Layout, Rect, Sense, UiBuilder, Vec2};
+
+    let total_width = ui.available_width().max(0.0);
+    let height = height.max(120.0);
+    let handle_w = 10.0_f32.min(total_width);
     *ratio = ratio.clamp(0.18, 0.82);
-    let left_w = ((total_width - handle_w) * *ratio).max(80.0);
-    let right_w = (total_width - handle_w - left_w).max(80.0);
+    let usable_width = (total_width - handle_w).max(0.0);
+    let left_w = usable_width * *ratio;
 
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.allocate_ui_with_layout(
-            eframe::egui::Vec2::new(left_w, height),
-            eframe::egui::Layout::top_down(eframe::egui::Align::Min),
-            |ui| {
-                ui.set_min_width(left_w);
-                ui.set_max_width(left_w);
-                pane(0, ui);
-            },
-        );
+    // Reserve the split once. allocate_ui_with_layout grows to fit oversized
+    // child contents, which used to move the divider and sibling off-screen.
+    let (bounds, _) = ui.allocate_exact_size(Vec2::new(total_width, height), Sense::hover());
+    let left = Rect::from_min_size(bounds.min, Vec2::new(left_w, height));
+    let handle = Rect::from_min_size(
+        pos2(left.right(), bounds.top()),
+        Vec2::new(handle_w, height),
+    );
+    let right = Rect::from_min_max(pos2(handle.right(), bounds.top()), bounds.max);
+    let parent_clip = ui.clip_rect();
+    let mut left_ui = ui.new_child(
+        UiBuilder::new()
+            .id_salt((id, "left"))
+            .max_rect(left)
+            .layout(Layout::top_down(eframe::egui::Align::Min)),
+    );
+    left_ui.set_clip_rect(left.intersect(parent_clip));
+    pane(0, &mut left_ui);
 
-        let (rect, response) = ui.allocate_exact_size(
-            eframe::egui::Vec2::new(handle_w, height.max(120.0)),
-            eframe::egui::Sense::click_and_drag(),
+    let response = ui.interact(
+        handle,
+        ui.id().with((id, "divider")),
+        Sense::click_and_drag(),
+    );
+    if response.hovered() || response.dragged() {
+        ui.ctx()
+            .set_cursor_icon(eframe::egui::CursorIcon::ResizeHorizontal);
+    }
+    if response.dragged() && usable_width > 0.0 {
+        *ratio = (*ratio + response.drag_delta().x / usable_width).clamp(0.18, 0.82);
+    }
+    if response.double_clicked() {
+        *ratio = 0.5;
+    }
+    let painter = ui.painter_at(handle);
+    let line_col = if response.hovered() || response.dragged() {
+        theme.color("ui.icon.link")
+    } else {
+        theme.color("ui.border.1")
+    };
+    painter.line_segment(
+        [
+            pos2(handle.center().x, handle.top()),
+            pos2(handle.center().x, handle.bottom()),
+        ],
+        eframe::egui::Stroke::new(1.0, line_col),
+    );
+    for dy in [-8.0, 0.0, 8.0] {
+        painter.circle_filled(
+            pos2(handle.center().x, handle.center().y + dy),
+            1.6,
+            line_col,
         );
-        let response = response.interact(eframe::egui::Sense::click_and_drag());
-        if response.hovered() || response.dragged() {
-            ui.ctx()
-                .set_cursor_icon(eframe::egui::CursorIcon::ResizeHorizontal);
-        }
-        if response.dragged() && total_width > handle_w {
-            *ratio = (*ratio + response.drag_delta().x / (total_width - handle_w)).clamp(0.18, 0.82);
-        }
-        if response.double_clicked() {
-            *ratio = 0.5;
-        }
-        let painter = ui.painter_at(rect);
-        let line_col = if response.hovered() || response.dragged() {
-            theme.color("ui.icon.link")
-        } else {
-            theme.color("ui.border.1")
-        };
-        let x = rect.center().x;
-        painter.line_segment(
-            [eframe::egui::pos2(x, rect.min.y), eframe::egui::pos2(x, rect.max.y)],
-            eframe::egui::Stroke::new(1.0_f32, line_col),
-        );
-        for dy in [-8.0_f32, 0.0, 8.0] {
-            painter.circle_filled(
-                eframe::egui::pos2(x, rect.center().y + dy),
-                1.6,
-                line_col,
-            );
-        }
+    }
 
-        ui.allocate_ui_with_layout(
-            eframe::egui::Vec2::new(right_w, height),
-            eframe::egui::Layout::top_down(eframe::egui::Align::Min),
-            |ui| {
-                ui.set_min_width(right_w);
-                ui.set_max_width(right_w);
-                pane(1, ui);
-            },
-        );
-    });
+    let mut right_ui = ui.new_child(
+        UiBuilder::new()
+            .id_salt((id, "right"))
+            .max_rect(right)
+            .layout(Layout::top_down(eframe::egui::Align::Min)),
+    );
+    right_ui.set_clip_rect(right.intersect(parent_clip));
+    pane(1, &mut right_ui);
 }
 
 thread_local! {

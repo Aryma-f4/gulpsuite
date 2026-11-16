@@ -246,321 +246,468 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
     }
     egui::ScrollArea::vertical()
         .id_salt("target-scope-scroll")
+        .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                super::scanner::paint_launcher_icon(
-                    ui,
-                    Vec2::new(18.0, 18.0),
-                    theme.color("ui.icon.default"),
-                    super::scanner::LauncherIcon::HelpCircle,
-                );
-                heading(ui, &theme, "Target scope");
-            });
-            ui.horizontal(|ui| {
-                super::scanner::paint_launcher_icon(
-                    ui,
-                    Vec2::new(18.0, 18.0),
-                    theme.color("ui.icon.default"),
-                    super::scanner::LauncherIcon::Gear,
-                );
-                muted(
-                    ui,
-                    &theme,
-                    "Use these settings to define exactly what hosts and URLs constitute the target for your current work. This configuration affects the behavior of tools across the suite.",
-                );
-            });
-            ui.add_space(6.0);
-            ui.checkbox(
-                &mut app.panels.target_panel.advanced_scope_control,
-                "Use advanced scope control",
-            );
-            if app.panels.target_panel.advanced_scope_control {
-                ui.add_space(4.0);
-                egui::Frame::new()
-                    .fill(theme.color("ui.background.0"))
-                    .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
-                    .corner_radius(4.0)
-                    .inner_margin(10.0)
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(
-                                "Advanced regex scope rule builder (Protocol + Host/IP range + Port + File regex)",
-                            )
-                            .strong(),
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(18, 14))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        super::scanner::paint_launcher_icon(
+                            ui,
+                            Vec2::new(18.0, 18.0),
+                            theme.color("ui.icon.default"),
+                            super::scanner::LauncherIcon::HelpCircle,
                         );
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label("Protocol:");
-                            egui::ComboBox::from_id_salt("adv-scope-proto")
-                                .selected_text(&app.panels.target_panel.adv_protocol)
-                                .width(80.0)
-                                .show_ui(ui, |ui| {
-                                    for p in ["Any", "HTTP", "HTTPS"] {
-                                        ui.selectable_value(
-                                            &mut app.panels.target_panel.adv_protocol,
-                                            p.to_string(),
-                                            p,
-                                        );
+                        heading(ui, &theme, "Target scope");
+                    });
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        super::scanner::paint_launcher_icon(
+                            ui,
+                            Vec2::new(18.0, 18.0),
+                            theme.color("ui.icon.default"),
+                            super::scanner::LauncherIcon::Gear,
+                        );
+                        muted(
+                            ui,
+                            &theme,
+                            "Use these settings to define exactly what hosts and URLs constitute the target for your current work. This configuration affects the behavior of tools across the suite.",
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.checkbox(
+                        &mut app.panels.target_panel.advanced_scope_control,
+                        "Use advanced scope control",
+                    );
+                    if app.panels.target_panel.advanced_scope_control {
+                        ui.add_space(6.0);
+                        egui::Frame::new()
+                            .fill(theme.color("ui.background.0"))
+                            .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
+                            .corner_radius(4.0)
+                            .inner_margin(12.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "Advanced regex scope rule builder (Protocol + Host/IP range + Port + File regex)",
+                                    )
+                                    .strong(),
+                                );
+                                ui.add_space(4.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Protocol:");
+                                    egui::ComboBox::from_id_salt("adv-scope-proto")
+                                        .selected_text(&app.panels.target_panel.adv_protocol)
+                                        .width(84.0)
+                                        .show_ui(ui, |ui| {
+                                            for p in ["Any", "HTTP", "HTTPS"] {
+                                                ui.selectable_value(
+                                                    &mut app.panels.target_panel.adv_protocol,
+                                                    p.to_string(),
+                                                    p,
+                                                );
+                                            }
+                                        });
+                                    ui.label("Host or IP range:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut app.panels.target_panel.adv_host_regex,
+                                        )
+                                        .desired_width(160.0),
+                                    );
+                                    ui.label("Port:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut app.panels.target_panel.adv_port_regex,
+                                        )
+                                        .desired_width(78.0),
+                                    );
+                                    ui.label("File:");
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut app.panels.target_panel.adv_file_regex,
+                                        )
+                                        .desired_width(110.0),
+                                    );
+                                    let build_rule = |tp: &TargetPanel| -> String {
+                                        let proto = match tp.adv_protocol.as_str() {
+                                            "HTTP" => "http://",
+                                            "HTTPS" => "https://",
+                                            _ => "https://",
+                                        };
+                                        let host = tp
+                                            .adv_host_regex
+                                            .trim_start_matches('^')
+                                            .trim_end_matches('$')
+                                            .replace("\\.", ".");
+                                        let file = tp
+                                            .adv_file_regex
+                                            .trim_start_matches('^')
+                                            .trim_end_matches('$');
+                                        format!("{proto}{host}{file}")
+                                    };
+                                    ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
+                                    if ui.button("Add to Include").clicked() {
+                                        let rule = build_rule(&app.panels.target_panel);
+                                        if !app.panels.target_panel.scope.trim().is_empty() {
+                                            app.panels.target_panel.scope.push_str(", ");
+                                        }
+                                        app.panels.target_panel.scope.push_str(&rule);
+                                    }
+                                    if ui.button("Add to Exclude").clicked() {
+                                        let rule = build_rule(&app.panels.target_panel);
+                                        if !app.panels.target_panel.scope_exclude.trim().is_empty() {
+                                            app.panels.target_panel.scope_exclude.push_str(", ");
+                                        }
+                                        app.panels.target_panel.scope_exclude.push_str(&rule);
                                     }
                                 });
-                            ui.label("Host or IP range:");
-                            ui.add(
-                                egui::TextEdit::singleline(
-                                    &mut app.panels.target_panel.adv_host_regex,
-                                )
-                                .desired_width(160.0),
-                            );
-                            ui.label("Port:");
-                            ui.add(
-                                egui::TextEdit::singleline(
-                                    &mut app.panels.target_panel.adv_port_regex,
-                                )
-                                .desired_width(78.0),
-                            );
-                            ui.label("File:");
-                            ui.add(
-                                egui::TextEdit::singleline(
-                                    &mut app.panels.target_panel.adv_file_regex,
-                                )
-                                .desired_width(110.0),
-                            );
-                            let build_rule = |tp: &TargetPanel| -> String {
-                                let proto = match tp.adv_protocol.as_str() {
-                                    "HTTP" => "http://",
-                                    "HTTPS" => "https://",
-                                    _ => "https://",
-                                };
-                                let host = tp
-                                    .adv_host_regex
-                                    .trim_start_matches('^')
-                                    .trim_end_matches('$')
-                                    .replace("\\.", ".");
-                                let file = tp
-                                    .adv_file_regex
-                                    .trim_start_matches('^')
-                                    .trim_end_matches('$');
-                                format!("{proto}{host}{file}")
+                            });
+                    }
+                    ui.add_space(14.0);
+
+                    let btn_w = 104.0_f32;
+                    let btn_size = Vec2::new(btn_w, 28.0);
+                    let scope_btn = |ui: &mut Ui, label: &str, enabled: bool| -> egui::Response {
+                        ui.add_enabled_ui(enabled, |ui| {
+                            ui.spacing_mut().button_padding = Vec2::new(10.0, 4.0);
+                            ui.add_sized(
+                                btn_size,
+                                egui::Button::new(RichText::new(label).size(12.2).strong())
+                                    .wrap_mode(egui::TextWrapMode::Extend)
+                                    .corner_radius(4.0),
+                            )
+                        })
+                        .inner
+                    };
+
+                    // 1. Include in scope (`site-map-target-scope.png`)
+                    ui.label(RichText::new("Include in scope").size(13.5).strong());
+                    ui.add_space(6.0);
+                    let mut inc_rules: Vec<String> = app
+                        .panels
+                        .target_panel
+                        .scope
+                        .split([',', '\n'])
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    let mut inc_changed = false;
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.vertical(|ui| {
+                            ui.set_min_width(btn_w);
+                            ui.set_max_width(btn_w);
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            let add_lbl = if app.panels.target_panel.editing_include_rule.is_some() {
+                                "Save"
+                            } else {
+                                "Add"
                             };
-                            if ui.button("Add to Include").clicked() {
-                                let rule = build_rule(&app.panels.target_panel);
-                                if !app.panels.target_panel.scope.trim().is_empty() {
-                                    app.panels.target_panel.scope.push_str(", ");
+                            if scope_btn(ui, add_lbl, true).clicked()
+                                && !app.panels.target_panel.new_include_prefix.trim().is_empty()
+                            {
+                                let prefix = app.panels.target_panel.new_include_prefix.trim().to_string();
+                                if let Some(index) = app.panels.target_panel.editing_include_rule.take() {
+                                    if let Some(rule) = inc_rules.get_mut(index) {
+                                        let disabled = app.panels.target_panel.disabled_include_rules.remove(&rule.to_lowercase());
+                                        *rule = prefix.clone();
+                                        if disabled {
+                                            app.panels.target_panel.disabled_include_rules.insert(prefix.to_lowercase());
+                                        }
+                                    }
+                                } else if !inc_rules.contains(&prefix) {
+                                    inc_rules.push(prefix);
                                 }
-                                app.panels.target_panel.scope.push_str(&rule);
+                                app.panels.target_panel.new_include_prefix.clear();
+                                inc_changed = true;
                             }
-                            if ui.button("Add to Exclude").clicked() {
-                                let rule = build_rule(&app.panels.target_panel);
-                                if !app.panels.target_panel.scope_exclude.trim().is_empty() {
-                                    app.panels.target_panel.scope_exclude.push_str(", ");
+                            let selected = app.panels.target_panel.selected_include_rule.filter(|i| *i < inc_rules.len());
+                            if scope_btn(ui, "Edit", selected.is_some()).clicked() {
+                                if let Some(index) = selected {
+                                    app.panels.target_panel.new_include_prefix = inc_rules[index].clone();
+                                    app.panels.target_panel.editing_include_rule = Some(index);
                                 }
-                                app.panels.target_panel.scope_exclude.push_str(&rule);
+                            }
+                            if scope_btn(ui, "Remove", selected.is_some()).clicked() {
+                                if let Some(index) = selected {
+                                    let removed = inc_rules.remove(index);
+                                    app.panels.target_panel.disabled_include_rules.remove(&removed.to_lowercase());
+                                    app.panels.target_panel.selected_include_rule = None;
+                                    app.panels.target_panel.editing_include_rule = None;
+                                    inc_changed = true;
+                                }
+                            }
+                            if scope_btn(ui, "Paste URL", true).clicked() {
+                                app.panels.target_panel.pending_scope_paste = Some(true);
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                            }
+                            if scope_btn(ui, "Load ...", true).clicked() {
+                                app.panels.target_panel.scope_load_include = Some(true);
+                                app.panels.target_panel.scope_load_error.clear();
                             }
                         });
-                    });
-            }
-            ui.add_space(10.0);
-
-            // 1. Include in scope (`site-map-target-scope.png`)
-            ui.label(RichText::new("Include in scope").size(13.5).strong());
-            ui.add_space(4.0);
-            let mut inc_rules: Vec<String> = app
-                .panels
-                .target_panel
-                .scope
-                .split([',', '\n'])
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .collect();
-            let mut inc_changed = false;
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(92.0);
-                    if ui.button(if app.panels.target_panel.editing_include_rule.is_some() { "Save" } else { "Add" }).clicked()
-                        && !app.panels.target_panel.new_include_prefix.trim().is_empty()
-                    {
-                        let prefix = app.panels.target_panel.new_include_prefix.trim().to_string();
-                        if let Some(index) = app.panels.target_panel.editing_include_rule.take() {
-                            if let Some(rule) = inc_rules.get_mut(index) {
-                                let disabled = app.panels.target_panel.disabled_include_rules.remove(&rule.to_lowercase());
-                                *rule = prefix.clone();
-                                if disabled { app.panels.target_panel.disabled_include_rules.insert(prefix.to_lowercase()); }
-                            }
-                        } else if !inc_rules.contains(&prefix) {
-                            inc_rules.push(prefix);
-                        }
-                        app.panels.target_panel.new_include_prefix.clear();
-                        inc_changed = true;
-                    }
-                    let selected = app.panels.target_panel.selected_include_rule.filter(|i| *i < inc_rules.len());
-                    if ui.add_enabled(selected.is_some(), egui::Button::new("Edit")).clicked() {
-                        if let Some(index) = selected {
-                            app.panels.target_panel.new_include_prefix = inc_rules[index].clone();
-                            app.panels.target_panel.editing_include_rule = Some(index);
-                        }
-                    }
-                    if ui.add_enabled(selected.is_some(), egui::Button::new("Remove")).clicked() {
-                        if let Some(index) = selected {
-                            let removed = inc_rules.remove(index);
-                            app.panels.target_panel.disabled_include_rules.remove(&removed.to_lowercase());
-                            app.panels.target_panel.selected_include_rule = None;
-                            app.panels.target_panel.editing_include_rule = None;
-                            inc_changed = true;
-                        }
-                    }
-                    if ui.button("Paste URL").clicked() {
-                        app.panels.target_panel.pending_scope_paste = Some(true);
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    }
-                    if ui.button("Load ...").clicked() {
-                        app.panels.target_panel.scope_load_include = Some(true);
-                        app.panels.target_panel.scope_load_error.clear();
-                    }
-                });
-                egui::Frame::new()
-                    .fill(theme.color("ui.background.0"))
-                    .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width((ui.available_width() - 12.0).max(320.0));
-                        ui.set_min_height(120.0);
-                        egui::Grid::new("target-scope-include-table")
-                            .num_columns(2)
-                            .min_col_width(70.0)
-                            .striped(true)
+                        egui::Frame::new()
+                            .fill(theme.color("ui.background.0"))
+                            .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
+                            .corner_radius(4.0)
+                            .inner_margin(0.0)
                             .show(ui, |ui| {
-                                ui.strong("Enabled");
-                                ui.strong("Prefix");
-                                ui.end_row();
-                                for (index, rule) in inc_rules.iter().enumerate() {
-                                    let key = rule.to_lowercase();
-                                    let mut enabled = !app.panels.target_panel.disabled_include_rules.contains(&key);
-                                    if ui.checkbox(&mut enabled, "").changed() {
-                                        if enabled { app.panels.target_panel.disabled_include_rules.remove(&key); }
-                                        else { app.panels.target_panel.disabled_include_rules.insert(key); }
-                                    }
-                                    if ui.selectable_label(app.panels.target_panel.selected_include_rule == Some(index), rule).clicked() {
-                                        app.panels.target_panel.selected_include_rule = Some(index);
-                                    }
-                                    ui.end_row();
-                                }
+                                // This frame is inside horizontal_top: give its header and
+                                // rows their own vertical layout instead of placing rows off-screen.
+                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                                let tbl_w = ui.available_width().max(320.0);
+                                ui.set_min_width(tbl_w);
+                                ui.set_min_height(164.0);
+                                egui::Frame::NONE
+                                    .fill(theme.color("ui.background.1"))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(tbl_w - 20.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized([72.0, 18.0], egui::Label::new(RichText::new("Enabled").strong().size(11.5)));
+                                            ui.label(RichText::new("Prefix").strong().size(11.5));
+                                        });
+                                    });
+                                ui.painter().hline(
+                                    ui.min_rect().x_range(),
+                                    ui.cursor().top(),
+                                    Stroke::new(1.0, theme.color("ui.border.1")),
+                                );
+                                egui::Frame::NONE
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        if inc_rules.is_empty() {
+                                            muted(ui, &theme, "No include rules — type a URL prefix below and click Add, or click Paste URL.");
+                                        } else {
+                                            egui::Grid::new("target-scope-include-table")
+                                                .num_columns(2)
+                                                .min_col_width(72.0)
+                                                .striped(true)
+                                                .show(ui, |ui| {
+                                                    for (index, rule) in inc_rules.iter().enumerate() {
+                                                        let key = rule.to_lowercase();
+                                                        let mut enabled = !app.panels.target_panel.disabled_include_rules.contains(&key);
+                                                        if ui.checkbox(&mut enabled, "").changed() {
+                                                            if enabled {
+                                                                app.panels.target_panel.disabled_include_rules.remove(&key);
+                                                            } else {
+                                                                app.panels.target_panel.disabled_include_rules.insert(key);
+                                                            }
+                                                        }
+                                                        if ui
+                                                            .selectable_label(
+                                                                app.panels.target_panel.selected_include_rule == Some(index),
+                                                                rule,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            app.panels.target_panel.selected_include_rule = Some(index);
+                                                        }
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        }
+                                    });
+                                });
                             });
                     });
-            });
-            if inc_changed {
-                app.panels.target_panel.scope = inc_rules.join(", ");
-            }
-            ui.horizontal(|ui| {
-                ui.label("Include prefix:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.panels.target_panel.new_include_prefix)
-                        .hint_text("https://example.com/")
-                        .desired_width(240.0),
-                );
-                ui.label("Raw Include rules:");
-                ui.text_edit_singleline(&mut app.panels.target_panel.scope);
-            });
-
-            ui.add_space(14.0);
-            // 2. Exclude from scope (`site-map-target-scope.png`)
-            ui.label(RichText::new("Exclude from scope").size(13.5).strong());
-            ui.add_space(4.0);
-            let mut exc_rules: Vec<String> = app
-                .panels
-                .target_panel
-                .scope_exclude
-                .split([',', '\n'])
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .collect();
-            let mut exc_changed = false;
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(92.0);
-                    if ui.button(if app.panels.target_panel.editing_exclude_rule.is_some() { "Save" } else { "Add" }).clicked()
-                        && !app.panels.target_panel.new_exclude_prefix.trim().is_empty()
-                    {
-                        let prefix = app.panels.target_panel.new_exclude_prefix.trim().to_string();
-                        if let Some(index) = app.panels.target_panel.editing_exclude_rule.take() {
-                            if let Some(rule) = exc_rules.get_mut(index) {
-                                let disabled = app.panels.target_panel.disabled_exclude_rules.remove(&rule.to_lowercase());
-                                *rule = prefix.clone();
-                                if disabled { app.panels.target_panel.disabled_exclude_rules.insert(prefix.to_lowercase()); }
+                    if inc_changed {
+                        app.panels.target_panel.scope = inc_rules.join(", ");
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(btn_w + 10.0);
+                        ui.label("Include prefix:");
+                        let resp_in = ui.add(
+                            egui::TextEdit::singleline(&mut app.panels.target_panel.new_include_prefix)
+                                .hint_text("https://example.com/")
+                                .desired_width(280.0),
+                        );
+                        if resp_in.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            && !app.panels.target_panel.new_include_prefix.trim().is_empty()
+                        {
+                            let prefix = app.panels.target_panel.new_include_prefix.trim().to_string();
+                            if !inc_rules.contains(&prefix) {
+                                inc_rules.push(prefix);
+                                app.panels.target_panel.scope = inc_rules.join(", ");
                             }
-                        } else if !exc_rules.contains(&prefix) {
-                            exc_rules.push(prefix);
+                            app.panels.target_panel.new_include_prefix.clear();
                         }
-                        app.panels.target_panel.new_exclude_prefix.clear();
-                        exc_changed = true;
-                    }
-                    let selected = app.panels.target_panel.selected_exclude_rule.filter(|i| *i < exc_rules.len());
-                    if ui.add_enabled(selected.is_some(), egui::Button::new("Edit")).clicked() {
-                        if let Some(index) = selected {
-                            app.panels.target_panel.new_exclude_prefix = exc_rules[index].clone();
-                            app.panels.target_panel.editing_exclude_rule = Some(index);
-                        }
-                    }
-                    if ui.add_enabled(selected.is_some(), egui::Button::new("Remove")).clicked() {
-                        if let Some(index) = selected {
-                            let removed = exc_rules.remove(index);
-                            app.panels.target_panel.disabled_exclude_rules.remove(&removed.to_lowercase());
-                            app.panels.target_panel.selected_exclude_rule = None;
-                            app.panels.target_panel.editing_exclude_rule = None;
-                            exc_changed = true;
-                        }
-                    }
-                    if ui.button("Paste URL").clicked() {
-                        app.panels.target_panel.pending_scope_paste = Some(false);
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    }
-                    if ui.button("Load ...").clicked() {
-                        app.panels.target_panel.scope_load_include = Some(false);
-                        app.panels.target_panel.scope_load_error.clear();
-                    }
-                });
-                egui::Frame::new()
-                    .fill(theme.color("ui.background.0"))
-                    .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
-                    .inner_margin(6.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width((ui.available_width() - 12.0).max(320.0));
-                        ui.set_min_height(120.0);
-                        egui::Grid::new("target-scope-exclude-table")
-                            .num_columns(2)
-                            .min_col_width(70.0)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.strong("Enabled");
-                                ui.strong("Prefix");
-                                ui.end_row();
-                                for (index, rule) in exc_rules.iter().enumerate() {
-                                    let key = rule.to_lowercase();
-                                    let mut enabled = !app.panels.target_panel.disabled_exclude_rules.contains(&key);
-                                    if ui.checkbox(&mut enabled, "").changed() {
-                                        if enabled { app.panels.target_panel.disabled_exclude_rules.remove(&key); }
-                                        else { app.panels.target_panel.disabled_exclude_rules.insert(key); }
+                        ui.add_space(12.0);
+                        ui.label("Raw Include rules:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.panels.target_panel.scope)
+                                .desired_width((ui.available_width() - 4.0).max(160.0)),
+                        );
+                    });
+
+                    ui.add_space(20.0);
+                    // 2. Exclude from scope (`site-map-target-scope.png`)
+                    ui.label(RichText::new("Exclude from scope").size(13.5).strong());
+                    ui.add_space(6.0);
+                    let mut exc_rules: Vec<String> = app
+                        .panels
+                        .target_panel
+                        .scope_exclude
+                        .split([',', '\n'])
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    let mut exc_changed = false;
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.vertical(|ui| {
+                            ui.set_min_width(btn_w);
+                            ui.set_max_width(btn_w);
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            let add_lbl = if app.panels.target_panel.editing_exclude_rule.is_some() {
+                                "Save"
+                            } else {
+                                "Add"
+                            };
+                            if scope_btn(ui, add_lbl, true).clicked()
+                                && !app.panels.target_panel.new_exclude_prefix.trim().is_empty()
+                            {
+                                let prefix = app.panels.target_panel.new_exclude_prefix.trim().to_string();
+                                if let Some(index) = app.panels.target_panel.editing_exclude_rule.take() {
+                                    if let Some(rule) = exc_rules.get_mut(index) {
+                                        let disabled = app.panels.target_panel.disabled_exclude_rules.remove(&rule.to_lowercase());
+                                        *rule = prefix.clone();
+                                        if disabled {
+                                            app.panels.target_panel.disabled_exclude_rules.insert(prefix.to_lowercase());
+                                        }
                                     }
-                                    if ui.selectable_label(app.panels.target_panel.selected_exclude_rule == Some(index), rule).clicked() {
-                                        app.panels.target_panel.selected_exclude_rule = Some(index);
-                                    }
-                                    ui.end_row();
+                                } else if !exc_rules.contains(&prefix) {
+                                    exc_rules.push(prefix);
                                 }
+                                app.panels.target_panel.new_exclude_prefix.clear();
+                                exc_changed = true;
+                            }
+                            let selected = app.panels.target_panel.selected_exclude_rule.filter(|i| *i < exc_rules.len());
+                            if scope_btn(ui, "Edit", selected.is_some()).clicked() {
+                                if let Some(index) = selected {
+                                    app.panels.target_panel.new_exclude_prefix = exc_rules[index].clone();
+                                    app.panels.target_panel.editing_exclude_rule = Some(index);
+                                }
+                            }
+                            if scope_btn(ui, "Remove", selected.is_some()).clicked() {
+                                if let Some(index) = selected {
+                                    let removed = exc_rules.remove(index);
+                                    app.panels.target_panel.disabled_exclude_rules.remove(&removed.to_lowercase());
+                                    app.panels.target_panel.selected_exclude_rule = None;
+                                    app.panels.target_panel.editing_exclude_rule = None;
+                                    exc_changed = true;
+                                }
+                            }
+                            if scope_btn(ui, "Paste URL", true).clicked() {
+                                app.panels.target_panel.pending_scope_paste = Some(false);
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                            }
+                            if scope_btn(ui, "Load ...", true).clicked() {
+                                app.panels.target_panel.scope_load_include = Some(false);
+                                app.panels.target_panel.scope_load_error.clear();
+                            }
+                        });
+                        egui::Frame::new()
+                            .fill(theme.color("ui.background.0"))
+                            .stroke(Stroke::new(1.0, theme.color("ui.border.1")))
+                            .corner_radius(4.0)
+                            .inner_margin(0.0)
+                            .show(ui, |ui| {
+                                // This frame is inside horizontal_top: give its header and
+                                // rows their own vertical layout instead of placing rows off-screen.
+                                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                                let tbl_w = ui.available_width().max(320.0);
+                                ui.set_min_width(tbl_w);
+                                ui.set_min_height(164.0);
+                                egui::Frame::NONE
+                                    .fill(theme.color("ui.background.1"))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(tbl_w - 20.0);
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized([72.0, 18.0], egui::Label::new(RichText::new("Enabled").strong().size(11.5)));
+                                            ui.label(RichText::new("Prefix").strong().size(11.5));
+                                        });
+                                    });
+                                ui.painter().hline(
+                                    ui.min_rect().x_range(),
+                                    ui.cursor().top(),
+                                    Stroke::new(1.0, theme.color("ui.border.1")),
+                                );
+                                egui::Frame::NONE
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        if exc_rules.is_empty() {
+                                            muted(ui, &theme, "No exclude rules — type a URL prefix below and click Add, or click Paste URL.");
+                                        } else {
+                                            egui::Grid::new("target-scope-exclude-table")
+                                                .num_columns(2)
+                                                .min_col_width(72.0)
+                                                .striped(true)
+                                                .show(ui, |ui| {
+                                                    for (index, rule) in exc_rules.iter().enumerate() {
+                                                        let key = rule.to_lowercase();
+                                                        let mut enabled = !app.panels.target_panel.disabled_exclude_rules.contains(&key);
+                                                        if ui.checkbox(&mut enabled, "").changed() {
+                                                            if enabled {
+                                                                app.panels.target_panel.disabled_exclude_rules.remove(&key);
+                                                            } else {
+                                                                app.panels.target_panel.disabled_exclude_rules.insert(key);
+                                                            }
+                                                        }
+                                                        if ui
+                                                            .selectable_label(
+                                                                app.panels.target_panel.selected_exclude_rule == Some(index),
+                                                                rule,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            app.panels.target_panel.selected_exclude_rule = Some(index);
+                                                        }
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        }
+                                    });
+                                });
                             });
                     });
-            });
-            if exc_changed {
-                app.panels.target_panel.scope_exclude = exc_rules.join(", ");
-            }
-            ui.horizontal(|ui| {
-                ui.label("Exclude prefix:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.panels.target_panel.new_exclude_prefix)
-                        .hint_text("https://example.com/logout")
-                        .desired_width(240.0),
-                );
-                ui.label("Raw Exclude rules:");
-                ui.text_edit_singleline(&mut app.panels.target_panel.scope_exclude);
-            });
+                    if exc_changed {
+                        app.panels.target_panel.scope_exclude = exc_rules.join(", ");
+                    }
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(btn_w + 10.0);
+                        ui.label("Exclude prefix:");
+                        let resp_ex = ui.add(
+                            egui::TextEdit::singleline(&mut app.panels.target_panel.new_exclude_prefix)
+                                .hint_text("https://example.com/logout")
+                                .desired_width(280.0),
+                        );
+                        if resp_ex.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            && !app.panels.target_panel.new_exclude_prefix.trim().is_empty()
+                        {
+                            let prefix = app.panels.target_panel.new_exclude_prefix.trim().to_string();
+                            if !exc_rules.contains(&prefix) {
+                                exc_rules.push(prefix);
+                                app.panels.target_panel.scope_exclude = exc_rules.join(", ");
+                            }
+                            app.panels.target_panel.new_exclude_prefix.clear();
+                        }
+                        ui.add_space(12.0);
+                        ui.label("Raw Exclude rules:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.panels.target_panel.scope_exclude)
+                                .desired_width((ui.available_width() - 4.0).max(160.0)),
+                        );
+                    });
+                });
         });
 }
 
