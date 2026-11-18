@@ -3,6 +3,7 @@
 pub mod collaborator;
 mod comparer;
 pub(crate) mod dashboard;
+pub(crate) mod dashboard_icons;
 pub(crate) mod decoder;
 mod extender;
 pub mod discover;
@@ -206,7 +207,9 @@ pub fn empty_state(
     let mut acted = false;
     ui.add_space((ui.available_height() * 0.22).clamp(48.0, 160.0));
     ui.vertical_centered(|ui| {
-        empty_illustration(ui, theme.color("palette.secondary.core"));
+        if title != "Logger is empty" || !dashboard_icons::paint(ui, theme.dark, "logger", 100.0) {
+            empty_illustration(ui, theme.color("palette.secondary.core"));
+        }
         ui.add_space(18.0);
         crate::ui::app::bold_text(ui, title, 20.0, theme.color("ui.text.header"));
         ui.add_space(12.0);

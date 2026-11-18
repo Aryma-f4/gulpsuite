@@ -1439,3 +1439,43 @@ fn target_issue_definitions_arrow_keys_follow_sort_and_scroll() {
         assert_eq!(h.state().panels.target_panel.selected_kb_def, expected[47], "other focused controls keep their arrows");
     }
 }
+
+#[test]
+fn dashboard_reference_tabs_keep_task_scope_and_empty_layouts() {
+
+    for dark in [false, true] {
+        let mut h = harness(dark, 1440.0);
+        let task = h.state_mut().workspace.tasks.create(TaskKind::Other, "Dashboard fixture", "", 10);
+        h.state_mut().workspace.tasks.select(task).unwrap();
+        for (view, label, image) in [
+            (2, "No issues to show", "dashboard-task-issues"),
+            (3, "No event log items to show", "dashboard-task-events"),
+        ] {
+            h.state_mut().view = view;
+            h.run();
+            assert!(h.query_by_label(label).is_some(), "missing task tab widget: {label}");
+            assert!(h.query_by_label("Task event").is_none(), "other task event leaked");
+            let _ = image;
+        }
+        for (level, label) in [(EventLevel::Info, "Own event"), (EventLevel::Debug, "Hidden debug")] {
+            h.state_mut().workspace.events.push(11, level, "Fixture", label, Some(task));
+        }
+        h.state_mut().view = 3;
+        h.run();
+        assert!(h.query_by_label("Own event").is_some());
+        assert!(h.query_by_label("Hidden debug").is_none());
+        h.get_by_label("Debug").click();
+        h.run();
+        assert!(h.query_by_label("Hidden debug").is_some());
+
+        let url = "https://example.invalid/logged?q=1";
+        h.state_mut().workspace.issues.upsert(IssueRecord::new(task, "Own finding", IssueSeverity::Low,
+            "Certain", url, None, "Own evidence", 12));
+        h.state_mut().view = 2;
+        h.run();
+        h.get_by_label("Own finding").click();
+        h.run();
+        assert!(h.query_by_label("Own evidence").is_some());
+        assert!(h.query_by_label("SQL injection").is_none());
+    }
+}

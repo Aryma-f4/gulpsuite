@@ -19,6 +19,34 @@ pub struct DashboardState {
     pub rename_task: Option<TaskId>,
     pub rename_text: String,
     pub show_configuration: bool,
+    task_views: TaskViews,
+}
+
+#[derive(Clone, Debug)]
+struct TaskViews {
+    task: Option<TaskId>,
+    issues_search: String,
+    events_search: String,
+    issue_levels: [bool; 4],
+    event_levels: [bool; 4],
+    issues_newest: bool,
+    issue: Option<crate::workspace::IssueId>,
+    event: Option<crate::workspace::EventId>,
+}
+
+impl Default for TaskViews {
+    fn default() -> Self {
+        Self {
+            task: None,
+            issues_search: String::new(),
+            events_search: String::new(),
+            issue_levels: [true; 4],
+            event_levels: [true, true, true, false],
+            issues_newest: true,
+            issue: None,
+            event: None,
+        }
+    }
 }
 
 impl DashboardState {
@@ -553,6 +581,9 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
         );
         return;
     };
+    if app.dashboard.task_views.task != Some(task.id) {
+        app.dashboard.task_views = TaskViews { task: Some(task.id), ..Default::default() };
+    }
     let theme = app.theme.clone();
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
@@ -607,7 +638,7 @@ fn detail_pane(app: &mut App, ui: &mut Ui, commands: &mut Vec<DashboardCommand>)
         match app.view {
             0 => summary(app, ui, &task),
             1 => audit_items(app, ui, &task),
-            2 => super::target::draw_issues_view(app, ui),
+            2 => draw_task_issues(app, ui, &task),
             3 => event_log(app, ui, &task),
             4 => logger(app, ui, &task),
             _ => audit_log(app, ui, &task),
@@ -896,7 +927,9 @@ fn issue_table(app: &mut App, ui: &mut Ui, task_id: TaskId) {
             if issues.is_empty() {
                 ui.add_space((ui.available_height() * 0.35).max(80.0));
                 ui.vertical_centered(|ui| {
-                    empty_illustration(ui, theme.color("palette.secondary.core"));
+                    if !super::dashboard_icons::paint(ui, theme.dark, "no-search-results", 106.0) {
+                        empty_illustration(ui, theme.color("palette.secondary.core"));
+                    }
                     ui.add_space(24.0);
                     ui.label(egui::RichText::new("No issues to show").strong().size(20.0));
                     ui.add_space(20.0);
@@ -1187,31 +1220,263 @@ fn issue_table_readonly(app: &App, ui: &mut Ui, task_id: TaskId) {
     });
 }
 
-fn event_log(app: &App, ui: &mut Ui, task: &Task) {
-    heading(ui, &app.theme, "Event log");
-    let mut events: Vec<_> = app
-        .workspace
-        .events
-        .iter()
-        .filter(|event| event.task_id == Some(task.id))
-        .collect();
-    if events.is_empty() {
-        events = app.workspace.events.iter().collect();
+fn dashboard_icon(ui: &mut Ui, theme: &crate::ui::theme::Theme, glyph: Glyph, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    crate::ui::icons::paint(ui.painter(), rect, theme.color("ui.icon.default"), glyph);
+}
+
+fn audit_cell(
+    ui: &Ui, cell: egui::Rect, id: impl std::hash::Hash, text: &str, fg: Color32, clickable: bool,
+) -> egui::Response {
+    let sense = if clickable { Sense::click() } else { Sense::hover() };
+    let response = ui.interact(cell, ui.id().with(id), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(
+        if clickable { egui::WidgetType::Button } else { egui::WidgetType::Label },
+        true, text,
+    ));
+    if ui.is_rect_visible(cell) {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), FontId::proportional(11.5), fg);
+        job.wrap.max_width = (cell.width() - 10.0).max(1.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        let galley = ui.fonts_mut(|font| font.layout_job(job));
+        ui.painter_at(cell).galley(
+            cell.left_center() + egui::vec2(5.0, -galley.size().y * 0.5), galley, fg,
+        );
     }
-    if events.is_empty() {
-        muted(ui, &app.theme, "No events recorded for this task.");
-        return;
-    }
-    let avail_h = (ui.available_height() - 16.0).max(160.0);
-    egui::ScrollArea::vertical()
-        .id_salt(("dashboard-event-log-tab-scroll", task.id.0))
-        .max_height(avail_h)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for event in events.into_iter().rev() {
-                ui.label(format!("{}  {}", event.source, event.message));
+    response.on_hover_text(text)
+}
+
+fn task_search(ui: &mut Ui, theme: &crate::ui::theme::Theme, value: &mut String, width: f32) {
+    let field = ui.add(egui::TextEdit::singleline(value).hint_text("Search").desired_width(width)
+        .margin(egui::Margin { left: 7, right: 22, top: 2, bottom: 2 }));
+    crate::ui::icons::paint(ui.painter(),
+        egui::Rect::from_center_size(field.rect.right_center() - egui::vec2(11.0, 0.0), Vec2::splat(12.0)),
+        theme.color("ui.icon.default"), Glyph::Search);
+}
+
+fn task_search_tools(ui: &mut Ui, theme: &crate::ui::theme::Theme, value: &mut String) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.menu_button("⋮", |ui| {
+            if ui.button("Clear search").clicked() { value.clear(); ui.close(); }
+        }).response.on_hover_text("Table options");
+        task_search(ui, theme, value, 124.0);
+    });
+}
+
+fn task_table(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    id: &'static str,
+    columns: &[(&str, f32)],
+    count: usize,
+    height: f32,
+    selected: Option<usize>,
+    sort_first: Option<bool>,
+    mut row_text: impl FnMut(usize) -> Vec<String>,
+    empty: Option<(&str, &str)>,
+) -> (Option<usize>, bool) {
+    let visible_width = ui.available_width();
+    let base_width = columns.iter().map(|(_, width)| *width).sum::<f32>();
+    let width = visible_width.max(base_width);
+    let fg = theme.color("ui.text.body");
+    let stroke = egui::Stroke::new(1.0, theme.color("ui.border.1"));
+    let mut clicked = None;
+    let mut flip = false;
+    egui::Frame::new().fill(theme.color("ui.background.1")).stroke(stroke).show(ui, |ui| {
+        egui::ScrollArea::horizontal().id_salt((id, "width")).auto_shrink([false, false])
+            .max_height(height).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let (head, _) = ui.allocate_exact_size(Vec2::new(width, 25.0), Sense::hover());
+            ui.painter().rect_filled(head, 0.0, theme.color("ui.background.3"));
+            let cell_rect = |row: egui::Rect, x: f32, size: f32|
+                egui::Rect::from_min_size(egui::pos2(x, row.top()), Vec2::new(size, row.height()));
+            let scale = width / base_width;
+            let mut x = head.left();
+            for (col, (label, basis)) in columns.iter().enumerate() {
+                let size = basis * scale;
+                let cell = cell_rect(head, x, size);
+                let sortable = col == 0 && sort_first.is_some();
+                if audit_cell(ui, cell, (id, "head", col), label, fg, sortable).clicked() && sortable {
+                    flip = true;
+                }
+                if let Some(desc) = sort_first.filter(|_| col == 0) {
+                    ui.painter().text(cell.right_center() - egui::vec2(7.0, 0.0),
+                        egui::Align2::RIGHT_CENTER, if desc { "⌄" } else { "⌃" },
+                        FontId::proportional(11.5), fg);
+                }
+                ui.painter().vline(cell.right(), head.y_range(), stroke);
+                x += size;
+            }
+            ui.painter().hline(head.x_range(), head.bottom(), stroke);
+            let body_h = (height - 25.0).max(40.0);
+            if let Some((title, desc)) = empty.filter(|_| count == 0) {
+                ui.allocate_ui_with_layout(Vec2::new(visible_width, body_h),
+                    egui::Layout::top_down(egui::Align::Center), |ui| {
+                        ui.set_min_size(Vec2::new(visible_width, body_h));
+                        task_empty(ui, theme, title, desc);
+                    });
+            } else {
+                egui::ScrollArea::vertical().id_salt((id, "rows"))
+                    .max_height(body_h).auto_shrink([false, false])
+                    .show_rows(ui, 20.0, count, |ui, rows| {
+                        ui.set_min_width(width);
+                        for r in rows {
+                            let (row, _) = ui.allocate_exact_size(Vec2::new(width, 20.0), Sense::hover());
+                            if selected == Some(r) || r % 2 != 0 {
+                                ui.painter().rect_filled(row, 0.0, theme.color(
+                                    if selected == Some(r) { "ui.background.6" } else { "ui.background.2" }));
+                            }
+                            let mut x = row.left();
+                            for (col, (text, (_, basis))) in row_text(r).into_iter().zip(columns).enumerate() {
+                                let size = basis * scale;
+                                if audit_cell(ui, cell_rect(row, x, size), (id, r, col), &text, fg, true).clicked() {
+                                    clicked = Some(r);
+                                }
+                                x += size;
+                            }
+                        }
+                    });
             }
         });
+    });
+    (clicked, flip)
+}
+
+fn task_empty(ui: &mut Ui, theme: &crate::ui::theme::Theme, title: &str, desc: &str) {
+    use egui::Stroke;
+    let pad = (ui.available_height() * 0.29).min(ui.available_height() - 142.0).max(0.0);
+    ui.add_space(pad);
+    ui.vertical_centered(|ui| {
+        if !super::dashboard_icons::paint(ui, theme.dark, "no-search-results", 106.0) {
+            let (r, _) = ui.allocate_exact_size(Vec2::new(103.0, 73.0), Sense::hover());
+            let p = ui.painter_at(r);
+            let at = |x, y| r.min + egui::vec2(x, y);
+            let blue = theme.color("palette.secondary.core");
+            let paper = theme.color("palette.secondary.5");
+            p.rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(100.0, 66.0)), 6.0, paper);
+            p.rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(100.0, 10.0)), 4.0, blue);
+            for (n, color) in [Color32::from_rgb(247, 72, 85), Color32::from_rgb(255, 132, 48),
+                Color32::from_rgb(165, 199, 88)].into_iter().enumerate() {
+                p.circle_filled(at(6.0 + n as f32 * 7.0, 5.0), 2.2, color);
+            }
+            p.circle_stroke(at(42.0, 39.0), 21.0, Stroke::new(4.5, blue));
+            p.line_segment([at(57.0, 54.0), at(83.0, 68.0)], Stroke::new(8.0, blue));
+            p.line_segment([at(36.0, 33.0), at(48.0, 45.0)], Stroke::new(4.0, blue));
+            p.line_segment([at(48.0, 33.0), at(36.0, 45.0)], Stroke::new(4.0, blue));
+        }
+        ui.add_space(24.0);
+        crate::ui::app::bold_text(ui, title, 16.0, theme.color("ui.text.header"));
+        ui.add_space(16.0);
+        ui.allocate_ui_with_layout(Vec2::new(ui.available_width().min(306.0), 0.0),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| { ui.label(egui::RichText::new(desc).size(12.0).color(theme.color("ui.text.body"))); });
+    });
+}
+
+fn task_clock(millis: u64) -> String {
+    let seconds = millis / 1_000 % 86_400;
+    format!("{:02}:{:02}:{:02} UTC", seconds / 3600, seconds / 60 % 60, seconds % 60)
+}
+
+fn draw_task_issues(app: &mut App, ui: &mut Ui, task: &Task) {
+    let state = &mut app.dashboard.task_views;
+    let theme = &app.theme;
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 14)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            dashboard_icon(ui, theme, Glyph::Funnel, 15.0);
+            ui.menu_button("Filter", |ui| {
+                for (name, enabled) in ["High", "Medium", "Low", "Info"].into_iter().zip(&mut state.issue_levels) {
+                    ui.checkbox(enabled, name);
+                }
+            });
+            task_search_tools(ui, theme, &mut state.issues_search);
+        });
+        ui.add_space(15.0);
+        let search = state.issues_search.trim().to_lowercase();
+        let mut rows: Vec<_> = app.workspace.issues.iter().filter(|issue| {
+            let level = match issue.severity { IssueSeverity::High => 0, IssueSeverity::Medium => 1,
+                IssueSeverity::Low => 2, IssueSeverity::Info => 3 };
+            issue.task_id == task.id && state.issue_levels[level] &&
+                (search.is_empty() || issue.name.to_lowercase().contains(&search) || issue.url.to_lowercase().contains(&search))
+        }).collect();
+        rows.sort_unstable_by_key(|issue| (issue.observed_unix_ms, issue.id.0));
+        if state.issues_newest { rows.reverse(); }
+        let selected = rows.iter().position(|issue| Some(issue.id) == state.issue);
+        let available = ui.available_height();
+        let height = if selected.is_some() { available * 0.55 } else { available - 4.0 };
+        let (picked, flip) = task_table(ui, theme, "task-issues",
+            &[("Time", 112.0), ("Source", 68.0), ("Issue type", 220.0), ("Host", 110.0),
+                ("Path", 180.0), ("Insertion point", 120.0)],
+            rows.len(), height.max(100.0), selected, Some(state.issues_newest),
+            |i| {
+                let issue = rows[i];
+                let parsed = url::Url::parse(&issue.url).ok();
+                let host = parsed.as_ref().and_then(|u| u.host_str()).unwrap_or("—");
+                let path = parsed.as_ref().map_or(issue.url.as_str(), |u| u.path());
+                vec![task_clock(issue.observed_unix_ms), kind_name(task.kind).into(),
+                    issue.name.clone(), host.into(), path.into(),
+                    issue.parameter.as_deref().unwrap_or("—").into()]
+            },
+            Some(("No issues to show", "Findings recorded for the selected task appear here.")));
+        if flip { state.issues_newest = !state.issues_newest; }
+        if let Some(pos) = picked { state.issue = Some(rows[pos].id); }
+        if let Some(issue) = rows.iter().find(|issue| Some(issue.id) == state.issue) {
+            ui.add_space(5.0);
+            egui::ScrollArea::vertical().id_salt("task-issue-evidence").show(ui, |ui| {
+                heading(ui, theme, &issue.name);
+                ui.label(&issue.evidence);
+            });
+        }
+    });
+}
+
+fn event_log(app: &mut App, ui: &mut Ui, task: &Task) {
+    use crate::workspace::EventLevel;
+    let state = &mut app.dashboard.task_views;
+    let theme = &app.theme;
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 14)).show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            dashboard_icon(ui, theme, Glyph::Funnel, 15.0);
+            ui.label("Filter");
+            for (title, enabled) in ["Critical", "Error", "Info", "Debug"].into_iter().zip(&mut state.event_levels) {
+                let pill = ui.add(egui::Button::new(title).selected(*enabled).corner_radius(10.0));
+                if pill.on_hover_text(if title == "Error" { "Show warning and error events" } else { title }).clicked() {
+                    *enabled = !*enabled;
+                }
+            }
+            task_search_tools(ui, theme, &mut state.events_search);
+        });
+        ui.add_space(15.0);
+        let level = |level| match level {
+            EventLevel::Critical => (0, "Critical"),
+            EventLevel::Error => (1, "Error"),
+            EventLevel::Warning => (1, "Warning"),
+            EventLevel::Info => (2, "Info"),
+            EventLevel::Debug => (3, "Debug"),
+        };
+        let search = state.events_search.trim().to_lowercase();
+        let rows: Vec<_> = app.workspace.events.iter().filter(|event| {
+            event.task_id == Some(task.id) && state.event_levels[level(event.level).0] &&
+                (search.is_empty() || event.message.to_lowercase().contains(&search) || event.source.to_lowercase().contains(&search))
+        }).collect();
+        if rows.is_empty() {
+            task_empty(ui, theme, "No event log items to show", "The event log shows key task events, such as start times, alerts, and progress updates.");
+            return;
+        }
+        let selected = rows.iter().position(|event| Some(event.id) == state.event);
+        let height = ui.available_height() * if selected.is_some() { 0.65 } else { 0.97 };
+        let (picked, _) = task_table(ui, theme, "task-events",
+            &[("Time", 105.0), ("Level", 80.0), ("Source", 115.0), ("Message", 340.0)],
+            rows.len(), height.max(100.0), selected, None,
+            |i| { let event = rows[i]; vec![task_clock(event.timestamp_unix_ms),
+                level(event.level).1.into(), event.source.clone(), event.message.clone()] }, None);
+        if let Some(i) = picked { state.event = Some(rows[i].id); }
+        if let Some(event) = rows.iter().find(|event| Some(event.id) == state.event) {
+            ui.add_space(5.0);
+            egui::ScrollArea::vertical().id_salt("task-event-message").show(ui, |ui| { ui.label(&event.message); });
+        }
+    });
 }
 
 fn logger(app: &mut App, ui: &mut Ui, task: &Task) {

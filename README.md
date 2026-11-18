@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="Gulpsuite Logo" width="120" height="120" />
 
-# Gulpsuite (`v0.2.0`)
+# Gulpsuite (`v0.2.1`)
 
 > ***"Gulp it before burp"***
 
@@ -19,7 +19,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
-[**Download v0.2.0 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.0) · [**What's New in v0.2.0**](#-whats-new-in-v020) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
+[**Download v0.2.1 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.1) · [**What's New in v0.2.1**](#-whats-new-in-v021) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
 
 </div>
 
@@ -35,7 +35,12 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## ✨ What's New in `v0.2.0`
+## ✨ What's New in `v0.2.1`
+
+- The Dashboard **Issues** and **Event log** tabs now show task-scoped records with search, filtering, and illustrated empty states.
+- Dashboard and Logger artwork can use optional local PNG files. See the [local icon setup guide](docs/dashboard-icons.md).
+
+### Previous release — `v0.2.0`
 
 - **Target → Issues** opens the offline catalog of 183 bundled definitions. Sort by name, typical severity, or type index and read remediation and references alongside the list.
 - **Keyboard navigation**: Focus a row and press **↑** or **↓**. Selection follows the current sort order, scrolls into view, and updates the details pane.
@@ -96,29 +101,29 @@ See the [v0.1.1 release notes](https://github.com/Aryma-f4/gulpsuite/releases/ta
 
 ---
 
-## Cross-Platform Installers (`v0.2.0`)
+## Cross-Platform Installers (`v0.2.1`)
 
-Check available native installers at [**GitHub Releases (`v0.2.0`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.0):
+Check available native installers at [**GitHub Releases (`v0.2.1`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.1):
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.2.0-macos-arm64.dmg` / `Gulpsuite-0.2.0-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.2.0-macos-x64.dmg` / `Gulpsuite-0.2.0-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.2.0-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
-| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.2.0-x86_64.AppImage` / `gulpsuite-0.2.0-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
-| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.2.0-linux-x64-setup.run` / `gulpsuite_0.2.0_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.2.1-macos-arm64.dmg` / `Gulpsuite-0.2.1-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.2.1-macos-x64.dmg` / `Gulpsuite-0.2.1-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.2.1-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
+| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.2.1-x86_64.AppImage` / `gulpsuite-0.2.1-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
+| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.2.1-linux-x64-setup.run` / `gulpsuite_0.2.1_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ### Quick Start on CachyOS / Arch Linux (`AppImage` or `pacman`)
 ```bash
 # Option 1: Run Portable AppImage directly (FUSE-free — works out of the box on CachyOS)
-chmod +x Gulpsuite-0.2.0-x86_64.AppImage
-./Gulpsuite-0.2.0-x86_64.AppImage
+chmod +x Gulpsuite-0.2.1-x86_64.AppImage
+./Gulpsuite-0.2.1-x86_64.AppImage
 
 # Optional: Integrate AppImage into CachyOS desktop launcher & ~/.local/bin/gulpsuite
-./Gulpsuite-0.2.0-x86_64.AppImage --install
+./Gulpsuite-0.2.1-x86_64.AppImage --install
 
 # Option 2: Install native CachyOS / Arch Linux pacman package
-sudo pacman -U gulpsuite-0.2.0-1-x86_64.pkg.tar.gz
+sudo pacman -U gulpsuite-0.2.1-1-x86_64.pkg.tar.gz
 ```
 
 ---
