@@ -82,8 +82,10 @@ pub struct TargetPanel {
     pub resp_non_printable: bool,
     pub issue_detail_tab: usize,
     pub selected_kb_def: usize,
-    pub kb_search: String,
-    pub kb_severity_filter: usize,
+    pub show_project_findings: bool,
+    kb_sort: DefinitionSort,
+    kb_ascending: bool,
+    kb_split_ratio: f32,
     pub issue_sev_filter: [bool; 4],
     pub issue_conf_filter: [bool; 3],
     /// Tracks collapsed host, folder, and query-parent node keys in `Target -> Site map`.
@@ -133,8 +135,10 @@ impl Default for TargetPanel {
             resp_non_printable: false,
             issue_detail_tab: 0,
             selected_kb_def: 0,
-            kb_search: String::new(),
-            kb_severity_filter: 0,
+            show_project_findings: false,
+            kb_sort: DefinitionSort::TypeIndex,
+            kb_ascending: true,
+            kb_split_ratio: 0.36,
             issue_sev_filter: [true, true, true, true],
             issue_conf_filter: [true, true, true],
             collapsed_nodes: std::collections::HashSet::new(),
@@ -186,7 +190,16 @@ impl TargetPanel {
 pub fn draw(app: &mut App, ui: &mut Ui) {
     match app.view {
         0 => draw_site_map(app, ui),
-        2 => draw_issues_view(app, ui),
+        2 if app.panels.target_panel.show_project_findings => {
+            ui.horizontal(|ui| {
+                if ui.button("Issue definitions").clicked() {
+                    app.panels.target_panel.show_project_findings = false;
+                }
+                heading(ui, &app.theme, "Project findings");
+            });
+            draw_issues_view(app, ui);
+        }
+        2 => draw_issue_definitions(app, ui),
         _ => draw_scope_view(app, ui),
     }
 }
@@ -711,9 +724,269 @@ fn draw_scope_view(app: &mut App, ui: &mut Ui) {
         });
 }
 
-/// Renders `Target -> Issues` & `Issue definitions` (and the `Issues` sub-tab inside `Site map`),
-/// including the complete 183-entry Knowledge Base (`crate::issue_definitions::all()`) and
-/// the discovered `Issues` table & `Advisory | Request | Response` viewer (`Pro-QSG-6-view-issues.png`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefinitionSort {
+    Name,
+    Severity,
+    TypeIndex,
+}
+
+fn definition_row_cells(row: egui::Rect) -> [egui::Rect; 3] {
+    let width = row.width();
+    let index_width = (width * 0.22).max(74.0).min(width * 0.32);
+    let severity_width = (width * 0.21).max(92.0).min(width * 0.34);
+    let severity_x = row.right() - index_width - severity_width;
+    let index_x = row.right() - index_width;
+    [row.x_range().min..=severity_x, severity_x..=index_x, index_x..=row.right()]
+        .map(|x| egui::Rect::from_x_y_ranges(x, row.y_range()))
+}
+
+fn issue_definition_cell(
+    ui: &Ui,
+    rect: egui::Rect,
+    id: impl std::hash::Hash,
+    text: &str,
+    fg: Color32,
+) -> egui::Response {
+    let r = ui.interact(rect, ui.id().with(id), egui::Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
+    if ui.is_rect_visible(rect) {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            text.to_owned(), egui::FontId::proportional(11.5), fg,
+        );
+        job.wrap.max_width = rect.width();
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        let origin = rect.left_center() - egui::vec2(0.0, galley.size().y * 0.5);
+        ui.painter_at(rect).galley(origin, galley, fg);
+    }
+    r
+}
+
+fn draw_issue_definitions(app: &mut App, ui: &mut Ui) {
+    use crate::issue_definitions::IssueDefinition;
+    use egui::{Align, Layout, Sense, StrokeKind};
+
+    const INDEX_URL: &str =
+        "https://portswigger.net/burp/documentation/scanner/vulnerabilities-list";
+    let theme = app.theme.clone();
+    let fg = theme.color("ui.text.body");
+    let header_fg = theme.color("ui.text.header");
+    let border = theme.color("ui.border.1");
+    let stroke = Stroke::new(1.0, border);
+    let panel = &mut app.panels.target_panel;
+    let definitions = crate::issue_definitions::all();
+    // Sort stable indices, never clone descriptions or change the selected definition on sort.
+    let mut order: Vec<_> = (0..definitions.len()).collect();
+    let severity_rank = |definition: &IssueDefinition| match definition.severity.as_str() {
+        "High" => 0,
+        "Medium" => 1,
+        "Low" => 2,
+        _ => 3,
+    };
+    order.sort_unstable_by(|&left, &right| {
+        let (a, b) = (&definitions[left], &definitions[right]);
+        let order = match panel.kb_sort {
+            DefinitionSort::Name => a.name.cmp(&b.name),
+            DefinitionSort::Severity => severity_rank(a).cmp(&severity_rank(b)),
+            DefinitionSort::TypeIndex => a.type_index.cmp(&b.type_index),
+        }
+        .then_with(|| a.type_index.cmp(&b.type_index));
+        let order = if panel.kb_ascending { order } else { order.reverse() };
+        // Some catalog entries share a type index; keep their source order as the tiebreaker.
+        order.then_with(|| left.cmp(&right))
+    });
+
+    egui::Frame::new().inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            crate::ui::app::bold_text(ui, "Issue definitions", 14.0, header_fg);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let browser = ui
+                    .add_sized([142.0, 24.0], egui::Button::new("Open in browser"))
+                    .on_hover_text("Open PortSwigger’s public vulnerability reference");
+                crate::ui::icons::paint(
+                    ui.painter(),
+                    egui::Rect::from_center_size(browser.rect.left_center() + egui::vec2(16.0, 0.0),
+                        egui::Vec2::splat(14.0)),
+                    ui.style().interact(&browser).fg_stroke.color,
+                    crate::ui::icons::Glyph::Globe,
+                );
+                if browser.clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(INDEX_URL));
+                }
+                if ui.button("Project findings").clicked() {
+                    panel.show_project_findings = true;
+                }
+            });
+        });
+        ui.add_space(5.0);
+        ui.label(RichText::new("This catalog contains the issue definitions bundled with Gulpsuite.").size(12.0).color(fg));
+        ui.add_space(12.0);
+
+        let height = ui.available_height();
+        let mut ratio = panel.kb_split_ratio;
+        super::vertical_split(ui, &theme, "issue-definitions", &mut ratio, height, |side, ui| {
+            let pane = ui.max_rect();
+            ui.painter().rect_stroke(pane, 0.0, stroke, StrokeKind::Inside);
+            if side == 0 {
+                let (row, _) = ui.allocate_exact_size(egui::vec2(pane.width(), 26.0), Sense::hover());
+                ui.painter().rect_filled(row.shrink(1.0), 0.0, theme.color("ui.background.3"));
+                for ((column, title), rect) in [
+                    (DefinitionSort::Name, "Name"),
+                    (DefinitionSort::Severity, "Typical severity"),
+                    (DefinitionSort::TypeIndex, "Type index"),
+                ]
+                .into_iter()
+                .zip(definition_row_cells(row))
+                {
+                    let active = panel.kb_sort == column;
+                    let area = rect.shrink2(egui::vec2(5.0, 1.0));
+                    let label_rect = if active {
+                        egui::Rect::from_min_max(area.min, area.max - egui::vec2(12.0, 0.0))
+                    } else {
+                        area
+                    };
+                    let button = issue_definition_cell(ui, label_rect, ("header", title), title, fg);
+                    if button.clicked() {
+                        panel.kb_ascending = !active || !panel.kb_ascending;
+                        panel.kb_sort = column;
+                    }
+                    if active {
+                        let x = area.right() - 5.0;
+                        let y = row.center().y;
+                        let dy = if panel.kb_ascending { -2.0 } else { 2.0 };
+                        ui.painter().add(egui::Shape::line(
+                            vec![egui::pos2(x - 3.5, y - dy), egui::pos2(x, y + dy), egui::pos2(x + 3.5, y - dy)],
+                            Stroke::new(1.0, fg),
+                        ));
+                    }
+                    ui.painter().vline(rect.right(), row.y_range(), stroke);
+                }
+                ui.painter().hline(row.x_range(), row.bottom(), stroke);
+                const ROW_HEIGHT: f32 = 16.0;
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let focus_id = ui.make_persistent_id("issue-definition-keyboard");
+                let table_bounds = egui::Rect::from_min_max(
+                    egui::pos2(pane.left(), row.bottom()), pane.max,
+                );
+                let table = ui.interact(table_bounds, focus_id, Sense::focusable_noninteractive());
+                table.widget_info(|| egui::WidgetInfo::labeled(
+                    egui::WidgetType::Other, true, "Issue definition rows (↑/↓)",
+                ));
+
+                let scroll_salt = ("issue-definition-list", panel.kb_sort as u8, panel.kb_ascending);
+                let viewport_height = ui.available_height();
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt(scroll_salt)
+                    .max_height(viewport_height)
+                    .auto_shrink([false, false]);
+                if table.has_focus() {
+                    ui.painter().rect_stroke(
+                        row.shrink(1.0), 0.0,
+                        Stroke::new(1.0, theme.color("ui.icon.link")), StrokeKind::Inside,
+                    );
+                    ui.memory_mut(|m| m.set_focus_lock_filter(focus_id, egui::EventFilter {
+                        vertical_arrows: true,
+                        ..Default::default()
+                    }));
+                    if !order.is_empty() && !egui::Popup::is_any_open(ui.ctx()) {
+                        let mut pos = order.iter().position(|&i| i == panel.selected_kb_def).unwrap_or(0);
+                        let mut handled = false;
+                        ui.input_mut(|input| input.events.retain(|event| {
+                            let egui::Event::Key { key, pressed: true, modifiers, .. } = event else {
+                                return true;
+                            };
+                            if !modifiers.is_none() {
+                                return true;
+                            }
+                            pos = match key {
+                                egui::Key::ArrowUp => pos.saturating_sub(1),
+                                egui::Key::ArrowDown => (pos + 1).min(order.len() - 1),
+                                _ => return true,
+                            };
+                            handled = true;
+                            false
+                        }));
+                        if handled {
+                            panel.selected_kb_def = order[pos];
+                            let id = ui.make_persistent_id(egui::Id::new(scroll_salt));
+                            let offset = egui::scroll_area::State::load(ui.ctx(), id)
+                                .map_or(0.0, |state| state.offset.y);
+                            let top = pos as f32 * ROW_HEIGHT;
+                            let minimum = (top + ROW_HEIGHT - viewport_height.max(ROW_HEIGHT)).max(0.0);
+                            scroll = scroll.vertical_scroll_offset(offset.clamp(minimum, top));
+                        }
+                    }
+                }
+                scroll.show_rows(ui, ROW_HEIGHT, order.len(), |ui, rows| {
+                        for pos in rows {
+                            let index = order[pos];
+                            let def = &definitions[index];
+                            let selected = panel.selected_kb_def == index;
+                            let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::hover());
+                            let bg = if selected { "ui.background.6" } else if pos % 2 == 0 {
+                                "ui.background.1"
+                            } else { "ui.background.2" };
+                            ui.painter().rect_filled(row, 0.0, theme.color(bg));
+                            if selected {
+                                ui.painter().rect_stroke(row, 0.0,
+                                    Stroke::new(1.0, theme.color("palette.secondary.core")), StrokeKind::Inside);
+                            }
+                            for (column, (text, rect)) in [def.name.as_str(), &def.severity, &def.type_hex]
+                                .into_iter().zip(definition_row_cells(row)).enumerate()
+                            {
+                                let cell = issue_definition_cell(
+                                    ui, rect.shrink2(egui::vec2(5.0, 0.0)),
+                                    ("definition", index, column), text, fg,
+                                );
+                                if cell.on_hover_text(text).clicked() {
+                                    panel.selected_kb_def = index;
+                                    table.request_focus();
+                                }
+                            }
+                        }
+                    });
+            } else if let Some(def) = definitions.get(panel.selected_kb_def) {
+                egui::ScrollArea::vertical()
+                    .id_salt(("issue-definition-detail", def.type_index))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        egui::Frame::new().inner_margin(egui::Margin::same(15)).show(ui, |ui| {
+                            let link = theme.color("ui.text.link");
+                            crate::ui::app::bold_text(ui, &def.name, 14.0, header_fg);
+                            for (title, text) in [
+                                ("Description", def.description.as_str()),
+                                ("Remediation", def.remediation.as_str()),
+                            ] {
+                                ui.add_space(19.0);
+                                crate::ui::app::bold_text(ui, title, 13.0, fg);
+                                ui.add_space(7.0);
+                                for paragraph in text.split("\n\n").filter(|p| !p.trim().is_empty()) {
+                                    ui.label(RichText::new(paragraph).size(12.0).color(fg));
+                                    ui.add_space(7.0);
+                                }
+                            }
+                            for (title, items) in [
+                                ("References", def.references.as_slice()),
+                                ("Vulnerability classifications", def.classifications.as_slice()),
+                            ] {
+                                if !items.is_empty() {
+                                    ui.add_space(16.0);
+                                    crate::ui::app::bold_text(ui, title, 13.0, fg);
+                                    ui.add_space(7.0);
+                                    render_issue_reference_links(ui, items, fg, link, 12.0);
+                                }
+                            }
+                        });
+                    });
+            }
+        });
+        panel.kb_split_ratio = ratio;
+    });
+}
+
+/// Renders discovered issues, shared by Project findings, Dashboard and Site map.
 pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     let link_fg = if theme.dark {
@@ -721,7 +994,6 @@ pub(crate) fn draw_issues_view(app: &mut App, ui: &mut Ui) {
     } else {
         Color32::from_rgb(0x00, 0x5C, 0xC5)
     };
-    let _all_defs = crate::issue_definitions::all();
     let card_bg = if theme.dark {
         Color32::from_rgb(0x1E, 0x20, 0x24)
     } else {

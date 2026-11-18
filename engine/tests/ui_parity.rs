@@ -450,6 +450,8 @@ fn target_proxy_organizer_logger_empty_states_and_intruder_subtabs_work() {
         .is_some());
     harness.get_by_label("Issues").click();
     harness.run();
+    harness.get_by_label("Project findings").click();
+    harness.run();
     assert!(harness.query_by_label("SQL injection").is_some());
 
     // Proxy: Intercept, HTTP history, WebSockets history empty states
@@ -1343,4 +1345,97 @@ fn right_click_convert_selection_encodes_and_decodes_base64_in_place() {
     );
     let decoded_req = h.state().panels.repeater.active().raw.clone();
     assert_eq!(decoded_req, req);
+}
+
+#[test]
+fn target_issue_definitions_reference_catalog_and_local_navigation() {
+    for dark in [false, true] {
+        for width in [1437.0, 860.0] {
+            let mut h = harness(dark, width);
+            h.get_by_label("Target").click();
+            h.run();
+            h.get_by_label("Issues").click();
+            h.run();
+            assert!(h.query_by_label("Issue definitions").is_some(), "Target Issues should open the definition catalog");
+            let name = h.get_by_label("Name").rect();
+            let severity = h.get_by_label("Typical severity").rect();
+            let index = h.get_by_label("Type index").rect();
+            assert!(name.left() < severity.left() && severity.left() < index.left());
+            let detail = h.get_by_label("Description").rect();
+            assert!(detail.left() > index.right());
+            assert!(h.query_by_label("Remediation").is_some());
+            assert!(h.query_by_label("Vulnerability classifications").is_some());
+            assert!(h.query_by_label("0x00100100").is_some());
+            if width > 1000.0 {
+                h.get_by_label("Open in browser").click();
+                h.step();
+                assert!(h.output().platform_output.commands.iter().any(|command| matches!(
+                    command,
+                    eframe::egui::OutputCommand::OpenUrl(url)
+                        if url.url == "https://portswigger.net/burp/documentation/scanner/vulnerabilities-list"
+                )));
+                h.run();
+            }
+            h.get_by_label("SQL injection").click();
+            h.run();
+            assert!(h.get_all_by_label("SQL injection").count() >= 2);
+            h.get_by_label("Type index").click();
+            h.run();
+            assert!(h.query_by_label("0x00100100").is_none(), "descending type index should move low indexes offscreen");
+            h.get_by_label("Project findings").click();
+            h.run();
+            assert!(h.query_by_label("Create manual issue…").is_some());
+            h.get_by_label("Issue definitions").click();
+            h.run();
+            assert!(h.query_by_label("Description").is_some());
+        }
+    }
+}
+
+#[test]
+fn target_issue_definitions_arrow_keys_follow_sort_and_scroll() {
+    use eframe::egui::{Key, Modifiers};
+    use gulpsuite::issue_definitions::all;
+
+    for dark in [false, true] {
+        let mut h = harness(dark, 1150.0);
+        h.get_by_label("Target").click();
+        h.run();
+        h.get_by_label("Issues").click();
+        h.run();
+        h.get_all_by_label("OS command injection").next().unwrap().click();
+        h.run();
+        h.key_press(Key::ArrowUp);
+        h.run();
+        assert_eq!(h.state().panels.target_panel.selected_kb_def, 0);
+        h.key_press(Key::ArrowDown);
+        h.run();
+        assert_eq!(h.state().panels.target_panel.selected_kb_def, 1, "Down selects the next issue definition");
+        assert!(h.get_all_by_label("SQL injection").count() >= 2, "detail heading follows selection");
+
+        h.get_by_label("Type index").click();
+        h.run();
+        let mut expected: Vec<_> = (0..all().len()).collect();
+        expected.sort_unstable_by_key(|&i| (std::cmp::Reverse(all()[i].type_index), i));
+        h.get_all_by_label(&all()[expected[0]].name).next().unwrap().click();
+        h.run();
+
+        for &index in expected.iter().skip(1).take(48) {
+            h.key_press(Key::ArrowDown);
+            h.run();
+            assert_eq!(h.state().panels.target_panel.selected_kb_def, index);
+        }
+        assert!(h.query_by_label(&all()[expected[48]].type_hex).is_some(), "selected row was scrolled into view");
+        h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowUp);
+        h.run();
+        assert_eq!(h.state().panels.target_panel.selected_kb_def, expected[48]);
+        h.key_press(Key::ArrowUp);
+        h.run();
+        assert_eq!(h.state().panels.target_panel.selected_kb_def, expected[47]);
+        h.get_by_label("Open in browser").focus();
+        h.run();
+        h.key_press(Key::ArrowDown);
+        h.run();
+        assert_eq!(h.state().panels.target_panel.selected_kb_def, expected[47], "other focused controls keep their arrows");
+    }
 }

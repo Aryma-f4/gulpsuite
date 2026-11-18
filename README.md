@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" alt="Gulpsuite Logo" width="120" height="120" />
 
-# Gulpsuite (`v0.1.2`)
+# Gulpsuite (`v0.2.0`)
 
 > ***"Gulp it before burp"***
 
@@ -19,7 +19,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg?style=flat-square)](CODE_OF_CONDUCT.md)
 
-[**Download v0.1.2 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.2) · [**What's New in v0.1.2**](#-whats-new-in-v012) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
+[**Download v0.2.0 Installers**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.0) · [**What's New in v0.2.0**](#-whats-new-in-v020) · [**Screenshots**](#-visual-tour--screenshots) · [**Performance Benchmarks**](#why-gulpsuite-performance--memory-benchmarks) · [**Contributing**](CONTRIBUTING.md) · [**Security Policy**](SECURITY.md)
 
 </div>
 
@@ -35,7 +35,15 @@ Designed for bug bounty hunters, penetration testers, red teams, and AppSec engi
 
 ---
 
-## ✨ What's New in `v0.1.2`
+## ✨ What's New in `v0.2.0`
+
+- **Target → Issues** opens the offline catalog of 183 bundled definitions. Sort by name, typical severity, or type index and read remediation and references alongside the list.
+- **Keyboard navigation**: Focus a row and press **↑** or **↓**. Selection follows the current sort order, scrolls into view, and updates the details pane.
+- **Project findings** remains separate from the reference catalog. It shows findings and supporting evidence for the current project.
+
+See the [Target Issues guide](docs/target-issues.md) and [v0.2.0 release notes](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.0).
+
+### Previous release — `v0.1.2`
 
 - **Complete POST request history**: Capture form bodies across normal streaming, request interception, held responses and chunked uploads. Chromium login POST → 302 → dashboard flows are covered over HTTP and HTTPS.
 - **Visible control characters**: Repeater and Proxy Intercept show CRLF, LF, standalone CR and tab markers without changing request bytes or breaking editing.
@@ -88,29 +96,29 @@ See the [v0.1.1 release notes](https://github.com/Aryma-f4/gulpsuite/releases/ta
 
 ---
 
-## Cross-Platform Installers (`v0.1.2`)
+## Cross-Platform Installers (`v0.2.0`)
 
-Download pre-built native installers directly from [**GitHub Releases (`v0.1.2`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.1.2):
+Check available native installers at [**GitHub Releases (`v0.2.0`)**](https://github.com/Aryma-f4/gulpsuite/releases/tag/v0.2.0):
 
 | Platform | Architecture | Installer Packages | Format |
 |---|---|---|---|
-| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.1.2-macos-arm64.dmg` / `Gulpsuite-0.1.2-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.1.2-macos-x64.dmg` / `Gulpsuite-0.1.2-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
-| **Windows** | `x86_64` | `Gulpsuite-0.1.2-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
-| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.1.2-x86_64.AppImage` / `gulpsuite-0.1.2-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
-| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.1.2-linux-x64-setup.run` / `gulpsuite_0.1.2_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
+| **macOS (Apple Silicon)** | `arm64` | `Gulpsuite-0.2.0-macos-arm64.dmg` / `Gulpsuite-0.2.0-macos-arm64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **macOS (Intel)** | `x86_64` | `Gulpsuite-0.2.0-macos-x64.dmg` / `Gulpsuite-0.2.0-macos-x64-setup.pkg` | macOS Disk Image (`.dmg`) & Native GUI Setup Package (`.pkg`) |
+| **Windows** | `x86_64` | `Gulpsuite-0.2.0-windows-x64-setup.exe` | Self-Contained Windows Graphical Setup Wizard + Bundled Chromium (`.exe`) |
+| **Linux (CachyOS / Arch / Universal)** | `x86_64` | `Gulpsuite-0.2.0-x86_64.AppImage` / `gulpsuite-0.2.0-1-x86_64.pkg.tar.gz` | FUSE-free Portable AppImage (`.AppImage`) & Native CachyOS/Arch Package (`.pkg.tar.gz`) |
+| **Linux (Debian / Ubuntu / Setup)** | `x86_64` | `Gulpsuite-0.2.0-linux-x64-setup.run` / `gulpsuite_0.2.0_amd64.deb` | Self-Extracting Setup Installer (`.run`) & Debian/Ubuntu Package (`.deb`) |
 
 ### Quick Start on CachyOS / Arch Linux (`AppImage` or `pacman`)
 ```bash
 # Option 1: Run Portable AppImage directly (FUSE-free — works out of the box on CachyOS)
-chmod +x Gulpsuite-0.1.2-x86_64.AppImage
-./Gulpsuite-0.1.2-x86_64.AppImage
+chmod +x Gulpsuite-0.2.0-x86_64.AppImage
+./Gulpsuite-0.2.0-x86_64.AppImage
 
 # Optional: Integrate AppImage into CachyOS desktop launcher & ~/.local/bin/gulpsuite
-./Gulpsuite-0.1.2-x86_64.AppImage --install
+./Gulpsuite-0.2.0-x86_64.AppImage --install
 
 # Option 2: Install native CachyOS / Arch Linux pacman package
-sudo pacman -U gulpsuite-0.1.2-1-x86_64.pkg.tar.gz
+sudo pacman -U gulpsuite-0.2.0-1-x86_64.pkg.tar.gz
 ```
 
 ---
@@ -133,12 +141,13 @@ Standalone scan configuration window featuring `#26649D` navigation tiles (`Scan
 
 ---
 
-### 3. Target (`Site map` / `Scope` / `Issues` & 183-Type Knowledge Base)
-Collapsible hierarchical host/folder/endpoint tree with custom vector node icons, responsive `Contents` & `Issues` split views, target scope inclusion/exclusion rules, `#5B4FFF` scanner progress bar with severity pills, baseline differential active/passive vulnerability verification, and a 183-entry vulnerability knowledge base with clickable CWE/CAPEC/reference hyperlinks.
+### 3. Target (`Site map` / `Scope` / `Issues`)
+
+**Issues** opens the 183-entry definition catalog. Select a row to see its description, remediation, references, and vulnerability classifications. Click a column header to sort; use **↑ / ↓** when the table has focus. Open **Project findings** to see findings for the current project, or **Issue definitions** to return to the catalog.
 
 ![Target — Site Map](docs/screenshots/04-target-sitemap.png)
 
-![Target — Issues & Advisory](docs/screenshots/04b-target-issues.png)
+![Target — Issue definitions](docs/screenshots/04c-target-issue-definitions.png)
 
 ---
 
@@ -232,6 +241,7 @@ open Gulpsuite.app
 
 | Shortcut | Action |
 |---|---|
+| `↑ / ↓` in the issue definitions table | Move to the previous or next definition |
 | `Cmd/Ctrl + R` | Send selected request to **Repeater** (or send active Repeater tab) |
 | `Cmd/Ctrl + I` | Send selected request to **Intruder** (or toggle Proxy Intercept) |
 | `Cmd/Ctrl + K` / `Cmd/Ctrl + F` | Open Command Palette & Global Search |
