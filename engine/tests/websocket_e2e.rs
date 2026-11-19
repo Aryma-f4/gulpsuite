@@ -69,7 +69,8 @@ fn an_upgraded_connection_is_recorded_frame_by_frame() {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), events.recv()).await {
-                Ok(Ok(Event::WsOpen { id, host, request, response })) => {
+                Ok(Ok(Event::WsOpen { id, host, request, response, secure })) => {
+                    assert!(!secure, "loopback WebSocket uses plaintext");
                     assert!(host.contains(&server_port.to_string()), "host was {host}");
                     assert!(request.to_lowercase().contains("sec-websocket-key"), "{request}");
                     assert!(response.starts_with("HTTP/1.1 101"), "{response}");

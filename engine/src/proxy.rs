@@ -60,6 +60,7 @@ pub enum Event {
         host: String,
         request: String,
         response: String,
+        secure: bool,
     },
     /// One decoded WebSocket frame. `to_server` is false for frames travelling toward the client.
     WsFrame { id: u64, to_server: bool, opcode: u8, text: String, bytes: usize },
@@ -1101,6 +1102,7 @@ impl Proxy {
                 host: format!("{host}:{port}"),
                 request: head.clone(),
                 response,
+                secure,
             });
             self.relay_websocket(id, reader, client, up_reader, Box::new(up_write) as Out).await;
             self.emit(Event::WsClosed { id });

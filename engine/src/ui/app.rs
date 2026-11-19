@@ -117,12 +117,17 @@ pub struct WsConnection {
     pub request: String,
     pub response: String,
     pub open: bool,
+    pub secure: Option<bool>,
+    pub listener_port: Option<u16>,
     pub messages: Vec<WsMessage>,
 }
 
 /// One recorded frame, after reassembly to message level.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WsMessage {
+    pub number: usize,
+    pub received_at: Option<time::OffsetDateTime>,
+    pub notes: String,
     /// True when the client sent it, false when the server did.
     pub to_server: bool,
     pub opcode: u8,
@@ -609,6 +614,7 @@ pub struct App {
     pub tab_rows_height: f32,
     /// WebSocket connections seen since the listener started, newest last.
     pub websockets: Vec<WsConnection>,
+    ws_message_number: usize,
     /// DNS exchanges and SMTP messages, for the Logger's DNS and Email views.
     pub dns_log: Vec<crate::ui::panels::logger::DnsEntry>,
     pub smtp_log: Vec<crate::ui::panels::logger::SmtpEntry>,
@@ -796,6 +802,7 @@ impl App {
             discovered: BTreeMap::new(),
             tab_rows_height: 0.0,
             websockets: Vec::new(),
+            ws_message_number: 0,
             dns_log: Vec::new(),
             smtp_log: Vec::new(),
             organizer: Vec::new(),
@@ -1575,8 +1582,7 @@ impl App {
                     body,
                 });
             }
-            Event::WsOpen { id, host, request, response } => {
-                self.websockets.retain(|c| c.open);
+            Event::WsOpen { id, host, request, response, secure } => {
                 if self.websockets.len() >= WS_CAPACITY {
                     // Drop the oldest connection's frames with it, so the store stays bounded.
                     self.websockets.remove(0);
@@ -1588,6 +1594,8 @@ impl App {
                     request,
                     response,
                     open: true,
+                    secure: Some(secure),
+                    listener_port: self.listening,
                     messages: Vec::new(),
                 });
             }
@@ -1595,8 +1603,17 @@ impl App {
                 if let Some(connection) = self.websockets.iter_mut().find(|c| c.id == id) {
                     if connection.messages.len() >= WS_MESSAGE_CAPACITY {
                         connection.messages.remove(0);
+                        if let Some((selected_id, index)) = self.panels.ws_selected {
+                            if selected_id == id {
+                                self.panels.ws_selected = index.checked_sub(1).map(|i| (id, i));
+                            }
+                        }
                     }
+                    self.ws_message_number += 1;
                     connection.messages.push(WsMessage {
+                        number: self.ws_message_number,
+                        received_at: Some(time::OffsetDateTime::now_utc()),
+                        notes: String::new(),
                         to_server,
                         opcode,
                         text,

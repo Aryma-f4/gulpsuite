@@ -14,7 +14,7 @@
 
 use eframe::egui::{self, Color32, RichText, Ui, Vec2};
 
-use crate::ui::app::App;
+use crate::ui::app::{App, WsConnection, WsMessage};
 
 #[derive(Clone)]
 pub struct RepeaterExchange {
@@ -23,6 +23,20 @@ pub struct RepeaterExchange {
     pub response: String,
     pub status: Option<u16>,
     pub elapsed_ms: u128,
+}
+
+#[derive(Clone)]
+struct WebSocketCapture {
+    id: u64,
+    frames: std::sync::Arc<[WsMessage]>,
+    original: Option<usize>,
+    selected: Option<usize>,
+    search: String,
+    sort: Option<(usize, bool)>,
+    split: f32,
+    left_mode: usize,
+    right_mode: usize,
+    offset: f32,
 }
 
 /// One request in the Repeater. Gulp keeps several open at once, each in its own tab.
@@ -67,6 +81,7 @@ pub struct RepeaterTab {
     pub history: Vec<RepeaterExchange>,
     pub history_cursor: Option<usize>,
     in_flight: Option<(String, String, std::time::Instant)>,
+    websocket_capture: Option<WebSocketCapture>,
 }
 
 impl Default for RepeaterTab {
@@ -105,6 +120,7 @@ impl Default for RepeaterTab {
             history: Vec::new(),
             history_cursor: None,
             in_flight: None,
+            websocket_capture: None,
         }
     }
 }
@@ -245,6 +261,30 @@ impl RepeaterPanel {
         self.active = self.tabs.len() - 1;
     }
 
+    /// A recorded WebSocket message is not the body of an HTTP upgrade request.
+    pub(super) fn open_websocket_capture(
+        &mut self,
+        connection: &WsConnection,
+        index: Option<usize>,
+    ) {
+        self.open(&connection.host, &connection.request);
+        let tab = self.active_mut();
+        tab.name = format!("WebSocket #{}", connection.id);
+        tab.response.clone_from(&connection.response);
+        tab.websocket_capture = Some(WebSocketCapture {
+            id: connection.id,
+            frames: connection.messages.clone().into(),
+            original: index,
+            selected: index,
+            search: String::new(),
+            sort: None,
+            split: 0.5,
+            left_mode: 1,
+            right_mode: 1,
+            offset: -1.0,
+        });
+    }
+
     pub fn duplicate_active(&mut self) {
         self.show_getting_started = false;
         self.force_getting_started = false;
@@ -263,6 +303,7 @@ impl RepeaterPanel {
         self.force_getting_started = false;
         let count = self.tabs.len();
         let tab = self.active_mut();
+        tab.websocket_capture = None;
         tab.name = name_for(host, count);
         tab.host = host.to_string();
         tab.raw = raw.to_string();
@@ -429,6 +470,370 @@ fn group_color_name(code: u8) -> &'static str {
     }
 }
 
+fn ws_message_label(frame: &WsMessage) -> String {
+    match frame.opcode {
+        crate::ws::opcode::TEXT => frame
+            .text
+            .lines()
+            .next()
+            .unwrap_or("(empty)")
+            .chars()
+            .take(96)
+            .collect(),
+        crate::ws::opcode::BINARY => "Binary".into(),
+        crate::ws::opcode::PING => "Ping".into(),
+        crate::ws::opcode::PONG => "Pong".into(),
+        crate::ws::opcode::CLOSE => "Close".into(),
+        _ => "Continuation / reserved".into(),
+    }
+}
+
+fn ws_direction(frame: &WsMessage) -> &'static str {
+    if frame.to_server {
+        "→ To server"
+    } else {
+        "← To client"
+    }
+}
+
+fn ws_viewer(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    frame: Option<&WsMessage>,
+    mode: &mut usize,
+) {
+    let full_text =
+        frame.is_some_and(|f| f.opcode == crate::ws::opcode::TEXT && f.bytes == f.text.len());
+    ui.horizontal(|ui| {
+        for (i, title) in ["Pretty", "Raw", "Hex"].into_iter().enumerate() {
+            if ui
+                .add_enabled(
+                    i != 2 || full_text,
+                    egui::Button::selectable(*mode == i, title),
+                )
+                .clicked()
+            {
+                *mode = i;
+            }
+        }
+        if let Some(frame) = frame {
+            if ui
+                .small_button(if full_text {
+                    "Copy message"
+                } else {
+                    "Copy preview"
+                })
+                .clicked()
+            {
+                ui.ctx().copy_text(frame.text.clone());
+            }
+        }
+    });
+    ui.separator();
+    let Some(frame) = frame else {
+        super::muted(ui, theme, "No message selected.");
+        return;
+    };
+    if !full_text {
+        super::muted(ui, theme, "Only a capture preview is available.");
+    }
+    let pretty = (*mode == 0 && full_text)
+        .then(|| {
+            serde_json::from_str::<serde_json::Value>(&frame.text)
+                .ok()
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+        })
+        .flatten();
+    let text = pretty.as_deref().unwrap_or(&frame.text);
+    let mode = if *mode == 2 && full_text { 2 } else { 1 };
+    super::gulp_numbered_message_view(
+        ui,
+        theme,
+        "ws-message-preview",
+        ui.available_height().max(42.0),
+        text,
+        mode,
+        false,
+    );
+}
+
+fn draw_websocket_capture(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    capture: &mut WebSocketCapture,
+    host: &str,
+    request: &str,
+    response: &str,
+) {
+    let mut ratio = capture.split;
+    let height = ui.available_height();
+    super::vertical_split(
+        ui,
+        theme,
+        "repeater-websocket-split",
+        &mut ratio,
+        height,
+        |pane, ui| {
+            if pane == 0 {
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("");
+                let endpoint = if path.starts_with('/') {
+                    format!("{host}{path}")
+                } else if path.is_empty() {
+                    host.to_string()
+                } else {
+                    path.to_string()
+                };
+                ui.add(
+                    egui::Label::new(format!("WebSocket ID: {} : {endpoint}", capture.id))
+                        .truncate(),
+                )
+                .on_hover_text(endpoint);
+                ui.separator();
+                super::heading(ui, theme, "Captured WebSocket message");
+                super::muted(ui, theme, "Read-only capture");
+                ui.collapsing("Inspector", |ui| {
+                    ui.collapsing("Upgrade request", |ui| {
+                        ui.monospace(request);
+                    });
+                    ui.collapsing("Upgrade response", |ui| {
+                        ui.monospace(response);
+                    });
+                });
+                ui.separator();
+                ws_viewer(
+                    ui,
+                    theme,
+                    capture.original.and_then(|i| capture.frames.get(i)),
+                    &mut capture.left_mode,
+                );
+            } else {
+                draw_websocket_capture_history(ui, theme, capture);
+                ui.separator();
+                super::heading(ui, theme, "Selected history message");
+                ws_viewer(
+                    ui,
+                    theme,
+                    capture.selected.and_then(|i| capture.frames.get(i)),
+                    &mut capture.right_mode,
+                );
+            }
+        },
+    );
+    capture.split = ratio;
+}
+
+fn draw_websocket_capture_history(
+    ui: &mut Ui,
+    theme: &crate::ui::theme::Theme,
+    capture: &mut WebSocketCapture,
+) {
+    let search_changed = ui
+        .horizontal(|ui| {
+            super::heading(ui, theme, "History");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let width = (ui.available_width() * 0.6).clamp(44.0, 210.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut capture.search)
+                        .hint_text("Search")
+                        .desired_width(width),
+                )
+                .changed()
+            })
+            .inner
+        })
+        .inner;
+    let focus = ui.make_persistent_id("ws-repeater-history-focus");
+    let table_focused = ui.memory_mut(|mem| {
+        mem.set_focus_lock_filter(
+            focus,
+            egui::EventFilter {
+                vertical_arrows: true,
+                ..Default::default()
+            },
+        );
+        mem.has_focus(focus)
+    });
+    let width = (ui.available_width() - 16.0).max(0.0);
+    let widths = [0.42, 0.23, 0.14, 0.21].map(|part| width * part);
+    let mut focus_table = false;
+    egui::Frame::new()
+        .fill(theme.color("ui.background.2"))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (col, title) in ["Message", "Direction", "Length", "WebSocket ID"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    if col == 3 {
+                        ui.add_sized([widths[col], 23.0], egui::Label::new(title).truncate());
+                        continue;
+                    }
+                    let title = match capture.sort {
+                        Some((n, true)) if n == col => format!("{title} ▲"),
+                        Some((n, false)) if n == col => format!("{title} ▼"),
+                        _ => title.to_string(),
+                    };
+                    if ui
+                        .add_sized([widths[col], 23.0], egui::Button::new(title).truncate())
+                        .clicked()
+                    {
+                        capture.sort = match capture.sort {
+                            Some((n, true)) if n == col => Some((col, false)),
+                            Some((n, false)) if n == col => None,
+                            _ => Some((col, true)),
+                        };
+                        focus_table = true;
+                    }
+                }
+            });
+        });
+    let query = capture.search.trim().to_lowercase();
+    let mut rows: Vec<usize> = capture
+        .frames
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| {
+            (query.is_empty()
+                || f.text.to_lowercase().contains(&query)
+                || ws_message_label(f).to_lowercase().contains(&query)
+                || ws_direction(f).to_lowercase().contains(&query))
+            .then_some(i)
+        })
+        .collect();
+    if let Some((column, ascending)) = capture.sort {
+        if column == 0 {
+            rows.sort_by_cached_key(|&i| {
+                let label = ws_message_label(&capture.frames[i]);
+                let label = label.to_lowercase();
+                if ascending {
+                    (Some(label), None)
+                } else {
+                    (None, Some(std::cmp::Reverse(label)))
+                }
+            });
+        } else {
+            rows.sort_by(|&a, &b| {
+                let a = &capture.frames[a];
+                let b = &capture.frames[b];
+                let order = if column == 1 {
+                    ws_direction(a).cmp(ws_direction(b))
+                } else {
+                    a.bytes.cmp(&b.bytes)
+                };
+                if ascending {
+                    order
+                } else {
+                    order.reverse()
+                }
+            });
+        }
+    }
+
+    const ROW_H: f32 = 21.0;
+    let table_h = (ui.available_height() * 0.48).clamp(65.0, 420.0);
+    let row_stride = ROW_H + ui.spacing().item_spacing.y;
+    let current = rows.iter().position(|&i| Some(i) == capture.selected);
+    if search_changed && current.is_none() {
+        capture.selected = rows.first().copied();
+    }
+    let delta = if table_focused {
+        ui.input_mut(|input| {
+            let down = input.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+            let up = input.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            down as isize - up as isize
+        })
+    } else {
+        0
+    };
+    if delta != 0 && !rows.is_empty() {
+        let index = current.map_or(0, |i| i.saturating_add_signed(delta).min(rows.len() - 1));
+        capture.selected = Some(rows[index]);
+    }
+    let mut table = egui::ScrollArea::vertical()
+        .id_salt("ws-repeater-history-rows")
+        .max_height(table_h)
+        .auto_shrink([false, false]);
+    if delta != 0 || search_changed || focus_table || capture.offset < 0.0 {
+        if let Some(index) = rows.iter().position(|&i| Some(i) == capture.selected) {
+            let top = index as f32 * row_stride;
+            let new_offset = capture
+                .offset
+                .max(0.0)
+                .clamp((top + row_stride - table_h).max(0.0), top);
+            table = table.vertical_scroll_offset(new_offset);
+        }
+    }
+    let id = capture.id.to_string();
+    let out = table.show_rows(ui, ROW_H, rows.len(), |ui, visible| {
+        for slot in visible {
+            let i = rows[slot];
+            let f = &capture.frames[i];
+            let selected = capture.selected == Some(i);
+            let labels = [
+                ws_message_label(f),
+                ws_direction(f).to_string(),
+                f.bytes.to_string(),
+                id.clone(),
+            ];
+            let fill = if slot % 2 == 0 {
+                theme.color("ui.background.0")
+            } else {
+                theme.color("ui.background.1")
+            };
+            egui::Frame::new().fill(fill).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (col, title) in labels.into_iter().enumerate() {
+                        if ui
+                            .add_sized(
+                                [widths[col], ROW_H],
+                                egui::Button::selectable(selected, title).truncate(),
+                            )
+                            .clicked()
+                        {
+                            capture.selected = Some(i);
+                            focus_table = true;
+                        }
+                    }
+                });
+            });
+        }
+        if rows.is_empty() {
+            super::muted(
+                ui,
+                theme,
+                if query.is_empty() {
+                    "No messages in this capture."
+                } else {
+                    "No matching messages."
+                },
+            );
+        }
+    });
+    capture.offset = out.state.offset.y;
+    let widget = ui.interact(
+        out.inner_rect,
+        focus,
+        egui::Sense::focusable_noninteractive(),
+    );
+    widget.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Other,
+            ui.is_enabled(),
+            "WebSocket capture history",
+        )
+    });
+    if focus_table {
+        widget.request_focus();
+        ui.ctx().request_repaint();
+    }
+}
+
 pub fn draw(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     {
@@ -455,6 +860,15 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 
     tabs(app, ui, &theme);
+
+    let active = app.panels.repeater.active;
+    let tab = app.panels.repeater.active_mut();
+    if let Some(capture) = &mut tab.websocket_capture {
+        ui.push_id(active, |ui| {
+            draw_websocket_capture(ui, &theme, capture, &tab.host, &tab.raw, &tab.response);
+        });
+        return;
+    }
 
     let redirect_target = redirect_url(
         &app.panels.repeater.active().host,
@@ -2181,7 +2595,10 @@ fn tabs(app: &mut App, ui: &mut Ui, theme: &crate::ui::theme::Theme) {
                         app.panels.repeater.rename_draft = name.clone();
                     }
                     super::show_persistent_context_menu(&tab_resp, |ui| {
-                        if ui.button("Send to Repeater").clicked() {
+                        if ui.add_enabled(
+                            app.panels.repeater.tabs[index].websocket_capture.is_none(),
+                            egui::Button::new("Send to Repeater"),
+                        ).clicked() {
                             let host = app.panels.repeater.tabs[index].host.clone();
                             let raw = app.panels.repeater.tabs[index].raw.clone();
                             app.panels.repeater.open(&host, &raw);
@@ -2716,7 +3133,10 @@ pub fn normalize_http_request(
 pub(crate) fn send_group(app: &mut App) {
     let active_grp = app.panels.repeater.active().group_color;
     let indices: Vec<usize> = (0..app.panels.repeater.tabs.len())
-        .filter(|&i| active_grp == 0 || app.panels.repeater.tabs[i].group_color == active_grp)
+        .filter(|&i| {
+            let tab = &app.panels.repeater.tabs[i];
+            tab.websocket_capture.is_none() && (active_grp == 0 || tab.group_color == active_grp)
+        })
         .collect();
     let total = indices.len();
     let prev_active = app.panels.repeater.active;
@@ -2730,6 +3150,10 @@ pub(crate) fn send_group(app: &mut App) {
 }
 
 pub(crate) fn send(app: &mut App) {
+    if app.panels.repeater.active().websocket_capture.is_some() {
+        app.status = "This WebSocket capture is read-only".into();
+        return;
+    }
     if app.panels.repeater.active().sending {
         return;
     }
