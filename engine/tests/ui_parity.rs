@@ -1479,3 +1479,37 @@ fn dashboard_reference_tabs_keep_task_scope_and_empty_layouts() {
         assert!(h.query_by_label("SQL injection").is_none());
     }
 }
+
+#[test]
+fn match_and_replace_view_has_burp_style_rule_sections() {
+    let mut harness = harness(false, 1440.0);
+    harness.get_by_label("Proxy").click();
+    harness.run();
+    harness.get_by_label("Match and replace").click();
+    harness.run();
+    assert!(harness.query_by_label("HTTP match and replace rules").is_some());
+    assert!(harness.query_by_label("WebSocket match and replace rules").is_some());
+    assert!(harness.get_all_by_label("Request header").count() >= 7);
+    assert!(harness.query_by_label("Emulate IE").is_some());
+    if let Ok(dir) = std::env::var("GULP_PROXY_UI_SHOTS") {
+        harness.render().expect("render match and replace")
+            .save(std::path::Path::new(&dir).join("match-replace.png"))
+            .expect("save match and replace");
+    }
+}
+
+#[test]
+fn match_and_replace_add_opens_an_editable_rule_dialog() {
+    let mut harness = harness(false, 1440.0);
+    harness.get_by_label("Proxy").click();
+    harness.run();
+    harness.get_by_label("Match and replace").click();
+    harness.run();
+    harness.get_all_by_label("Add").next().expect("HTTP Add").click();
+    harness.run();
+    assert!(harness.query_by_label("HTTP match and replace rule").is_some());
+    assert!(harness.query_by_label("Save").is_some());
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(harness.query_by_label("HTTP match and replace rule").is_none());
+}

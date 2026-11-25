@@ -5,6 +5,46 @@ use eframe::egui::Ui;
 use super::{empty_state, heading, horizontal_resize_handle, muted, vertical_split};
 use crate::ui::app::App;
 
+#[derive(Clone, Default)]
+pub struct MatchReplaceRule {
+    pub enabled: bool,
+    pub item: String,
+    pub name: String,
+    pub match_text: String,
+    pub replace_text: String,
+    pub regex: bool,
+    pub comment: String,
+}
+
+fn sample_http_rules() -> Vec<MatchReplaceRule> {
+    [
+        ("^User-Agent:.*$", "User-Agent: Mozilla/4.0 (compatible; MSIE 8.0)", "Emulate IE"),
+        ("^User-Agent:.*$", "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS)", "Emulate iOS"),
+        ("^User-Agent:.*$", "User-Agent: Mozilla/5.0 (Linux; Android)", "Emulate Android"),
+        ("^If-Modified-Since:.*$", "", "Require non-cached response"),
+        ("^If-None-Match:.*$", "", "Require non-cached response"),
+        ("^Referer:.*$", "", "Hide Referer header"),
+        ("^Accept-Encoding:.*$", "", "Require non-compressed response"),
+    ]
+    .into_iter()
+    .map(|(match_text, replace_text, comment)| MatchReplaceRule {
+        item: "Request header".into(),
+        match_text: match_text.into(),
+        replace_text: replace_text.into(),
+        regex: true,
+        comment: comment.into(),
+        ..Default::default()
+    })
+    .chain(std::iter::once(MatchReplaceRule {
+        item: "Response header".into(),
+        match_text: "^Set-Cookie:.*$".into(),
+        regex: true,
+        comment: "Ignore cookies".into(),
+        ..Default::default()
+    }))
+    .collect()
+}
+
 #[derive(Clone)]
 pub struct ProxyPanel {
     pub port: u16,
@@ -128,6 +168,14 @@ pub struct ProxyPanel {
     pub mime_flash: bool,
     pub mime_other_binary: bool,
     pub show_listener_modal: bool,
+    pub http_match_rules: Vec<MatchReplaceRule>,
+    pub websocket_match_rules: Vec<MatchReplaceRule>,
+    pub http_match_selected: Option<usize>,
+    pub websocket_match_selected: Option<usize>,
+    pub http_match_scope_only: bool,
+    pub websocket_match_scope_only: bool,
+    pub match_rule_dialog: Option<(bool, Option<usize>)>,
+    pub match_rule_draft: MatchReplaceRule,
     pub listener_modal_tab: usize,
     pub bind_specific_address: String,
     pub tls_use_custom_protocols: bool,
@@ -249,6 +297,14 @@ impl Default for ProxyPanel {
             mime_flash: true,
             mime_other_binary: false,
             show_listener_modal: false,
+            http_match_rules: sample_http_rules(),
+            websocket_match_rules: Vec::new(),
+            http_match_selected: None,
+            websocket_match_selected: None,
+            http_match_scope_only: false,
+            websocket_match_scope_only: false,
+            match_rule_dialog: None,
+            match_rule_draft: MatchReplaceRule::default(),
             listener_modal_tab: 0,
             bind_specific_address: "127.0.0.1".into(),
             tls_use_custom_protocols: false,
@@ -278,11 +334,366 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Gulp's match-and-replace view: the rules that rewrite traffic on its way out.
-///
-/// The rules use the same Bambda language as the Extensions tab, so one script serves both: here
-/// it is a set of live rules, there it is a script being written.
+/// Proxy rule-table UI. Only the Advanced Bambda controls affect live traffic.
 fn match_and_replace(app: &mut App, ui: &mut Ui) {
+    eframe::egui::ScrollArea::vertical()
+        .id_salt("match-replace-scroll")
+        .show(ui, |ui| {
+            let panel = &mut app.panels.proxy_panel;
+            match_replace_section(
+                ui,
+                false,
+                &mut panel.http_match_rules,
+                &mut panel.http_match_selected,
+                &mut panel.http_match_scope_only,
+                &mut panel.match_rule_dialog,
+                &mut panel.match_rule_draft,
+            );
+            ui.add_space(16.0);
+            let (line, _) = ui.allocate_exact_size(
+                eframe::egui::vec2(ui.available_width(), 1.0),
+                eframe::egui::Sense::hover(),
+            );
+            ui.painter()
+                .rect_filled(line, 0.0, match_replace_border(ui));
+            ui.add_space(16.0);
+            match_replace_section(
+                ui,
+                true,
+                &mut panel.websocket_match_rules,
+                &mut panel.websocket_match_selected,
+                &mut panel.websocket_match_scope_only,
+                &mut panel.match_rule_dialog,
+                &mut panel.match_rule_draft,
+            );
+            ui.add_space(20.0);
+            ui.label("Table entries are drafts and do not modify traffic.");
+            ui.collapsing("Advanced Bambda rules", |ui| advanced_bambda_rules(app, ui));
+        });
+    match_replace_dialog(app, ui);
+}
+
+fn match_replace_section(
+    ui: &mut Ui,
+    websocket: bool,
+    rules: &mut Vec<MatchReplaceRule>,
+    selected: &mut Option<usize>,
+    scope_only: &mut bool,
+    dialog: &mut Option<(bool, Option<usize>)>,
+    draft: &mut MatchReplaceRule,
+) {
+    let title = if websocket {
+        "WebSocket match and replace rules"
+    } else {
+        "HTTP match and replace rules"
+    };
+    let description = if websocket {
+        "Use these settings to automatically replace parts of WebSocket messages passing through the Proxy."
+    } else {
+        "Use these settings to automatically replace parts of HTTP requests and responses passing through the Proxy."
+    };
+    ui.push_id(title, |ui| {
+        ui.horizontal(|ui| {
+            match_replace_icon(ui, crate::ui::icons::Glyph::Help);
+            ui.label(eframe::egui::RichText::new(title).size(15.0).strong());
+        });
+        ui.horizontal(|ui| {
+            match_replace_icon(ui, crate::ui::icons::Glyph::Gear);
+            ui.label(description);
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(25.0);
+            ui.checkbox(scope_only, "Only apply to in-scope items");
+        });
+        ui.add_space(8.0);
+        ui.horizontal_top(|ui| {
+            ui.add_space(25.0);
+            ui.vertical(|ui| {
+                ui.set_width(85.0);
+                ui.spacing_mut().item_spacing.y = 5.0;
+                let button = |label: &str| {
+                    eframe::egui::Button::new(eframe::egui::RichText::new(label).strong())
+                        .min_size(eframe::egui::vec2(85.0, 20.0))
+                        .wrap_mode(eframe::egui::TextWrapMode::Extend)
+                };
+                if ui.add(button("Add")).clicked() {
+                    *draft = MatchReplaceRule {
+                        item: if websocket {
+                            "To server"
+                        } else {
+                            "Request header"
+                        }
+                        .into(),
+                        ..Default::default()
+                    };
+                    *dialog = Some((websocket, None));
+                }
+                let has_selection = selected.is_some_and(|index| index < rules.len());
+                if ui.add_enabled(has_selection, button("Edit")).clicked() {
+                    let index = selected.unwrap();
+                    *draft = rules[index].clone();
+                    *dialog = Some((websocket, Some(index)));
+                }
+                if ui.add_enabled(has_selection, button("Remove")).clicked() {
+                    rules.remove(selected.unwrap());
+                    *selected = None;
+                }
+                if ui
+                    .add_enabled(
+                        selected.is_some_and(|i| i > 0 && i < rules.len()),
+                        button("Up"),
+                    )
+                    .clicked()
+                {
+                    let index = selected.unwrap();
+                    rules.swap(index, index - 1);
+                    *selected = Some(index - 1);
+                }
+                if ui
+                    .add_enabled(
+                        selected.is_some_and(|i| i + 1 < rules.len()),
+                        button("Down"),
+                    )
+                    .clicked()
+                {
+                    let index = selected.unwrap();
+                    rules.swap(index, index + 1);
+                    *selected = Some(index + 1);
+                }
+            });
+            match_replace_table(ui, websocket, rules, selected);
+        });
+    });
+}
+
+fn match_replace_table(
+    ui: &mut Ui,
+    websocket: bool,
+    rules: &mut [MatchReplaceRule],
+    selected: &mut Option<usize>,
+) {
+    use eframe::egui::{
+        pos2, vec2, Align, Checkbox, Color32, Frame, Label, Layout, Rect, ScrollArea, Sense,
+        Stroke, UiBuilder,
+    };
+
+    let columns: &[(&str, f32)] = if websocket {
+        &[
+            ("Enabled", 70.),
+            ("Direction", 112.),
+            ("Match", 153.),
+            ("Replace", 196.),
+            ("Type", 56.),
+            ("Comment", 175.),
+        ]
+    } else {
+        &[
+            ("Enabled", 69.),
+            ("Item", 111.),
+            ("Name", 152.),
+            ("Match", 152.),
+            ("Replace", 193.),
+            ("Type", 55.),
+            ("Comment", 173.),
+        ]
+    };
+    let width: f32 = columns.iter().map(|column| column.1).sum();
+    let palette = ui.visuals();
+    let surface = if palette.dark_mode {
+        palette.extreme_bg_color
+    } else {
+        Color32::from_gray(253)
+    };
+    let stripe = if palette.dark_mode {
+        palette.panel_fill
+    } else {
+        Color32::from_gray(247)
+    };
+    let header_fill = palette.widgets.inactive.weak_bg_fill;
+    let border = Stroke::new(1.0, match_replace_border(ui));
+    let selection = palette.selection.bg_fill;
+    let selection_stroke = palette.selection.stroke;
+
+    ScrollArea::horizontal()
+        .id_salt("rules-table-horizontal")
+        .max_width((width + 2.0).min(ui.available_width()))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                Frame::new().fill(surface).stroke(border).show(ui, |ui| {
+                    ui.set_width(width);
+                    let label_cell = |ui: &mut Ui, cell: Rect, label: Label| {
+                        ui.scope_builder(
+                            UiBuilder::new()
+                                .max_rect(cell)
+                                .layout(Layout::left_to_right(Align::Center)),
+                            |ui| ui.add(label.truncate()),
+                        )
+                        .inner
+                    };
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let (header, _) = ui.allocate_exact_size(vec2(width, 25.0), Sense::hover());
+                    ui.painter().rect_filled(header, 0.0, header_fill);
+                    let mut left = header.left();
+                    for &(label, w) in columns {
+                        let cell =
+                            Rect::from_min_size(pos2(left, header.top()), vec2(w, header.height()));
+                        label_cell(ui, cell.shrink2(vec2(4.0, 0.0)), Label::new(label));
+                        left += w;
+                        ui.painter().vline(left, header.y_range(), border);
+                    }
+                    ui.painter()
+                        .hline(header.x_range(), header.bottom(), border);
+                    ScrollArea::vertical()
+                        .id_salt("rules-table-rows")
+                        .max_height(124.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_min_size(vec2(width, 124.0));
+                            ui.spacing_mut().interact_size.y = 15.0;
+                            for (index, rule) in rules.iter_mut().enumerate() {
+                                ui.push_id(index, |ui| {
+                                    let (row, _) =
+                                        ui.allocate_exact_size(vec2(width, 15.0), Sense::hover());
+                                    let active = *selected == Some(index);
+                                    ui.painter().rect_filled(
+                                        row,
+                                        0.0,
+                                        if active {
+                                            selection
+                                        } else if index % 2 == 1 {
+                                            stripe
+                                        } else {
+                                            surface
+                                        },
+                                    );
+                                    if active {
+                                        ui.painter().rect_stroke(
+                                            row,
+                                            0.0,
+                                            selection_stroke,
+                                            eframe::egui::StrokeKind::Inside,
+                                        );
+                                    }
+                                    let kind = if rule.regex { "Regex" } else { "Literal" };
+                                    let values: &[&str] = if websocket {
+                                        &[
+                                            &rule.item,
+                                            &rule.match_text,
+                                            &rule.replace_text,
+                                            kind,
+                                            &rule.comment,
+                                        ]
+                                    } else {
+                                        &[
+                                            &rule.item,
+                                            &rule.name,
+                                            &rule.match_text,
+                                            &rule.replace_text,
+                                            kind,
+                                            &rule.comment,
+                                        ]
+                                    };
+                                    let enabled_rect = Rect::from_center_size(
+                                        pos2(row.left() + columns[0].1 / 2.0, row.center().y),
+                                        vec2(16.0, 15.0),
+                                    );
+                                    if ui
+                                        .put(enabled_rect, Checkbox::new(&mut rule.enabled, ""))
+                                        .clicked()
+                                    {
+                                        *selected = Some(index);
+                                    }
+                                    let mut left = row.left() + columns[0].1;
+                                    for (&value, &(_, w)) in values.iter().zip(&columns[1..]) {
+                                        let cell = Rect::from_min_size(
+                                            pos2(left, row.top()),
+                                            vec2(w, row.height()),
+                                        );
+                                        if label_cell(
+                                            ui,
+                                            cell.shrink2(vec2(4.0, 0.0)),
+                                            Label::new(value).sense(Sense::click()),
+                                        )
+                                        .clicked()
+                                        {
+                                            *selected = Some(index);
+                                        }
+                                        left += w;
+                                    }
+                                });
+                            }
+                        });
+                });
+            });
+        });
+}
+
+fn match_replace_border(ui: &Ui) -> eframe::egui::Color32 {
+    eframe::egui::Color32::from_gray(if ui.visuals().dark_mode { 68 } else { 219 })
+}
+
+fn match_replace_icon(ui: &mut Ui, glyph: crate::ui::icons::Glyph) {
+    let (rect, _) = ui.allocate_exact_size(eframe::egui::vec2(24.0, 24.0), eframe::egui::Sense::hover());
+    crate::ui::icons::paint(ui.painter(), rect, ui.visuals().text_color(), glyph);
+}
+
+fn match_replace_dialog(app: &mut App, ui: &mut Ui) {
+    let Some((websocket, editing)) = app.panels.proxy_panel.match_rule_dialog else { return; };
+    let mut open = true;
+    let mut save = false;
+    let mut cancel = false;
+    eframe::egui::Window::new(if websocket { "WebSocket match and replace rule" } else { "HTTP match and replace rule" })
+        .id(eframe::egui::Id::new("match-replace-rule-dialog"))
+        .open(&mut open)
+        .show(ui.ctx(), |ui| {
+            let draft = &mut app.panels.proxy_panel.match_rule_draft;
+            ui.checkbox(&mut draft.enabled, "Enabled");
+            ui.horizontal(|ui| {
+                ui.label(if websocket { "Direction" } else { "Item" });
+                eframe::egui::ComboBox::from_id_salt("rule-item")
+                    .selected_text(&draft.item)
+                    .show_ui(ui, |ui| {
+                        let values = if websocket {
+                            &["To server", "To client"][..]
+                        } else {
+                            &["Request header", "Request body", "Response header", "Response body"][..]
+                        };
+                        for value in values {
+                            ui.selectable_value(&mut draft.item, (*value).into(), *value);
+                        }
+                    });
+            });
+            if !websocket { ui.horizontal(|ui| { ui.label("Name"); ui.text_edit_singleline(&mut draft.name); }); }
+            ui.horizontal(|ui| { ui.label("Match"); ui.text_edit_singleline(&mut draft.match_text); });
+            ui.horizontal(|ui| { ui.label("Replace"); ui.text_edit_singleline(&mut draft.replace_text); });
+            ui.checkbox(&mut draft.regex, "Regex");
+            ui.horizontal(|ui| { ui.label("Comment"); ui.text_edit_singleline(&mut draft.comment); });
+            ui.horizontal(|ui| {
+                save = ui.add_enabled(!draft.match_text.is_empty(), eframe::egui::Button::new("Save")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+    if save {
+        let panel = &mut app.panels.proxy_panel;
+        let (rules, selected) = if websocket {
+            (&mut panel.websocket_match_rules, &mut panel.websocket_match_selected)
+        } else {
+            (&mut panel.http_match_rules, &mut panel.http_match_selected)
+        };
+        let rule = panel.match_rule_draft.clone();
+        if let Some(index) = editing.filter(|&index| index < rules.len()) {
+            rules[index] = rule;
+            *selected = Some(index);
+        } else {
+            rules.push(rule);
+            *selected = Some(rules.len() - 1);
+        }
+    }
+    if save || cancel || !open { app.panels.proxy_panel.match_rule_dialog = None; }
+}
+
+fn advanced_bambda_rules(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
 
     let active = app.proxy.has_rules();

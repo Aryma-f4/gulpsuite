@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+### Proxy
+- Updated the Match and replace layout with separate HTTP and WebSocket rule tables, fixed-width columns, compact rows, and aligned editing controls.
+- Added editable draft rules and disabled HTTP examples. Drafts do not modify traffic; existing Advanced Bambda controls are unchanged.
+
 ## 0.2.2
 
 ### WebSockets
