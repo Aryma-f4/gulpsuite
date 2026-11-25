@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4
+
+### Updater stability
+- Reject interrupted downloads and require a valid matching SHA-256 checksum before staging an installer.
+- Select the native installer for supported Windows, macOS, and Linux architectures; reject unsupported packages instead of guessing.
+- Use the native installer on macOS without replacing the running binary. Replace an installed Linux AppImage only after the new file has been fully staged.
+
 ## 0.2.3
 
 ### Proxy
