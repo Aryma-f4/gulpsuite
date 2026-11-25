@@ -3,7 +3,7 @@
 //! Queries `https://api.github.com/repos/<owner>/<repo>/releases/latest` (or a custom update
 //! endpoint URL), compares semantic versions against `CARGO_PKG_VERSION`, selects the native
 //! installer asset for the host OS/CPU (`macos-arm64`, `macos-x64`, `windows-x64`, `linux-x64`),
-//! streams the download with live byte progress, verifies its `.sha256` digest when present,
+//! streams the download with live byte progress, requires a matching `.sha256` digest,
 //! and launches the platform installer.
 
 use std::path::{Path, PathBuf};
@@ -38,7 +38,10 @@ pub struct ReleaseInfo {
 
 impl ReleaseInfo {
     pub fn clean_version(&self) -> String {
-        self.tag_name.trim().trim_start_matches(['v', 'V']).to_string()
+        self.tag_name
+            .trim()
+            .trim_start_matches(['v', 'V'])
+            .to_string()
     }
 }
 
@@ -95,77 +98,54 @@ pub fn is_newer_version(current: &str, candidate: &str) -> bool {
 
 /// Returns the canonical platform identifier for the current OS and CPU architecture.
 pub fn current_platform_tag() -> &'static str {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        "macos-arm64"
-    }
-    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
-    {
-        "macos-x64"
-    }
-    #[cfg(target_os = "windows")]
-    {
-        "windows-x64"
-    }
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    {
-        "linux-x64"
+    platform_tag(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn platform_tag(os: &str, arch: &str) -> &'static str {
+    match (os, arch) {
+        ("macos", "aarch64") => "macos-arm64",
+        ("macos", "x86_64") => "macos-x64",
+        ("windows", "x86_64") => "windows-x64",
+        ("linux", "x86_64") => "linux-x64",
+        _ => "unsupported",
     }
 }
 
-/// Selects the best matching native installer asset for `platform`.
+fn safe_asset_name(name: &str) -> bool {
+    name.as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
+/// Selects a supported native installer; never substitutes another OS/architecture or an archive.
 pub fn select_installer_asset(assets: &[ReleaseAsset], platform: &str) -> Option<ReleaseAsset> {
     let preferences: &[&str] = match platform {
-        "macos-arm64" => &[
-            "macos-arm64-setup.pkg",
-            "macos-arm64.dmg",
-            "macos-arm64.tar.gz",
+        "macos-arm64" => &["-macos-arm64-setup.pkg", "-macos-arm64.dmg"],
+        "macos-x64" => &["-macos-x64-setup.pkg", "-macos-x64.dmg"],
+        "windows-x64" => &["-windows-x64-setup.exe"],
+        "linux-x64" if std::env::var_os("APPIMAGE").is_some() => &[
+            "-x86_64.appimage",
+            "-linux-x64-setup.run",
+            "_amd64.deb",
+            "-x86_64.pkg.tar.gz",
         ],
-        "macos-x64" => &[
-            "macos-x64-setup.pkg",
-            "macos-x64.dmg",
-            "macos-x64.tar.gz",
+        "linux-x64" => &[
+            "-linux-x64-setup.run",
+            "-x86_64.appimage",
+            "_amd64.deb",
+            "-x86_64.pkg.tar.gz",
         ],
-        "windows-x64" => &["windows-x64-setup.exe", "windows-x64.zip", ".exe"],
-        "linux-x64" => {
-            if std::env::var_os("APPIMAGE").is_some() {
-                &[
-                    "x86_64.appimage",
-                    "linux-x64-setup.run",
-                    ".pkg.tar.gz",
-                    "_amd64.deb",
-                    "linux-x64.tar.gz",
-                ]
-            } else {
-                &[
-                    "linux-x64-setup.run",
-                    "x86_64.appimage",
-                    ".pkg.tar.gz",
-                    "_amd64.deb",
-                    "linux-x64.tar.gz",
-                ]
-            }
-        }
-        _ => &[],
+        _ => return None,
     };
-
-    for suffix in preferences {
-        if let Some(found) = assets.iter().find(|a| {
-            !a.name.ends_with(".sha256")
-                && !a.name.ends_with(".json")
-                && a.name.to_ascii_lowercase().ends_with(suffix)
-        }) {
-            return Some(found.clone());
-        }
-    }
-    assets
-        .iter()
-        .find(|a| {
-            !a.name.ends_with(".sha256")
-                && !a.name.ends_with(".json")
-                && a.name.contains(platform)
-        })
-        .cloned()
+    preferences.iter().find_map(|suffix| {
+        assets
+            .iter()
+            .find(|a| safe_asset_name(&a.name) && a.name.to_ascii_lowercase().ends_with(suffix))
+            .cloned()
+    })
 }
 
 /// Finds the `.sha256` companion asset for `installer_name`, if published on the release.
@@ -205,31 +185,55 @@ pub async fn http_get_bytes(
     initial_url: &str,
     progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<Vec<u8>, String> {
-    match http_get_bytes_direct(initial_url, progress).await {
-        Ok(bytes) => Ok(bytes),
-        Err(direct_err) => {
-            if let Ok(output) = std::process::Command::new("curl")
-                .args([
-                    "-fsSL",
-                    "--max-time",
-                    "120",
-                    "-A",
-                    &format!("Gulpsuite/{CURRENT_VERSION}"),
-                    initial_url,
-                ])
-                .output()
-            {
-                if output.status.success() && !output.stdout.is_empty() {
-                    if let Some(cb) = progress {
-                        let len = output.stdout.len() as u64;
-                        cb(len, len);
-                    }
-                    return Ok(output.stdout);
-                }
+    use std::time::Duration;
+    let url = url::Url::parse(initial_url).map_err(|e| format!("Invalid update URL: {e}"))?;
+    let redirect_protocols = match url.scheme() {
+        "https" => "=https",
+        "http" => "=http,https",
+        _ => return Err("Update URLs must use HTTP or HTTPS".into()),
+    };
+    let direct_err = match tokio::time::timeout(
+        Duration::from_secs(180),
+        http_get_bytes_direct(initial_url, progress),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => return Ok(bytes),
+        Ok(Err(err)) => err,
+        Err(_) => "Update request timed out".to_string(),
+    };
+    let url = url.to_string();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("curl")
+            .args([
+                "-q",
+                "-fsSL",
+                "--max-time",
+                "180",
+                "--max-redirs",
+                "8",
+                "--proto",
+                "=http,https",
+                "--proto-redir",
+                redirect_protocols,
+                "-A",
+                &format!("Gulpsuite/{CURRENT_VERSION}"),
+                "--",
+                &url,
+            ])
+            .output()
+    })
+    .await;
+    if let Ok(Ok(output)) = output {
+        if output.status.success() {
+            if let Some(cb) = progress {
+                let len = output.stdout.len() as u64;
+                cb(len, len);
             }
-            Err(direct_err)
+            return Ok(output.stdout);
         }
     }
+    Err(direct_err)
 }
 
 async fn http_get_bytes_direct(
@@ -260,9 +264,13 @@ async fn http_get_bytes_direct(
             path_and_query.push_str(q);
         }
 
+        let authority = match parsed.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.clone(),
+        };
         let req_bytes = format!(
             "GET {path_and_query} HTTP/1.1\r\n\
-             Host: {host}\r\n\
+             Host: {authority}\r\n\
              User-Agent: Gulpsuite/{CURRENT_VERSION}\r\n\
              Accept: application/vnd.github+json, application/octet-stream, */*\r\n\
              Connection: close\r\n\r\n"
@@ -313,11 +321,16 @@ async fn http_get_bytes_direct(
                     .map(|u| u.to_string())
                     .map_err(|e| format!("Invalid redirect Location '{loc}': {e}"))?
             };
+            if is_https && !current_url.starts_with("https://") {
+                return Err("Refusing insecure redirect from HTTPS update server".into());
+            }
             continue;
         }
 
-        if !(200..=299).contains(&status) {
-            return Err(format!("Update server returned HTTP {status} for {current_url}"));
+        if status != 200 {
+            return Err(format!(
+                "Update server returned HTTP {status} for {current_url}"
+            ));
         }
         return Ok(body);
     }
@@ -344,6 +357,9 @@ async fn read_http_response<S: AsyncReadExt + Unpin>(
         }
     }
 
+    if !raw_head.ends_with(b"\r\n\r\n") {
+        return Err("Incomplete HTTP response headers".into());
+    }
     let head_str = String::from_utf8_lossy(&raw_head);
     let mut lines = head_str.lines();
     let status_line = lines.next().ok_or("Empty HTTP response")?;
@@ -361,7 +377,11 @@ async fn read_http_response<S: AsyncReadExt + Unpin>(
             let key = k.trim().to_string();
             let val = v.trim().to_string();
             if key.eq_ignore_ascii_case("content-length") {
-                content_length = val.parse().ok();
+                let length = val.parse().map_err(|_| "Invalid HTTP Content-Length")?;
+                if content_length.is_some_and(|previous| previous != length) {
+                    return Err("Conflicting HTTP Content-Length values".into());
+                }
+                content_length = Some(length);
             } else if key.eq_ignore_ascii_case("transfer-encoding")
                 && val.to_ascii_lowercase().contains("chunked")
             {
@@ -371,7 +391,13 @@ async fn read_http_response<S: AsyncReadExt + Unpin>(
         }
     }
 
-    if content_length == Some(0) || matches!(status, 204 | 301 | 302 | 303 | 304 | 307 | 308) {
+    if status != 200 {
+        return Ok((status, headers, Vec::new()));
+    }
+    if chunked && content_length.is_some() {
+        return Err("Ambiguous HTTP response framing".into());
+    }
+    if content_length == Some(0) {
         return Ok((status, headers, Vec::new()));
     }
 
@@ -398,34 +424,42 @@ async fn read_http_response<S: AsyncReadExt + Unpin>(
         }
     }
 
+    if content_length.is_some_and(|length| length != body.len() as u64) {
+        return Err("Update transfer ended before the declared Content-Length".into());
+    }
     let final_body = if chunked {
-        decode_chunked(&body)
+        decode_chunked(&body)?
     } else {
         body
     };
     Ok((status, headers, final_body))
 }
 
-fn decode_chunked(input: &[u8]) -> Vec<u8> {
+fn decode_chunked(mut input: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    let mut pos = 0usize;
-    while pos < input.len() {
-        let Some(rel_end) = input[pos..].windows(2).position(|w| w == b"\r\n") else {
-            break;
-        };
-        let size_line = String::from_utf8_lossy(&input[pos..pos + rel_end]);
-        let size_hex = size_line.split(';').next().unwrap_or("").trim();
-        let Ok(chunk_size) = usize::from_str_radix(size_hex, 16) else {
-            break;
-        };
-        pos += rel_end + 2;
-        if chunk_size == 0 || pos + chunk_size > input.len() {
-            break;
+    loop {
+        let line_end = input
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or("Truncated HTTP chunk header")?;
+        let line =
+            std::str::from_utf8(&input[..line_end]).map_err(|_| "Invalid HTTP chunk header")?;
+        let hex = line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(hex, 16).map_err(|_| "Invalid HTTP chunk size")?;
+        input = &input[line_end + 2..];
+        if size == 0 {
+            if input == b"\r\n" || input.ends_with(b"\r\n\r\n") {
+                return Ok(out);
+            }
+            return Err("Truncated HTTP chunk trailer".into());
         }
-        out.extend_from_slice(&input[pos..pos + chunk_size]);
-        pos += chunk_size + 2;
+        let end = size.checked_add(2).ok_or("HTTP chunk size overflow")?;
+        if input.get(size..end) != Some(b"\r\n") {
+            return Err("Truncated or malformed HTTP chunk".into());
+        }
+        out.extend_from_slice(&input[..size]);
+        input = &input[end..];
     }
-    out
 }
 
 /// Checks GitHub Releases (or a custom release JSON URL) for a newer version than `current_version`.
@@ -458,8 +492,7 @@ pub async fn check_latest_release(
     }
 }
 
-/// Downloads the platform installer for `release`, verifies its `.sha256` companion asset when
-/// present, and writes the verified installer into `dest_dir`.
+/// Requires the platform installer's checksum before staging a complete, verified download.
 pub async fn download_and_verify_release(
     release: &ReleaseInfo,
     platform: &str,
@@ -472,47 +505,89 @@ pub async fn download_and_verify_release(
             release.tag_name
         )
     })?;
-    std::fs::create_dir_all(dest_dir)
-        .map_err(|e| format!("Cannot create update directory {}: {e}", dest_dir.display()))?;
-
+    let sha_asset = select_sha256_asset(&release.assets, &asset.name).ok_or_else(|| {
+        format!(
+            "Checksum for {} is not published yet; try again later",
+            asset.name
+        )
+    })?;
+    let sha_bytes = http_get_bytes(&sha_asset.browser_download_url, None).await?;
+    let expected = checksum_token(&sha_bytes)?;
     let bytes = http_get_bytes(&asset.browser_download_url, Some(progress)).await?;
-
-    let mut sha256_verified = false;
-    if let Some(sha_asset) = select_sha256_asset(&release.assets, &asset.name) {
-        let sha_bytes = http_get_bytes(&sha_asset.browser_download_url, None).await?;
-        let sha_text = String::from_utf8_lossy(&sha_bytes);
-        let expected = sha_text
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        let actual = sha256_hex(&bytes);
-        if !expected.is_empty() && expected != actual {
-            return Err(format!(
-                "SHA-256 mismatch for {}: expected {expected}, got {actual}",
-                asset.name
-            ));
-        }
-        sha256_verified = !expected.is_empty();
+    if bytes.is_empty() || (asset.size != 0 && bytes.len() as u64 != asset.size) {
+        return Err(format!("Installer size mismatch for {}", asset.name));
+    }
+    let actual = sha256_hex(&bytes);
+    if !expected.eq_ignore_ascii_case(&actual) {
+        return Err(format!(
+            "SHA-256 mismatch for {}: expected {expected}, got {actual}",
+            asset.name
+        ));
     }
 
-    let out_path = dest_dir.join(&asset.name);
-    std::fs::write(&out_path, &bytes)
-        .map_err(|e| format!("Failed writing installer to {}: {e}", out_path.display()))?;
+    let dest_dir = dest_dir.to_path_buf();
+    let out_path =
+        tokio::task::spawn_blocking(move || stage_installer(&dest_dir, &asset.name, &bytes))
+            .await
+            .map_err(|e| format!("Installer staging interrupted: {e}"))??;
+    Ok((out_path, true))
+}
+
+fn checksum_token(bytes: &[u8]) -> Result<&str, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "Invalid SHA-256 asset encoding")?;
+    let token = text.split_whitespace().next().unwrap_or("");
+    if token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(token)
+    } else {
+        Err("Invalid or empty SHA-256 asset".into())
+    }
+}
+
+fn stage_installer(parent: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create update directory: {e}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let dir = parent.join(format!(
+        "update-{}-{}-{id}",
+        std::process::id(),
+        now.as_nanos()
+    ));
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let ext = out_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if ext == "run" || ext == "appimage" {
-            let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(0o755));
+    let builder = {
+        let mut builder = builder;
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+        builder
+    };
+    builder
+        .create(&dir)
+        .map_err(|e| format!("Cannot stage installer: {e}"))?;
+    let path = dir.join(name);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)?;
+        file.write_all(bytes)?;
+        #[cfg(unix)]
+        if name.to_ascii_lowercase().ends_with(".appimage") {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o700))?;
         }
+        file.sync_all()
+    })();
+    if let Err(err) = result {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+        return Err(format!("Failed staging installer: {err}"));
     }
-    Ok((out_path, sha256_verified))
+    Ok(path)
 }
 
 /// Atomically replaces `target_exe` with `new_bin` by renaming the running binary to `.old`,
@@ -575,7 +650,7 @@ pub fn relaunch_current_executable() -> Result<(), String> {
 }
 
 /// Launches the downloaded native installer (`-setup.pkg` / `.dmg` on macOS, `-setup.exe` on Windows,
-/// `-setup.run` / `.AppImage` / `.deb` on Linux) and performs an in-place binary update when writable.
+/// `-setup.run` / `.AppImage` / `.deb` on Linux). Replaces an existing portable AppImage atomically.
 pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
     if !installer_path.is_file() {
         return Err(format!(
@@ -591,57 +666,27 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
 
     #[cfg(target_os = "macos")]
     {
-        let mut updated_in_place = None;
-        if name.ends_with(".pkg") {
-            let expand_dir = std::env::temp_dir().join(format!(
-                "gulpsuite-pkg-expand-{}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&expand_dir);
-            if std::process::Command::new("pkgutil")
-                .arg("--expand-full")
-                .arg(installer_path)
-                .arg(&expand_dir)
-                .status()
-                .is_ok_and(|s| s.success())
-            {
-                let extracted_bin = expand_dir
-                    .join("gulpsuite-component.pkg/Payload/Applications/Gulpsuite.app/Contents/MacOS/gulpsuite");
-                if extracted_bin.is_file() {
-                    if let Ok(cur) = replace_current_executable(&extracted_bin) {
-                        updated_in_place = Some(cur);
-                    }
-                    let local_app_bin = Path::new("Gulpsuite.app/Contents/MacOS/gulpsuite");
-                    if local_app_bin.is_file() {
-                        let _ = replace_executable_at(local_app_bin, &extracted_bin);
-                    }
-                    let local_app_bin_cap = Path::new("Gulpsuite.app/Contents/MacOS/Gulpsuite");
-                    if local_app_bin_cap.is_file() {
-                        let _ = replace_executable_at(local_app_bin_cap, &extracted_bin);
-                    }
-                }
-                let _ = std::fs::remove_dir_all(&expand_dir);
-            }
+        if !name.ends_with(".pkg") && !name.ends_with(".dmg") {
+            return Err(format!("Unsupported macOS installer: {name}"));
         }
-        std::process::Command::new("open")
+        let status = std::process::Command::new("open")
             .arg(installer_path)
-            .spawn()
-            .map_err(|e| format!("Failed to open macOS installer {}: {e}", name))?;
-        if let Some(cur) = updated_in_place {
-            return Ok(format!(
-                "Updated {} in-place and launched macOS installer ({}). Click 'Relaunch Gulpsuite' to restart.",
-                cur.display(),
-                installer_path.display()
-            ));
+            .status()
+            .map_err(|e| format!("Failed to open macOS installer {name}: {e}"))?;
+        if !status.success() {
+            return Err(format!("macOS could not open installer {name}: {status}"));
         }
         return Ok(format!(
-            "Launched macOS installer: {}",
+            "Opened macOS installer: {}",
             installer_path.display()
         ));
     }
 
     #[cfg(target_os = "windows")]
     {
+        if !name.ends_with("-windows-x64-setup.exe") {
+            return Err(format!("Unsupported Windows installer: {name}"));
+        }
         let mut cmd = std::process::Command::new(installer_path);
         if name.contains("setup") {
             cmd.arg("--install").arg("--yes");
@@ -654,20 +699,25 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
         ));
     }
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    #[cfg(target_os = "linux")]
     {
         if name.ends_with(".appimage") {
-            if let Some(current_appimage) = std::env::var_os("APPIMAGE").map(PathBuf::from) {
-                let _ = replace_executable_at(&current_appimage, installer_path);
-            } else {
-                let _ = replace_current_executable(installer_path);
+            if let Some(current) = std::env::var_os("APPIMAGE") {
+                let current = PathBuf::from(current)
+                    .canonicalize()
+                    .map_err(|e| format!("Cannot locate installed AppImage: {e}"))?;
+                replace_portable_appimage(&current, installer_path)?;
+                return Ok(format!(
+                    "Updated {}. Click 'Relaunch Gulpsuite' to restart.",
+                    current.display()
+                ));
             }
             std::process::Command::new(installer_path)
                 .arg("--appimage-extract-and-run")
                 .spawn()
                 .map_err(|e| format!("Failed to launch updated AppImage {}: {e}", name))?;
             return Ok(format!(
-                "Updated and launched Gulpsuite AppImage: {}",
+                "Started the downloaded AppImage (existing installation unchanged): {}",
                 installer_path.display()
             ));
         }
@@ -682,6 +732,9 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
                 installer_path.display()
             ));
         }
+        if !name.ends_with(".deb") && !name.ends_with(".pkg.tar.gz") {
+            return Err(format!("Unsupported Linux installer: {name}"));
+        }
         std::process::Command::new("xdg-open")
             .arg(installer_path)
             .spawn()
@@ -691,6 +744,34 @@ pub fn launch_installer(installer_path: &Path) -> Result<String, String> {
             installer_path.display()
         ))
     }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    Err(format!(
+        "Installer launch is not supported on this platform: {name}"
+    ))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn replace_portable_appimage(current: &Path, installer: &Path) -> Result<(), String> {
+    if !current.is_file() {
+        return Err("Installed AppImage is not a regular file".into());
+    }
+    let parent = current.parent().ok_or("Cannot locate AppImage directory")?;
+    let bytes =
+        std::fs::read(installer).map_err(|e| format!("Cannot read verified AppImage: {e}"))?;
+    let staged = stage_installer(parent, "replacement.AppImage", &bytes)?;
+    let result = std::fs::rename(&staged, current);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    if let Some(dir) = staged.parent() {
+        let _ = std::fs::remove_dir(dir);
+    }
+    result.map_err(|e| {
+        format!(
+            "Could not replace {}; the existing AppImage is unchanged: {e}",
+            current.display()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -842,5 +923,69 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn updater_rejects_truncated_http_bodies() {
+        for fixture in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabc"[..],
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n"[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: xyz\r\n\r\nabc"[..],
+        ] {
+            assert!(read_http_response(&mut &fixture[..], None).await.is_err());
+        }
+    }
+
+    #[test]
+    fn updater_does_not_select_unlaunchable_or_cross_platform_assets() {
+        let assets: Vec<_> = [
+            "Gulpsuite-windows-arm64-setup.exe",
+            "Gulpsuite-windows-x64.zip",
+            "Gulpsuite-macos-arm64.tar.gz",
+            "../Gulpsuite-linux-x64-setup.run",
+        ]
+        .into_iter()
+        .map(|name| ReleaseAsset {
+            name: name.into(),
+            browser_download_url: "https://example.test/update".into(),
+            size: 1,
+        })
+        .collect();
+        for platform in ["windows-x64", "macos-arm64", "linux-x64", "linux-arm64"] {
+            assert!(
+                select_installer_asset(&assets, platform).is_none(),
+                "{platform}"
+            );
+        }
+    }
+
+    #[test]
+    fn updater_validates_platform_and_checksum_metadata() {
+        assert_eq!(platform_tag("macos", "x86_64"), "macos-x64");
+        assert_eq!(platform_tag("macos", "aarch64"), "macos-arm64");
+        assert_eq!(platform_tag("linux", "x86_64"), "linux-x64");
+        assert_eq!(platform_tag("windows", "x86_64"), "windows-x64");
+        assert_eq!(platform_tag("windows", "aarch64"), "unsupported");
+        assert_eq!(platform_tag("linux", "aarch64"), "unsupported");
+        assert!(checksum_token(b"").is_err());
+        assert!(checksum_token(&[b'z'; 64]).is_err());
+        assert!(
+            checksum_token(format!("{}  Gulpsuite.AppImage\n", "AB".repeat(32)).as_bytes()).is_ok()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn updater_replaces_portable_appimage_only_after_staging() {
+        let current = stage_installer(&std::env::temp_dir(), "Gulpsuite.AppImage", b"old").unwrap();
+        let dir = current.parent().unwrap();
+        let installer = dir.join("Download.AppImage");
+        assert!(replace_portable_appimage(&current, &installer).is_err());
+        assert_eq!(std::fs::read(&current).unwrap(), b"old");
+        std::fs::write(&installer, b"new").unwrap();
+        replace_portable_appimage(&current, &installer).unwrap();
+        assert_eq!(std::fs::read(&current).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir).unwrap().count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
