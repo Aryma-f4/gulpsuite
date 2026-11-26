@@ -198,81 +198,59 @@ pub fn empty_illustration(ui: &mut Ui, colour: eframe::egui::Color32) {
 pub enum ProxyEmptyIcon {
     Intercept,
     History,
+    Frames,
 }
 
 fn proxy_empty_illustration(ui: &mut Ui, icon: ProxyEmptyIcon) {
-    use eframe::egui::{pos2, Color32, Shape, Stroke, Vec2};
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(170.0, 120.0), eframe::egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    let p = |x: f32, y: f32| pos2(rect.left() + x, rect.top() + y);
-    let poly = |points: &[(f32, f32)], fill: Color32| {
-        painter.add(Shape::convex_polygon(
-            points.iter().map(|&(x, y)| p(x, y)).collect(),
-            fill,
-            Stroke::NONE,
-        ));
-    };
+    use eframe::egui::{vec2, Color32, Rect, Stroke, StrokeKind};
+    let (area, _) = ui.allocate_exact_size(vec2(150.0, 108.0), eframe::egui::Sense::hover());
+    let draw = ui.painter_at(area);
+    let pos = |x, y| area.min + vec2(x, y);
+    let box_at = |x, y, w, h| Rect::from_min_size(pos(x, y), vec2(w, h));
     let blue = Color32::from_rgb(39, 105, 162);
-    let light = Color32::from_rgb(149, 183, 215);
-    let dark = Color32::from_rgb(52, 66, 84);
-    let shadow = Color32::from_gray(226);
+    let ink = Color32::from_rgb(34, 66, 91);
+    let paper = Color32::from_rgb(227, 237, 244);
+    let steel = Color32::from_rgb(157, 186, 208);
+    let line = |x, y, xx, yy, color| {
+        draw.line_segment([pos(x, y), pos(xx, yy)], Stroke::new(2.0, color));
+    };
+    // An offset back plate and a single keyline give each object the same depth.
+    let plate = |x, y, w, h| {
+        draw.rect_filled(box_at(x - 4.0, y + 4.0, w, h), 5.0, blue);
+        let front = box_at(x, y, w, h);
+        draw.rect_filled(front, 5.0, paper);
+        draw.rect_stroke(front, 5.0, Stroke::new(2.0, ink), StrokeKind::Inside);
+    };
     match icon {
         ProxyEmptyIcon::Intercept => {
-            for (x, y) in [(38.0, 30.0), (31.0, 75.0), (116.0, 28.0), (121.0, 80.0)] {
-                painter.line_segment([p(x, y), p(x + 22.0, y + 18.0)], Stroke::new(4.0, shadow));
+            draw.rect_filled(box_at(72.0, 70.0, 6.0, 22.0), 2.0, steel);
+            draw.rect_filled(box_at(62.0, 91.0, 26.0, 4.0), 2.0, ink);
+            plate(56.0, 12.0, 42.0, 66.0);
+            for (y, lens) in [(33.0, steel), (59.0, Color32::from_rgb(79, 173, 120))] {
+                draw.circle_filled(pos(77.0, y), 10.0, ink);
+                draw.circle_filled(pos(77.0, y), 7.5, lens);
+                line(74.0, y - 3.0, 77.0, y - 4.0, paper);
             }
-            poly(
-                &[(70.0, 40.0), (84.0, 31.0), (101.0, 40.0), (87.0, 49.0)],
-                blue,
-            );
-            poly(
-                &[(70.0, 40.0), (87.0, 49.0), (87.0, 100.0), (70.0, 91.0)],
-                blue,
-            );
-            poly(
-                &[(87.0, 49.0), (101.0, 40.0), (101.0, 91.0), (87.0, 100.0)],
-                light,
-            );
-            painter.circle_filled(p(92.0, 57.0), 8.0, Color32::from_rgb(208, 221, 232));
-            painter.circle_filled(p(92.0, 57.0), 5.4, Color32::from_rgb(104, 153, 192));
-            painter.circle_filled(p(92.0, 82.0), 8.0, Color32::from_rgb(43, 131, 74));
-            painter.circle_filled(p(94.0, 80.0), 5.0, Color32::from_rgb(61, 172, 44));
-            painter.line_segment(
-                [p(87.0, 100.0), p(87.0, 112.0)],
-                Stroke::new(5.0, Color32::from_gray(192)),
-            );
         }
         ProxyEmptyIcon::History => {
-            poly(
-                &[(24.0, 80.0), (85.0, 45.0), (151.0, 78.0), (89.0, 114.0)],
-                shadow,
-            );
-            poly(
-                &[(25.0, 67.0), (86.0, 32.0), (151.0, 65.0), (89.0, 101.0)],
-                dark,
-            );
-            poly(
-                &[(25.0, 60.0), (86.0, 25.0), (151.0, 58.0), (89.0, 94.0)],
-                blue,
-            );
-            poly(
-                &[
-                    (79.0, 29.0),
-                    (86.0, 25.0),
-                    (151.0, 58.0),
-                    (119.0, 77.0),
-                    (67.0, 45.0),
-                ],
-                light,
-            );
-            painter.circle_stroke(p(114.0, 49.0), 11.0, Stroke::new(2.0, blue));
-            painter.line_segment([p(114.0, 49.0), p(114.0, 44.0)], Stroke::new(1.8, blue));
-            painter.line_segment([p(114.0, 49.0), p(120.0, 50.0)], Stroke::new(1.8, blue));
-            for (x, y, len) in [(48.0, 66.0, 22.0), (55.0, 73.0, 18.0), (62.0, 80.0, 22.0)] {
-                painter.line_segment(
-                    [p(x, y), p(x + len, y - 12.0)],
-                    Stroke::new(3.2, Color32::WHITE),
-                );
+            // A bound request journal with a time stamp and three ruled entries.
+            plate(43.0, 20.0, 69.0, 69.0);
+            draw.rect_filled(box_at(46.0, 23.0, 10.0, 63.0), 2.0, blue);
+            draw.circle_stroke(pos(91.0, 40.0), 10.0, Stroke::new(2.0, ink));
+            line(91.0, 34.0, 91.0, 40.0, ink);
+            line(91.0, 40.0, 96.0, 42.0, ink);
+            for (y, end) in [(59.0, 100.0), (67.0, 100.0), (75.0, 87.0)] {
+                line(65.0, y, end, y, blue);
+            }
+        }
+        ProxyEmptyIcon::Frames => {
+            // Two independent lanes, each travelling toward the other endpoint.
+            plate(29.0, 28.0, 95.0, 52.0);
+            for (y, start, tip, delta) in [(44.0, 43.0, 108.0, -6.0), (64.0, 108.0, 43.0, 6.0)] {
+                draw.circle_filled(pos(start, y), 3.5, blue);
+                line(start, y, tip, y, blue);
+                line(tip + delta, y - 5.0, tip, y, blue);
+                line(tip, y, tip + delta, y + 5.0, blue);
             }
         }
     }

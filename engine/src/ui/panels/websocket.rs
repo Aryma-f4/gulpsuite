@@ -182,7 +182,7 @@ pub fn draw(app: &mut App, ui: &mut Ui, tool: &str) {
             proxy_empty_state(
                 ui,
                 &theme,
-                ProxyEmptyIcon::History,
+                ProxyEmptyIcon::Frames,
                 "WebSockets history is empty",
                 "This history shows WebSocket messages captured by Gulpsuite.",
             )
