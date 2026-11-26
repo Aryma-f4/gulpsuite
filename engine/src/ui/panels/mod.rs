@@ -2827,106 +2827,117 @@ pub fn draw_inspector(
     });
 }
 
-/// Exact Gulpsuite Professional Site Map tree icons (`resources/Media/svg/site-map-*.svg`).
+/// Tree node silhouettes must remain distinguishable without color.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SiteMapIcon {
-    /// `site-map-secure.svg`: Gold padlock (`https://`)
     SecureHost,
-    /// `site-map-insecure.svg`: Open padlock (`http://`)
     InsecureHost,
-    /// `site-map-folder-open.svg`: Yellow folder
     FolderOpen,
-    /// `site-map-dyn-page.svg`: Gold cog/gear for dynamic/parameterized endpoints
     DynPage,
-    /// `site-map-request-with-query.svg`: White document with `?`
     QueryPage,
-    /// `site-map-default.svg`: White document with folded top-right corner
     DefaultPage,
 }
 
-/// Paints a 16x16 Gulp Site Map node icon with an optional bottom-right status/severity indicator dot
-/// (matching `Pro-QSG-5-site-map.png` and `site-map-populated.png`).
+fn sitemap_ink(dark: bool) -> (eframe::egui::Color32, eframe::egui::Color32) {
+    use eframe::egui::Color32 as C;
+    if dark {
+        (C::from_rgb(179, 203, 214), C::from_rgb(65, 89, 105))
+    } else {
+        (C::from_rgb(53, 79, 94), C::from_rgb(210, 226, 233))
+    }
+}
+
 pub fn paint_sitemap_node_icon(
     ui: &mut Ui,
     icon: SiteMapIcon,
-    dot_color: Option<eframe::egui::Color32>,
+    dot: Option<eframe::egui::Color32>,
+    dark: bool,
 ) {
-    use eframe::egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Vec2, pos2};
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
-    let painter = ui.painter_at(rect);
-    let u = rect.width() / 16.0;
-    let p = |x: f32, y: f32| -> Pos2 { pos2(rect.min.x + x * u, rect.min.y + y * u) };
-    let dark_outline = Color32::from_rgb(0x6E, 0x5B, 0x2B);
-
+    use eframe::egui::{Rect, Sense, Shape, Stroke, StrokeKind, vec2};
+    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+    let g = ui.painter_at(r);
+    let pt = |x, y| r.min + vec2(x, y);
+    let (ink, face) = sitemap_ink(dark);
+    let line = Stroke::new(1.25, ink);
     match icon {
         SiteMapIcon::SecureHost | SiteMapIcon::InsecureHost => {
-            // Shackle
-            let shackle_stroke = Stroke::new(1.5 * u, Color32::from_rgb(0x70, 0x72, 0x76));
-            if icon == SiteMapIcon::SecureHost {
-                painter.add(Shape::line(
-                    vec![p(5.2, 7.2), p(5.2, 4.0), p(8.0, 2.2), p(10.8, 4.0), p(10.8, 7.2)],
-                    shackle_stroke,
-                ));
+            let end = if icon == SiteMapIcon::SecureHost {
+                8.0
             } else {
-                painter.add(Shape::line(
-                    vec![p(5.2, 7.2), p(5.2, 4.0), p(8.0, 2.2), p(11.4, 3.6)],
-                    shackle_stroke,
-                ));
-            }
-            // Gold body (`#F5C242`)
-            let body = Rect::from_min_max(p(3.0, 7.0), p(13.0, 14.5));
-            painter.rect_filled(body, 1.5 * u, Color32::from_rgb(0xF5, 0xC2, 0x42));
-            painter.rect_stroke(body, 1.5 * u, Stroke::new(1.0 * u, dark_outline), StrokeKind::Inside);
-            painter.circle_filled(p(8.0, 10.6), 1.0 * u, dark_outline);
+                4.5
+            };
+            g.add(Shape::line(
+                vec![
+                    pt(5., 8.),
+                    pt(5., 4.),
+                    pt(6.5, 2.5),
+                    pt(9.5, 2.5),
+                    pt(11., 4.),
+                    pt(11., end),
+                ],
+                line,
+            ));
+            g.rect(
+                Rect::from_min_max(pt(2.5, 7.), pt(13.5, 14.5)),
+                2.,
+                face,
+                line,
+                StrokeKind::Inside,
+            );
         }
         SiteMapIcon::FolderOpen => {
-            // Yellow folder (`#F5C242` with `#8A6D29` border)
-            painter.add(Shape::convex_polygon(
-                vec![p(1.5, 3.5), p(6.2, 3.5), p(7.6, 5.2), p(14.0, 5.2), p(14.0, 13.5), p(1.5, 13.5)],
-                Color32::from_rgb(0xF5, 0xC2, 0x42),
-                Stroke::new(1.0 * u, dark_outline),
+            g.add(Shape::line(
+                vec![
+                    pt(2., 12.),
+                    pt(2., 3.5),
+                    pt(6., 3.5),
+                    pt(8., 5.5),
+                    pt(13., 5.5),
+                ],
+                line,
             ));
-            painter.line_segment([p(1.5, 6.8), p(14.2, 6.8)], Stroke::new(1.0 * u, dark_outline));
+            g.add(Shape::convex_polygon(
+                vec![pt(2., 13.), pt(4., 7.), pt(15., 7.), pt(13., 13.)],
+                face,
+                line,
+            ));
         }
         SiteMapIcon::DynPage => {
-            // Gold gear (`#D8A42A`)
-            let gold = Color32::from_rgb(0xD8, 0xA4, 0x2A);
-            painter.circle_filled(p(8.0, 8.0), 4.6 * u, gold);
-            painter.circle_stroke(p(8.0, 8.0), 4.8 * u, Stroke::new(1.0 * u, dark_outline));
-            for i in 0..8 {
-                let a = (i as f32) * std::f32::consts::FRAC_PI_4;
-                let (s, c) = a.sin_cos();
-                painter.line_segment(
-                    [p(8.0 + c * 4.5, 8.0 + s * 4.5), p(8.0 + c * 6.4, 8.0 + s * 6.4)],
-                    Stroke::new(1.6 * u, dark_outline),
-                );
+            // Two sliders denote a parameterized endpoint, even at 1x scale.
+            for (y, x) in [(5., 6.), (11., 10.)] {
+                g.line_segment([pt(2., y), pt(14., y)], line);
+                g.circle(pt(x, y), 2.2, face, line);
             }
-            painter.circle_filled(p(8.0, 8.0), 1.8 * u, Color32::WHITE);
         }
         SiteMapIcon::QueryPage | SiteMapIcon::DefaultPage => {
-            // Document page with folded top-right corner
-            let doc_stroke = Stroke::new(1.1 * u, Color32::from_rgb(0x7A, 0x72, 0x58));
-            painter.add(Shape::convex_polygon(
-                vec![p(3.0, 1.8), p(10.0, 1.8), p(13.0, 4.8), p(13.0, 14.2), p(3.0, 14.2)],
-                Color32::from_rgb(0xFA, 0xFA, 0xF8),
-                doc_stroke,
+            g.add(Shape::convex_polygon(
+                vec![
+                    pt(3., 1.5),
+                    pt(9., 1.5),
+                    pt(13., 5.5),
+                    pt(13., 14.5),
+                    pt(3., 14.5),
+                ],
+                face,
+                line,
             ));
-            painter.add(Shape::line(vec![p(9.8, 1.8), p(9.8, 5.0), p(13.0, 5.0)], doc_stroke));
+            g.add(Shape::line(
+                vec![pt(9., 2.), pt(9., 5.5), pt(12.5, 5.5)],
+                line,
+            ));
             if icon == SiteMapIcon::QueryPage {
-                painter.text(
-                    p(8.0, 9.5),
-                    eframe::egui::Align2::CENTER_CENTER,
-                    "?",
-                    eframe::egui::FontId::proportional(9.5 * u),
-                    Color32::from_rgb(0x6E, 0x5B, 0x2B),
-                );
+                g.line_segment([pt(5.5, 9.), pt(10.5, 9.)], line);
+                g.line_segment([pt(5.5, 11.5), pt(10.5, 11.5)], line);
             }
         }
     }
-
-    if let Some(dot) = dot_color {
-        painter.circle_filled(p(12.8, 12.6), 3.1 * u, Color32::WHITE);
-        painter.circle_filled(p(12.8, 12.6), 2.5 * u, dot);
+    if let Some(dot) = dot {
+        g.circle(
+            pt(13., 13.),
+            2.5,
+            dot,
+            Stroke::new(0.8, ui.visuals().panel_fill),
+        );
     }
 }
 

@@ -1,7 +1,7 @@
 //! Target (`Pro-QSG-5-site-map.png`, `site-map-populated.png`, `site-map-target-scope.png`):
 //! - `Site map`: `[ URL view | Crawl paths view ]` segmented pill + `Filter: Hiding not found items; ...` bar,
-//!   resizable Left Tree Pane (hierarchical host/folder/endpoint tree with Gold Padlock, Yellow Folder,
-//!   Gold Gear, and Document `?` SVG icons + severity dots) and Right Details Pane (`Contents | Issues`
+//!   resizable Left Tree Pane (hierarchical host/folder/endpoint tree with lock, folder,
+//!   parameter, and document glyphs + severity dots) and Right Details Pane (`Contents | Issues`
 //!   sub-tabs with `Host | Method | URL | Params | Status Code | Length | MIME type | Title` table on top
 //!   and `Request | Response` with `Pretty | Raw | Hex | Render` formatter bars + line-numbered HTTP below).
 //! - `Scope`: `Target scope` with `[ ] Use advanced scope control`, `Include in scope` & `Exclude from scope`
@@ -1993,76 +1993,26 @@ fn render_paragraph_with_inline_links(
     });
 }
 
-/// Paints the exact `resources/Media/svg/light/site-map.svg` (`90 x 63` viewBox) 3-isometric-diamonds icon.
-fn paint_site_map_empty_icon(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(90.0, 63.0), egui::Sense::hover());
-    let p = ui.painter_at(rect);
-    let o = rect.min;
-    let shadow_col = Color32::from_rgb(0xE6, 0xE6, 0xE6);
-    let branch_col = Color32::from_rgb(0x92, 0xB1, 0xCE);
-    let card_col = Color32::from_rgb(0x26, 0x64, 0x9D);
-
-    let iso_diamond = |cx: f32, cy: f32, rx: f32, ry: f32| -> Vec<egui::Pos2> {
-        vec![
-            egui::pos2(o.x + cx, o.y + cy - ry),
-            egui::pos2(o.x + cx + rx, o.y + cy),
-            egui::pos2(o.x + cx, o.y + cy + ry),
-            egui::pos2(o.x + cx - rx, o.y + cy),
-        ]
-    };
-
-    // Shadow branches & isometric cards (`#E6E6E6`)
-    p.line_segment(
-        [egui::pos2(o.x + 32.0, o.y + 27.0), egui::pos2(o.x + 64.0, o.y + 42.0)],
-        Stroke::new(2.0_f32, shadow_col),
-    );
-    p.line_segment(
-        [egui::pos2(o.x + 48.0, o.y + 34.5), egui::pos2(o.x + 58.0, o.y + 29.5)],
-        Stroke::new(2.0_f32, shadow_col),
-    );
-    for (cx, cy) in [(23.8f32, 33.5f32), (67.5, 24.9), (53.1, 50.5)] {
-        p.add(egui::Shape::convex_polygon(
-            iso_diamond(cx, cy, 18.0, 10.5),
-            shadow_col,
-            Stroke::NONE,
-        ));
-    }
-
-    // Connecting branches (`#92B1CE`)
-    p.line_segment(
-        [egui::pos2(o.x + 32.0, o.y + 22.0), egui::pos2(o.x + 64.0, o.y + 37.0)],
-        Stroke::new(2.0_f32, branch_col),
-    );
-    p.line_segment(
-        [egui::pos2(o.x + 48.0, o.y + 29.5), egui::pos2(o.x + 58.0, o.y + 24.5)],
-        Stroke::new(2.0_f32, branch_col),
-    );
-
-    // 3 blue isometric cards (`#26649D`) + 2 white lines inside each card
-    for (cx, cy) in [(22.9f32, 28.4f32), (66.7, 19.8), (52.3, 45.4)] {
-        p.add(egui::Shape::convex_polygon(
-            iso_diamond(cx, cy, 18.5, 11.0),
-            card_col,
-            Stroke::NONE,
-        ));
-        p.line_segment(
-            [
-                egui::pos2(o.x + cx - 4.0, o.y + cy - 3.0),
-                egui::pos2(o.x + cx + 4.5, o.y + cy + 1.8),
-            ],
-            Stroke::new(1.9_f32, Color32::WHITE),
-        );
-        p.line_segment(
-            [
-                egui::pos2(o.x + cx - 8.0, o.y + cy - 0.5),
-                egui::pos2(o.x + cx + 0.5, o.y + cy + 4.3),
-            ],
-            Stroke::new(1.9_f32, Color32::WHITE),
-        );
+/// A host and two routes, using the same paper and outline as the tree below.
+fn paint_site_map_empty_icon(ui: &mut Ui, dark: bool) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(96., 68.), egui::Sense::hover());
+    let g = ui.painter_at(r);
+    let pt = |x, y| r.min + Vec2::new(x, y);
+    let (ink, paper) = super::sitemap_ink(dark);
+    let stroke = Stroke::new(1.5, ink);
+    g.line_segment([pt(48., 23.), pt(48., 34.)], stroke);
+    g.add(egui::Shape::line(
+        vec![pt(24., 45.), pt(24., 34.), pt(72., 34.), pt(72., 45.)],
+        stroke,
+    ));
+    for (x, y, w) in [(48., 15., 32.), (24., 52., 25.), (72., 52., 25.)] {
+        let rect = egui::Rect::from_center_size(pt(x, y), Vec2::new(w, 16.));
+        g.rect(rect, 2., paper, stroke, egui::StrokeKind::Inside);
+        g.line_segment([pt(x - w / 2. + 5., y), pt(x + w / 2. - 5., y)], stroke);
     }
 }
 
-/// Draws a single row in the left Site map tree with vector connector lines, `#CFE0F5` selection highlight,
+/// Draws a single row in the left Site map tree with vector connector lines, a muted blue selection highlight,
 /// chevron (`⌄`/`›`), node icon, and label (`Pro-QSG-5-site-map.png` & `site-map-populated.png`).
 #[allow(clippy::too_many_arguments)]
 fn draw_sitemap_tree_row(
@@ -2097,9 +2047,9 @@ fn draw_sitemap_tree_row(
     let p = ui.painter_at(rect);
     if selected {
         let sel_fill = if theme.dark {
-            Color32::from_rgb(0x2A, 0x3E, 0x5C)
+            Color32::from_rgb(39, 65, 86)
         } else {
-            Color32::from_rgb(0xCF, 0xE0, 0xF5)
+            Color32::from_rgb(207, 226, 240)
         };
         p.rect_filled(rect.shrink2(egui::vec2(2.0, 0.5)), 4.0, sel_fill);
     } else if resp.hovered() {
@@ -2174,7 +2124,7 @@ fn draw_sitemap_tree_row(
             .max_rect(icon_rect)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    paint_sitemap_node_icon(&mut icon_ui, icon, dot_color);
+    paint_sitemap_node_icon(&mut icon_ui, icon, dot_color, theme.dark);
     cursor_x += 20.0;
 
     // Node text label (truncated to fit row width so long hosts never overflow)
@@ -2227,7 +2177,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                 } else {
                     Color32::from_rgb(0xE0, 0xE0, 0xE0)
                 };
-                let active_blue = Color32::from_rgb(0x1B, 0x56, 0x99);
+                let active_blue = Color32::from_rgb(39, 105, 162);
                 let inactive_fg = if theme.dark {
                     Color32::from_rgb(0xD8, 0xDC, 0xE2)
                 } else {
@@ -2458,7 +2408,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                 let top_pad = ((avail.y - 260.0) * 0.42).max(40.0);
                 ui.vertical_centered(|ui| {
                     ui.add_space(top_pad);
-                    paint_site_map_empty_icon(ui);
+                    paint_site_map_empty_icon(ui, theme.dark);
                     ui.add_space(16.0);
                     ui.label(
                         RichText::new(title)
@@ -2519,7 +2469,7 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                         .strong()
                                         .color(Color32::WHITE),
                                 )
-                                .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
+                                .fill(Color32::from_rgb(39, 105, 162))
                                 .stroke(Stroke::NONE)
                                 .corner_radius(4.0)
                                 .min_size(Vec2::new(114.0, 28.0)),
@@ -3199,9 +3149,9 @@ fn draw_site_map(app: &mut App, ui: &mut Ui) {
                                                     );
                                                     let row_fill = if is_sel {
                                                         if theme.dark {
-                                                            Color32::from_rgb(0x2A, 0x3E, 0x5C)
+                                                            Color32::from_rgb(39, 65, 86)
                                                         } else {
-                                                            Color32::from_rgb(0xC3, 0xD9, 0xF6)
+                                                            Color32::from_rgb(207, 226, 240)
                                                         }
                                                     } else if row_ord % 2 == 1 {
                                                         theme.color("ui.background.1")

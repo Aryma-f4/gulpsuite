@@ -1559,3 +1559,29 @@ fn collaborator_radar_uses_themed_signal() {
         assert!(frame.pixels().filter(|p| p.0 == signal).count() >= 12, "missing radar signal (dark={dark})");
     }
 }
+
+#[test]
+fn sitemap_illustrations_follow_the_tree_palette() {
+    for dark in [false, true] {
+        let mut h = harness(dark, 1440.0);
+        h.get_by_label("Target").click();
+        h.run();
+        for populated in [false, true] {
+            if populated {
+                h.state_mut().log.push_back(gulpsuite::ui::app::Transaction {
+                    method: "GET".into(), target: "https://example.test/docs/page?q=1".into(),
+                    host: "example.test".into(), status: 200, secure: true, bytes: 0,
+                    request: String::new(), response: String::new(), truncated: false,
+                });
+                h.state_mut().log_version += 1;
+                h.run();
+            }
+            let image = h.render().unwrap();
+            if let Ok(dir) = std::env::var("GULP_PROXY_UI_SHOTS") {
+                image.save(std::path::Path::new(&dir).join(format!("sitemap-{dark}-{populated}.png"))).unwrap();
+            }
+            let face = if dark { [65, 89, 105, 255] } else { [210, 226, 233, 255] };
+            assert!(image.pixels().filter(|p| p.0 == face).count() >= 8, "missing tree node fill: dark={dark}, populated={populated}");
+        }
+    }
+}
