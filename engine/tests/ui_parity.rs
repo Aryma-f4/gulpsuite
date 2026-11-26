@@ -1544,3 +1544,18 @@ fn proxy_empty_views_render_the_new_illustrations() {
     }
     assert!(missing.is_empty(), "missing proxy illustration pixels: {missing:?}");
 }
+
+#[test]
+fn collaborator_radar_uses_themed_signal() {
+    for dark in [false, true] {
+        let mut h = harness(dark, 1440.0);
+        h.get_by_label("Collaborator").click();
+        h.run();
+        let frame = h.render().expect("render Collaborator");
+        let signal = if dark { [111, 219, 200, 255] } else { [19, 122, 111, 255] };
+        if let Ok(dir) = std::env::var("GULP_PROXY_UI_SHOTS") {
+            frame.save(std::path::Path::new(&dir).join(format!("radar-{dark}.png"))).unwrap();
+        }
+        assert!(frame.pixels().filter(|p| p.0 == signal).count() >= 12, "missing radar signal (dark={dark})");
+    }
+}

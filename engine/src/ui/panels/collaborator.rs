@@ -107,99 +107,30 @@ pub fn generate_payloads(app: &mut App, count: usize, include_location: bool) ->
         .collect()
 }
 
-/// Paints the exact `resources/Media/svg/light/collaborator.svg` (`112 x 67` viewBox) isometric
-/// radar dish with 3 `#FF7648` orange ping dots and `#7B61FF` sweep cone.
-fn paint_collaborator_radar_svg(ui: &mut Ui, dark: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(112.0, 67.0), Sense::hover());
-    let p = ui.painter_at(rect);
-    let o = rect.min;
-    let iso = |cx: f32, cy: f32, r: f32| -> Vec<egui::Pos2> {
-        (0..36)
-            .map(|i| {
-                let a = (i as f32) * std::f32::consts::TAU / 36.0;
-                let (s, c) = a.sin_cos();
-                let x = 0.866_025 * r * c - 0.866_025 * r * s + cx;
-                let y = 0.5 * r * c + 0.5 * r * s + cy;
-                pos2(o.x + x, o.y + y)
-            })
-            .collect()
-    };
-
-    let shadow_fill = if dark {
-        Color32::from_rgb(0x2A, 0x2E, 0x36)
+/// Compact radar receiver; the sweep and its return share one signal color.
+fn paint_collaborator_radar(ui: &mut Ui, dark: bool) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(112.0, 76.0), Sense::hover());
+    let p = ui.painter_at(r);
+    let c = r.center();
+    let (ink, face, grid, signal) = if dark {
+        (Color32::from_rgb(158,191,216), Color32::from_rgb(35,55,72),
+         Color32::from_rgb(78,104,126), Color32::from_rgb(111,219,200))
     } else {
-        Color32::from_rgb(0xCA, 0xCA, 0xCD)
+        (Color32::from_rgb(34,67,91), Color32::from_rgb(228,238,245),
+         Color32::from_rgb(148,177,196), Color32::from_rgb(19,122,111))
     };
-    let dish_fill = if dark {
-        Color32::from_rgb(0x1E, 0x33, 0x4A)
-    } else {
-        Color32::from_rgb(0xBD, 0xD0, 0xE1)
-    };
-    let blue_stroke = Color32::from_rgb(0x26, 0x64, 0x9D);
-    let ping_orange = Color32::from_rgb(0xFF, 0x76, 0x48);
-
-    // Base shadow ellipse & main dish ellipse
-    p.add(egui::Shape::convex_polygon(
-        iso(56.0, 38.68, 31.8),
-        shadow_fill,
-        Stroke::NONE,
-    ));
-    p.add(egui::Shape::convex_polygon(
-        iso(56.0, 32.32, 30.3),
-        dish_fill,
-        Stroke::new(2.2_f32, blue_stroke),
-    ));
-
-    // Isometric crosshairs
-    p.line_segment(
-        [pos2(o.x + 81.35, o.y + 17.68), pos2(o.x + 30.10, o.y + 47.27)],
-        Stroke::new(1.0_f32, blue_stroke),
-    );
-    p.line_segment(
-        [pos2(o.x + 81.35, o.y + 47.27), pos2(o.x + 30.10, o.y + 17.68)],
-        Stroke::new(1.0_f32, blue_stroke),
-    );
-
-    // Inner concentric isometric rings
-    p.add(egui::Shape::closed_line(
-        iso(56.0, 32.32, 21.9),
-        Stroke::new(
-            1.4_f32,
-            Color32::from_rgba_unmultiplied(0x26, 0x64, 0x9D, 130),
-        ),
-    ));
-    p.add(egui::Shape::closed_line(
-        iso(56.0, 32.32, 13.0),
-        Stroke::new(
-            1.4_f32,
-            Color32::from_rgba_unmultiplied(0x26, 0x64, 0x9D, 190),
-        ),
-    ));
-
-    // `#7B61FF` radar sweep sector (`M89.62 24.36 L55.45 32.00 L87.41 41.55 Z`)
-    p.add(egui::Shape::convex_polygon(
-        vec![
-            pos2(o.x + 89.62, o.y + 24.36),
-            pos2(o.x + 55.45, o.y + 32.00),
-            pos2(o.x + 87.41, o.y + 41.55),
-        ],
-        Color32::from_rgba_unmultiplied(0x7B, 0x61, 0xFF, 110),
-        Stroke::NONE,
-    ));
-
-    // 3 `#FF7648` ping dots + center `#26649D` hub dot
-    for (px, py) in [(53.80_f32, 17.05_f32), (61.51, 40.59), (20.73, 39.95)] {
-        p.add(egui::Shape::convex_polygon(
-            iso(px, py, 3.8),
-            ping_orange,
-            Stroke::NONE,
-        ));
+    p.circle_filled(c + Vec2::new(-3.0, 3.0), 32.0, Color32::from_rgb(39,105,162));
+    p.circle(c, 32.0, face, Stroke::new(2.0, ink));
+    for radius in [12.0, 23.0] {
+        p.circle_stroke(c, radius, Stroke::new(1.0, grid));
     }
-    p.add(egui::Shape::convex_polygon(
-        iso(56.0, 32.32, 2.55),
-        blue_stroke,
-        Stroke::NONE,
-    ));
+    for axis in [Vec2::X, Vec2::Y] {
+        p.line_segment([c-axis*28.0,c+axis*28.0], Stroke::new(1.0, grid));
+    }
+    let tip = c + Vec2::new(22.0, -16.0);
+    p.line_segment([c, tip], Stroke::new(2.0, signal));
+    p.circle_filled(c + Vec2::new(16.5, -12.0), 3.8, signal);
+    p.circle_filled(c, 2.8, ink);
 }
 
 pub fn draw(app: &mut App, ui: &mut Ui) {
@@ -314,7 +245,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                 pos2(cell_rect.max.x, cell_rect.max.y),
                             ),
                             0.0,
-                            Color32::from_rgb(0xE0, 0x53, 0x20),
+                            Color32::from_rgb(39, 105, 162),
                         );
                     }
                     if ui.rect_contains_pointer(cell_rect) {
@@ -578,7 +509,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                 let top_pad = ((avail.y - 260.0) * 0.40).max(36.0);
                 ui.vertical_centered(|ui| {
                     ui.add_space(top_pad);
-                    paint_collaborator_radar_svg(ui, theme.dark);
+                    paint_collaborator_radar(ui, theme.dark);
                     ui.add_space(16.0);
                     ui.label(
                         RichText::new("Collaborator")
@@ -634,7 +565,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                         .strong()
                                         .color(Color32::WHITE),
                                 )
-                                .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
+                                .fill(Color32::from_rgb(39, 105, 162))
                                 .stroke(Stroke::NONE)
                                 .corner_radius(4.0)
                                 .min_size(Vec2::new(120.0, 28.0)),
@@ -792,9 +723,9 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                             );
                             let row_fill = if selected {
                                 if theme.dark {
-                                    Color32::from_rgb(0x4A, 0x35, 0x25)
+                                    Color32::from_rgb(39, 65, 86)
                                 } else {
-                                    Color32::from_rgb(0xF6, 0xC6, 0x9F) // Exact peach/orange selection from `gulp-collaborator-tut-4-polling-for-interactions.png`
+                                    Color32::from_rgb(207, 226, 240)
                                 }
                             } else if let Some(hl) = hit_snapshot.highlight {
                                 match hl {
@@ -1017,7 +948,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                         pos2(rect.max.x + 4.0, rect.max.y + 5.0),
                                     ),
                                     0.0,
-                                    Color32::from_rgb(0xE0, 0x53, 0x20),
+                                    Color32::from_rgb(39, 105, 162),
                                 );
                             }
                             if r.clicked() {
