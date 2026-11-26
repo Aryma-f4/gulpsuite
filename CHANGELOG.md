@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5
+
+### UI refinements
+- Redesigned Proxy empty-state illustrations for Intercept, HTTP history, and WebSockets history.
+- Refined the Collaborator radar and the Target site map's topology and tree icons for light and dark themes.
+- Standardized primary action buttons on the reference orange in both themes.
+
 ## 0.2.4
 
 ### Updater stability
