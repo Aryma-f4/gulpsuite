@@ -193,6 +193,148 @@ pub fn empty_illustration(ui: &mut Ui, colour: eframe::egui::Color32) {
     }
 }
 
+/// Proxy empty-view artwork, drawn as vectors so it stays crisp at every UI scale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyEmptyIcon {
+    Intercept,
+    History,
+}
+
+fn proxy_empty_illustration(ui: &mut Ui, icon: ProxyEmptyIcon) {
+    use eframe::egui::{pos2, Color32, Shape, Stroke, Vec2};
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(170.0, 120.0), eframe::egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let p = |x: f32, y: f32| pos2(rect.left() + x, rect.top() + y);
+    let poly = |points: &[(f32, f32)], fill: Color32| {
+        painter.add(Shape::convex_polygon(
+            points.iter().map(|&(x, y)| p(x, y)).collect(),
+            fill,
+            Stroke::NONE,
+        ));
+    };
+    let blue = Color32::from_rgb(39, 105, 162);
+    let light = Color32::from_rgb(149, 183, 215);
+    let dark = Color32::from_rgb(52, 66, 84);
+    let shadow = Color32::from_gray(226);
+    match icon {
+        ProxyEmptyIcon::Intercept => {
+            for (x, y) in [(38.0, 30.0), (31.0, 75.0), (116.0, 28.0), (121.0, 80.0)] {
+                painter.line_segment([p(x, y), p(x + 22.0, y + 18.0)], Stroke::new(4.0, shadow));
+            }
+            poly(
+                &[(70.0, 40.0), (84.0, 31.0), (101.0, 40.0), (87.0, 49.0)],
+                blue,
+            );
+            poly(
+                &[(70.0, 40.0), (87.0, 49.0), (87.0, 100.0), (70.0, 91.0)],
+                blue,
+            );
+            poly(
+                &[(87.0, 49.0), (101.0, 40.0), (101.0, 91.0), (87.0, 100.0)],
+                light,
+            );
+            painter.circle_filled(p(92.0, 57.0), 8.0, Color32::from_rgb(208, 221, 232));
+            painter.circle_filled(p(92.0, 57.0), 5.4, Color32::from_rgb(104, 153, 192));
+            painter.circle_filled(p(92.0, 82.0), 8.0, Color32::from_rgb(43, 131, 74));
+            painter.circle_filled(p(94.0, 80.0), 5.0, Color32::from_rgb(61, 172, 44));
+            painter.line_segment(
+                [p(87.0, 100.0), p(87.0, 112.0)],
+                Stroke::new(5.0, Color32::from_gray(192)),
+            );
+        }
+        ProxyEmptyIcon::History => {
+            poly(
+                &[(24.0, 80.0), (85.0, 45.0), (151.0, 78.0), (89.0, 114.0)],
+                shadow,
+            );
+            poly(
+                &[(25.0, 67.0), (86.0, 32.0), (151.0, 65.0), (89.0, 101.0)],
+                dark,
+            );
+            poly(
+                &[(25.0, 60.0), (86.0, 25.0), (151.0, 58.0), (89.0, 94.0)],
+                blue,
+            );
+            poly(
+                &[
+                    (79.0, 29.0),
+                    (86.0, 25.0),
+                    (151.0, 58.0),
+                    (119.0, 77.0),
+                    (67.0, 45.0),
+                ],
+                light,
+            );
+            painter.circle_stroke(p(114.0, 49.0), 11.0, Stroke::new(2.0, blue));
+            painter.line_segment([p(114.0, 49.0), p(114.0, 44.0)], Stroke::new(1.8, blue));
+            painter.line_segment([p(114.0, 49.0), p(120.0, 50.0)], Stroke::new(1.8, blue));
+            for (x, y, len) in [(48.0, 66.0, 22.0), (55.0, 73.0, 18.0), (62.0, 80.0, 22.0)] {
+                painter.line_segment(
+                    [p(x, y), p(x + len, y - 12.0)],
+                    Stroke::new(3.2, Color32::WHITE),
+                );
+            }
+        }
+    }
+}
+
+pub fn proxy_empty_state(
+    ui: &mut Ui,
+    theme: &Theme,
+    icon: ProxyEmptyIcon,
+    title: &str,
+    description: &str,
+) -> (bool, bool) {
+    let mut learned = false;
+    let mut opened = false;
+    ui.add_space((ui.available_height() * 0.28).clamp(50.0, 220.0));
+    ui.vertical_centered(|ui| {
+        proxy_empty_illustration(ui, icon);
+        ui.add_space(18.0);
+        crate::ui::app::bold_text(ui, title, 22.0, theme.color("ui.text.header"));
+        ui.add_space(22.0);
+        ui.add_sized(
+            [560.0_f32.min(ui.available_width()), 48.0],
+            eframe::egui::Label::new(
+                eframe::egui::RichText::new(description)
+                    .size(14.0)
+                    .color(theme.color("ui.text.body")),
+            )
+            .wrap()
+            .halign(eframe::egui::Align::Center),
+        );
+        ui.add_space(26.0);
+        ui.horizontal(|ui| {
+            ui.add_space(((ui.available_width() - 256.0) / 2.0).max(0.0));
+            if ui
+                .add_sized(
+                    [108.0, 28.0],
+                    eframe::egui::Button::new(crate::ui::app::bold_label("Learn more")),
+                )
+                .clicked()
+            {
+                learned = true;
+            }
+            ui.add_space(14.0);
+            if ui
+                .add_sized(
+                    [134.0, 28.0],
+                    eframe::egui::Button::new(
+                        eframe::egui::RichText::new("Open browser")
+                            .strong()
+                            .color(eframe::egui::Color32::WHITE),
+                    )
+                    .fill(theme.color("ui.icon.link")),
+                )
+                .clicked()
+            {
+                opened = true;
+            }
+        });
+    });
+    (learned, opened)
+}
+
 /// Centered Gulp-style empty state: isometric icon, 20px bold headline, description,
 /// and optional `Learn more` + primary action buttons. Returns `(learn_more_clicked, primary_clicked)`.
 pub fn empty_state(

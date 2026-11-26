@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::rc::Rc;
 
-use super::{heading, muted};
+use super::{heading, muted, proxy_empty_state, ProxyEmptyIcon};
 use crate::ui::app::{App, WsConnection, WsMessage};
 use base64::Engine;
 use eframe::egui::{self, RichText, Ui};
@@ -178,14 +178,27 @@ fn prettify(text: &str) -> String {
 pub fn draw(app: &mut App, ui: &mut Ui, tool: &str) {
     let theme = app.theme.clone();
     if app.websockets.is_empty() {
-        let (learn, _) = super::empty_state(
-            ui,
-            &theme,
-            "WebSockets history is empty",
-            "This history shows WebSocket messages captured by Gulpsuite.",
-            true,
-            None,
-        );
+        let (learn, open_browser) = if tool == "Proxy" {
+            proxy_empty_state(
+                ui,
+                &theme,
+                ProxyEmptyIcon::History,
+                "WebSockets history is empty",
+                "This history shows WebSocket messages captured by Gulpsuite.",
+            )
+        } else {
+            super::empty_state(
+                ui,
+                &theme,
+                "WebSockets history is empty",
+                "This history shows WebSocket messages captured by Gulpsuite.",
+                true,
+                None,
+            )
+        };
+        if open_browser {
+            app.open_browser();
+        }
         if learn {
             ui.ctx().open_url(egui::OpenUrl::new_tab(HISTORY_DOC));
         }

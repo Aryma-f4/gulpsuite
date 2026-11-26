@@ -1513,3 +1513,34 @@ fn match_and_replace_add_opens_an_editable_rule_dialog() {
     harness.run();
     assert!(harness.query_by_label("HTTP match and replace rule").is_none());
 }
+
+#[test]
+fn proxy_empty_views_render_the_new_illustrations() {
+    let mut harness = harness(false, 1440.0);
+    harness.get_by_label("Proxy").click();
+    harness.run();
+    harness.get_by_label("Intercept is on").click();
+    harness.run();
+    let mut missing = Vec::new();
+    for (tab, title) in [
+        ("Intercept", "Intercept is off — traffic passes through"),
+        ("HTTP history", "HTTP history is empty"),
+        ("WebSockets history", "WebSockets history is empty"),
+    ] {
+        harness.get_by_label(tab).click();
+        harness.run();
+        assert!(harness.query_by_label(title).is_some());
+        let frame = harness.render().expect("render proxy empty view");
+        let (width, height) = (frame.width(), frame.height());
+        let blue = frame.enumerate_pixels().filter(|(x, y, p)| {
+            *x > width / 3 && *x < width * 2 / 3 && *y > 100 && *y < height * 2 / 3
+                && p.0 == [39, 105, 162, 255]
+        }).count();
+        if blue < 100 { missing.push((tab, blue)); }
+        if let Ok(dir) = std::env::var("GULP_PROXY_UI_SHOTS") {
+            let name = format!("{}.png", tab.to_ascii_lowercase().replace(' ', "-"));
+            frame.save(std::path::Path::new(&dir).join(name)).unwrap();
+        }
+    }
+    assert!(missing.is_empty(), "missing proxy illustration pixels: {missing:?}");
+}

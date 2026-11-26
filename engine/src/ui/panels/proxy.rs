@@ -2,7 +2,9 @@
 
 use eframe::egui::Ui;
 
-use super::{empty_state, heading, horizontal_resize_handle, muted, vertical_split};
+use super::{
+    heading, horizontal_resize_handle, muted, proxy_empty_state, vertical_split, ProxyEmptyIcon,
+};
 use crate::ui::app::App;
 
 #[derive(Clone, Default)]
@@ -1868,15 +1870,14 @@ fn intercept(app: &mut App, ui: &mut Ui) {
         } else {
             "Intercept is off — traffic passes through"
         };
-        let (learn, open_browser) = empty_state(
+        let (learn, open_browser) = proxy_empty_state(
             ui,
             &theme,
+            ProxyEmptyIcon::Intercept,
             title,
             "If you turn Intercept on, messages between Gulp's browser and your target servers \
              are held here. This enables you to analyze and modify these messages, before you \
              forward them.",
-            true,
-            Some("Open browser"),
         );
         if learn {
             app.status =
@@ -2326,14 +2327,13 @@ fn history_cell(
 fn history(app: &mut App, ui: &mut Ui) {
     let theme = app.theme.clone();
     if app.log.is_empty() {
-        let (learn, open_browser) = empty_state(
+        let (learn, open_browser) = proxy_empty_state(
             ui,
             &theme,
+            ProxyEmptyIcon::History,
             "HTTP history is empty",
             "The HTTP history displays all HTTP traffic passed through Gulp's proxy. Browse \
              using Gulp's browser to populate the history.",
-            true,
-            Some("Open browser"),
         );
         if learn {
             app.status =
