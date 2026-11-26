@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use eframe::egui::Color32;
 use serde::Deserialize;
 
+/// Solid action-button fill sampled from the reference artwork, shared by both themes.
+pub const PRIMARY_ACTION_FILL: Color32 = Color32::from_rgb(224, 83, 32);
+
 const DARK: &str = include_str!("../../../theme/DarkTheme.json");
 const LIGHT: &str = include_str!("../../../theme/LightTheme.json");
 

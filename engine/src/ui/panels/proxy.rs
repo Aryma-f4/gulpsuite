@@ -945,7 +945,7 @@ pub fn settings(app: &mut App, ui: &mut Ui) {
                         .map(|port| format!("Running on 127.0.0.1:{port}"))
                         .unwrap_or_else(|| "Stopped".into()),
                 );
-                if ui.button("Open browser").clicked() {
+                if ui.add(eframe::egui::Button::new(eframe::egui::RichText::new("Open browser").color(eframe::egui::Color32::WHITE)).fill(crate::ui::theme::PRIMARY_ACTION_FILL)).clicked() {
                     app.open_browser();
                 }
             });
@@ -1859,7 +1859,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
                 .map(|port| format!("127.0.0.1:{port}"))
                 .unwrap_or_else(|| "Listener stopped".into()),
         );
-        if has_held && ui.button("Open browser").clicked() {
+        if has_held && ui.add(eframe::egui::Button::new(eframe::egui::RichText::new("Open browser").color(eframe::egui::Color32::WHITE)).fill(crate::ui::theme::PRIMARY_ACTION_FILL)).clicked() {
             app.open_browser();
         }
     });
@@ -1925,7 +1925,7 @@ fn intercept(app: &mut App, ui: &mut Ui) {
                         .color(eframe::egui::Color32::WHITE)
                         .strong(),
                 )
-                .fill(theme.color("ui.icon.accent"))
+                .fill(crate::ui::theme::PRIMARY_ACTION_FILL)
                 .min_size(eframe::egui::Vec2::new(116.0, 26.0)),
             )
             .clicked()
@@ -2426,7 +2426,7 @@ fn history(app: &mut App, ui: &mut Ui) {
             app.clear_log();
             app.status = "Cleared Proxy HTTP history".into();
         }
-        if ui.button("Open browser").clicked() {
+        if ui.add(eframe::egui::Button::new(eframe::egui::RichText::new("Open browser").color(eframe::egui::Color32::WHITE)).fill(crate::ui::theme::PRIMARY_ACTION_FILL)).clicked() {
             app.open_browser();
         }
     });

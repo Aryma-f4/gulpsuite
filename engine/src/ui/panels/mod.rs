@@ -302,7 +302,7 @@ pub fn proxy_empty_state(
                             .strong()
                             .color(eframe::egui::Color32::WHITE),
                     )
-                    .fill(theme.color("ui.icon.link")),
+                    .fill(crate::ui::theme::PRIMARY_ACTION_FILL),
                 )
                 .clicked()
             {

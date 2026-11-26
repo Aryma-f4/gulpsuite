@@ -1938,7 +1938,7 @@ impl eframe::App for App {
 
                 if let Some(release) = self.update_available.clone() {
                     let ver = release.clean_version();
-                    let accent_bg = eframe::egui::Color32::from_rgb(0xFF, 0x66, 0x33);
+                    let accent_bg = crate::ui::theme::PRIMARY_ACTION_FILL;
                     Frame::new()
                         .fill(accent_bg)
                         .inner_margin(eframe::egui::Margin::symmetric(12, 4))
@@ -2126,7 +2126,7 @@ pub(crate) fn primary_button(
     theme: &crate::ui::theme::Theme,
     text: &str,
 ) -> eframe::egui::Response {
-    let fill = theme.color("ui.icon.link");
+    let fill = crate::ui::theme::PRIMARY_ACTION_FILL;
     let text_color = theme.color("ui.text.white");
     let font = FontId::new(11.0, eframe::egui::FontFamily::Proportional);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), text_color);

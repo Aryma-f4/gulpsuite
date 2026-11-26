@@ -565,7 +565,7 @@ pub fn draw(app: &mut App, ui: &mut Ui) {
                                         .strong()
                                         .color(Color32::WHITE),
                                 )
-                                .fill(Color32::from_rgb(39, 105, 162))
+                                .fill(crate::ui::theme::PRIMARY_ACTION_FILL)
                                 .stroke(Stroke::NONE)
                                 .corner_radius(4.0)
                                 .min_size(Vec2::new(120.0, 28.0)),

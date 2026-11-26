@@ -1585,3 +1585,20 @@ fn sitemap_illustrations_follow_the_tree_palette() {
         }
     }
 }
+
+#[test]
+fn primary_actions_use_reference_orange() {
+    for dark in [false, true] {
+        let mut h = harness(dark, 1440.0);
+        for name in ["Target", "Proxy", "Collaborator"] {
+            h.get_by_label(name).click();
+            h.run();
+            let frame = h.render().unwrap();
+            if let Ok(dir) = std::env::var("GULP_PROXY_UI_SHOTS") {
+                frame.save(std::path::Path::new(&dir).join(format!("buttons-{name}-{dark}.png"))).unwrap();
+            }
+            assert!(frame.pixels().filter(|p| p.0 == [224,83,32,255]).count() > 1000,
+                "reference orange missing on {name}, dark={dark}");
+        }
+    }
+}

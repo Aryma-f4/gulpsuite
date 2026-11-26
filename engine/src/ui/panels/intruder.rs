@@ -1564,7 +1564,7 @@ fn draw_positions_editor(app: &mut App, ui: &mut Ui) {
                     .strong()
                     .size(12.5),
             )
-            .fill(Color32::from_rgb(0xE0, 0x53, 0x20))
+            .fill(crate::ui::theme::PRIMARY_ACTION_FILL)
             .corner_radius(4.0)
             .min_size(Vec2::new(116.0, 26.0));
             let resp = ui.add(btn);
